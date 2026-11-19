@@ -98,7 +98,9 @@ else
   npm publish "$archive" --registry=https://registry.npmjs.org/ --tag beta --access public --provenance --ignore-scripts
 fi
 
-for attempt in {1..12}; do
+# npm can return success while a new package is still being processed.
+deadline=$((SECONDS + 900))
+for ((attempt = 1; ; attempt++)); do
   query="verify=$nonce-after-$attempt"
   fetch_json "$registry/$version?$query" "$work/version.json"
   fetch_json "$registry/beta?$query" "$work/beta.json"
@@ -108,8 +110,13 @@ for attempt in {1..12}; do
         $(jq -c '.version' "$work/latest.json") == "$latest_before" ]]; then
     break
   fi
-  [[ "$attempt" != 12 ]] || fail "npm integrity, beta or latest verification failed for $version."
-  sleep 5
+  if (( SECONDS >= deadline )); then
+    fail "Registry verification timed out for $version (beta=$(jq -c '.version' "$work/beta.json"), latest=$(jq -c '.version' "$work/latest.json"))."
+  fi
+  if (( attempt == 1 || attempt % 6 == 0 )); then
+    echo "Waiting for npm to serve the verified $version archive and its dist-tags."
+  fi
+  sleep 10
 done
 
 if ! "$has_release"; then

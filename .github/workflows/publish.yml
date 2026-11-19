@@ -1,4 +1,4 @@
-name: Publish to npm
+name: Publish beta to npm
 on:
   release:
     types: [published]
@@ -6,6 +6,7 @@ permissions:
   contents: read
 jobs:
   publish:
+    if: github.event.release.prerelease
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -18,8 +19,29 @@ jobs:
         with:
           node-version: '24'
           registry-url: https://registry.npmjs.org
-      - name: Match release tag to package version
-        run: node -e "const p = require('./package.json'); if (process.env.GITHUB_REF_NAME !== 'v' + p.version) process.exit(1)"
-      - run: npm install --global npm@11.20.0 @openai/codex@0.170.0
-      - run: npm test
-      - run: npm publish --access public --provenance --ignore-scripts
+      - name: Verify beta version and npm channel
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import pkg from './package.json' with { type: 'json' };
+          import plugin from './plugins/codex-polish/.codex-plugin/plugin.json' with { type: 'json' };
+          assert.match(pkg.version, /^\d+\.\d+\.\d+-beta\.(0|[1-9]\d*)$/);
+          assert.equal(plugin.version, pkg.version);
+          assert.equal(process.env.GITHUB_REF_NAME, 'v' + pkg.version);
+          assert.equal(pkg.publishConfig.tag, 'beta');
+          NODE
+      - name: Check whether the package has been created on npm
+        id: registry
+        run: |
+          status=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' 'https://registry.npmjs.org/@kyun.si%2fcodex-polish')
+          case "$status" in
+            200) echo 'exists=true' >> "$GITHUB_OUTPUT" ;;
+            404) echo 'First npm publication requires a scope maintainer. Publish the beta tarball with --tag beta --access public, then configure trusted publishing.' >> "$GITHUB_STEP_SUMMARY" ;;
+            *) echo "npm registry returned HTTP $status" >&2; exit 1 ;;
+          esac
+      - if: steps.registry.outputs.exists == 'true'
+        run: npm install --global npm@11.20.0 @openai/codex@0.170.0
+      - if: steps.registry.outputs.exists == 'true'
+        run: npm test
+      - if: steps.registry.outputs.exists == 'true'
+        run: npm publish --tag beta --access public --provenance --ignore-scripts

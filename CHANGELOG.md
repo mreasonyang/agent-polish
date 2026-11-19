@@ -2,7 +2,7 @@
 
 [中文使用说明](README.md) · [English README](README.en.md)
 
-## 0.0.1
+## 0.0.1-beta.1
 
 ### 简体中文
 

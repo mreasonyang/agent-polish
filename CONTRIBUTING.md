@@ -21,7 +21,7 @@ mkdir -p dist
 npm pack --ignore-scripts --pack-destination dist
 ```
 
-`npm pack` 会把 `@kyun.si/codex-polish` 的 0.0.1 版打包为 `dist/kyun.si-codex-polish-0.0.1.tgz`。默认测试无需 API 密钥，原生安装测试会使用临时 Codex 配置。另有一项在线测试需要显式开启，会向 OpenAI 发出四次付费请求。[运行在线检查](docs/technical.md)
+`npm pack` 会把 `@kyun.si/codex-polish` 的 `0.0.1-beta.1` 版打包为 `dist/kyun.si-codex-polish-0.0.1-beta.1.tgz`。默认测试无需 API 密钥，原生安装测试会使用临时 Codex 配置。另有一项在线测试需要显式开启，会向 OpenAI 发出四次付费请求。[运行在线检查](docs/technical.md)
 
 ## 反馈问题
 
@@ -35,4 +35,12 @@ npm pack --ignore-scripts --pack-destination dist
 
 ## 发布到 npm
 
-包名是 `@kyun.si/codex-polish`。首次发布由拥有该 scope 发布权限的维护者完成。然后在 npm 包设置中为 GitHub 仓库 `mreasonyang/codex-polish` 添加可信发布者，工作流文件名填写 `publish.yml`。后续发版时，更新包版本并创建对应的 GitHub Release，例如版本 `0.0.2` 对应标签 `v0.0.2`。工作流会核对版本、跑测试并发布。[npm 可信发布设置](https://docs.npmjs.com/trusted-publishers/)
+首次发布时，拥有 `@kyun.si` 发布权限的维护者需登录 npm，完成上面的测试和打包，然后在源码根目录手动发布该压缩包。
+
+```sh
+npm publish ./dist/kyun.si-codex-polish-0.0.1-beta.1.tgz --tag beta --access public
+```
+
+首次发布成功后，在 npm 包设置中为 GitHub 仓库 `mreasonyang/codex-polish` 添加可信发布者，工作流文件名填写 `publish.yml`。[npm 可信发布设置](https://docs.npmjs.com/trusted-publishers/)
+
+后续测试版使用 `vX.Y.Z-beta.N` 格式的 Git 标签。比如将包版本更新为 `0.0.1-beta.2` 后，在 GitHub 上用标签 `v0.0.1-beta.2` 创建 Release，勾选 **Set as a pre-release**。工作流会核对版本、运行测试，再发布到 npm 的 `beta` 标签。`latest` 留给正式版。

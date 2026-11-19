@@ -22,7 +22,7 @@ mkdir -p dist
 npm pack --ignore-scripts --pack-destination dist
 ```
 
-`npm pack` writes version 0.0.1 of `@kyun.si/codex-polish` to `dist/kyun.si-codex-polish-0.0.1.tgz`. Default tests need no API key. Native installer tests use a temporary Codex profile. A separate opt-in test makes four billable OpenAI requests. See the [live test instructions](docs/technical.en.md).
+`npm pack` writes version `0.0.1-beta.1` of `@kyun.si/codex-polish` to `dist/kyun.si-codex-polish-0.0.1-beta.1.tgz`. Default tests need no API key. Native installer tests use a temporary Codex profile. A separate opt-in test makes four billable OpenAI requests. See the [live test instructions](docs/technical.en.md).
 
 ## Reporting Bugs
 
@@ -36,4 +36,12 @@ Open a GitHub pull request with the reason for the change, steps to reproduce or
 
 ## Publishing to npm
 
-A maintainer with publish access to the `@kyun.si` scope publishes the first version of `@kyun.si/codex-polish`. In the npm package settings, add a GitHub trusted publisher for `mreasonyang/codex-polish` and enter `publish.yml` as the workflow filename. For subsequent versions, update the package version and publish a matching GitHub Release (for example, tag `v0.0.2` for version `0.0.2`). The workflow checks the tag and runs the tests before publishing. [npm trusted publishing](https://docs.npmjs.com/trusted-publishers/)
+For the first release, a maintainer with publish access to `@kyun.si` must sign in to npm, test and pack the project as shown above, then publish the tarball manually from the repository root.
+
+```sh
+npm publish ./dist/kyun.si-codex-polish-0.0.1-beta.1.tgz --tag beta --access public
+```
+
+After the first publish succeeds, add a GitHub trusted publisher in the npm package settings. Select `mreasonyang/codex-polish` and enter `publish.yml` as the workflow filename. [npm trusted publishing](https://docs.npmjs.com/trusted-publishers/)
+
+For subsequent betas, use a Git tag of the form `vX.Y.Z-beta.N`. For example, after updating the package version to `0.0.1-beta.2`, create a GitHub Release for tag `v0.0.1-beta.2` and select **Set as a pre-release**. The workflow checks the version, runs the tests, and publishes with the npm `beta` tag. Reserve `latest` for stable releases.

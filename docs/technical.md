@@ -2,7 +2,7 @@
 
 [English](technical.en.md) · [项目首页](../README.md)
 
-`codex-polish` 0.0.1 包含两个 Codex 技能。[改写技能](../plugins/codex-polish/skills/codex-polish/SKILL.md) 在最终答复交付前润色草稿，[设置技能](../plugins/codex-polish/skills/codex-polish-setup/SKILL.md) 检查运行环境并保存项目设置。
+`codex-polish` 的 `0.0.1-beta.1` 版包含两个 Codex 技能。[改写技能](../plugins/codex-polish/skills/codex-polish/SKILL.md) 在最终答复交付前润色草稿，[设置技能](../plugins/codex-polish/skills/codex-polish-setup/SKILL.md) 检查运行环境并保存项目设置。
 
 ## 模式、配置文件与查找规则
 
@@ -59,11 +59,11 @@
 
 ## 安装、更新和卸载
 
-安装 npm 发行版时运行 `npx @kyun.si/codex-polish@latest setup`，将最后一个参数换成 `update`、`doctor` 或 `uninstall` 即可更新、检查当前项目或卸载。从 GitHub 源码安装时，在仓库根目录运行 `node scripts/install.mjs setup`，其余子命令相同。[安装步骤](../README.md#三步快速开始)
+测试版发布到 npm 后，运行 `npx @kyun.si/codex-polish@beta setup` 即可安装。将最后一个参数换成 `update`、`doctor` 或 `uninstall` 即可更新、检查当前项目或卸载。从 GitHub 源码安装时，在仓库根目录运行 `node scripts/install.mjs setup`，其余子命令相同。[安装步骤](../README.md#三步快速开始)
 
 `setup` 和 `update` 支持 `--install-agy`，在缺少 Antigravity CLI 时可自动安装。更新会保留项目设置与插件启用状态。同一版本号的新构建也能用 `update` 覆盖或重试中断的更新。
 
-手头有本地打包的 0.0.1 版时，也可以在压缩包所在目录运行 `npx --yes file:./kyun.si-codex-polish-0.0.1.tgz uninstall`。卸载会清理该插件与专用市场，按当前 Codex 配置清除冷却记录和会话指针，保留各项目的 `.codex/` 配置和共用的 `agy`，并提示被手动修改过的安装文件备份位置。
+手头有本地打包的 `0.0.1-beta.1` 版时，也可以在压缩包所在目录运行 `npx --yes file:./kyun.si-codex-polish-0.0.1-beta.1.tgz uninstall`。卸载会清理该插件与专用市场，按当前 Codex 配置清除冷却记录和会话指针，保留各项目的 `.codex/` 配置和共用的 `agy`，并提示被手动修改过的安装文件备份位置。
 
 ## 已验证记录与真机验收
 

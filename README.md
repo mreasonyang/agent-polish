@@ -15,13 +15,13 @@
 
 支持 macOS 和 Linux。需要 Node.js 22.16 或更新版本，以及支持插件的 [Codex CLI](https://developers.openai.com/codex/cli/)。如果你用 T3 Code，选择 Codex 后端，并把插件装在运行该后端的机器上。
 
-1. **安装插件。** 如需安装发布到 npm 的最新版，在终端运行以下命令。
+1. **安装插件。** 首个测试版为 `0.0.1-beta.1`。发布到 npm 后，可用以下命令安装 `beta` 标签对应的版本。
 
    ```sh
-   npx @kyun.si/codex-polish@latest setup
+   npx @kyun.si/codex-polish@beta setup
    ```
 
-   也可以直接从 GitHub 源码安装。
+   也可以直接从 GitHub 源码安装，包括在 npm 首次发布之前。
 
    ```sh
    git clone https://github.com/mreasonyang/codex-polish.git
@@ -58,12 +58,13 @@
 
 如果要求原样输出、OpenAI 判断原稿已经够清楚、所选模型不可用，或改稿没通过校验，插件都会保留原稿。可以问 **“为什么上条回复没润色？”** 查看本轮原因，或说 **“检查回复润色环境”** 排查安装与连接。
 
-## 更新与卸载
+## 检查、更新与卸载
 
-| 操作 | 通过 npm 发行版 | 在源码根目录运行 |
+| 操作 | 通过 npm 测试版 | 在源码根目录运行 |
 | --- | --- | --- |
-| 更新 | `npx @kyun.si/codex-polish@latest update` | 取得新版源码后运行 `node scripts/install.mjs update` |
-| 卸载 | `npx @kyun.si/codex-polish@latest uninstall` | `node scripts/install.mjs uninstall` |
+| 检查当前项目 | `npx @kyun.si/codex-polish@beta doctor` | `node scripts/install.mjs doctor` |
+| 更新 | `npx @kyun.si/codex-polish@beta update` | 取得新版源码后运行 `node scripts/install.mjs update` |
+| 卸载 | `npx @kyun.si/codex-polish@beta uninstall` | `node scripts/install.mjs uninstall` |
 
 更新会保留项目设置和插件启用状态。升级后新开一个聊天。如果 Codex 提示钩子内容已变更，请重新审查并信任。卸载后，项目的 `.codex` 设置和共用的 `agy` 会保留。
 

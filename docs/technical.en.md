@@ -2,7 +2,7 @@
 
 [简体中文](technical.md) · [Overview](../README.en.md)
 
-Codex Polish 0.0.1 is a Codex plugin for macOS and Linux. Its local scripts use built-in Node.js modules and require Node.js 22.16 or newer. The [rewrite skill](../plugins/codex-polish/skills/codex-polish/SKILL.md) polishes eligible final replies. The [setup skill](../plugins/codex-polish/skills/codex-polish-setup/SKILL.md) checks the environment and manages project settings.
+Codex Polish `0.0.1-beta.1` is a Codex plugin for macOS and Linux. Its local scripts use built-in Node.js modules and require Node.js 22.16 or newer. The [rewrite skill](../plugins/codex-polish/skills/codex-polish/SKILL.md) polishes eligible final replies. The [setup skill](../plugins/codex-polish/skills/codex-polish-setup/SKILL.md) checks the environment and manages project settings.
 
 ## Project Settings and Inheritance
 
@@ -91,8 +91,8 @@ Using Node.js 22.16 and Antigravity CLI 1.5.12, the Codex agent selected `gemini
 
 ## Installation, Updates, and Uninstall
 
-To install a release distributed through npm, run `npx @kyun.si/codex-polish@latest setup`. Replace `setup` with `update` to upgrade, `doctor` to check the current project, or `uninstall` to remove the plugin. For a source installation, run `node scripts/install.mjs setup` from the root of the GitHub checkout. The same subcommands work there. [Quick Start](../README.en.md#quick-start)
+Once the beta is published to npm, install it with `npx @kyun.si/codex-polish@beta setup`. Replace `setup` with `update` to upgrade, `doctor` to check the current project, or `uninstall` to remove the plugin. For a source installation, run `node scripts/install.mjs setup` from the root of the GitHub checkout. The same subcommands work there. [Quick Start](../README.en.md#quick-start)
 
 Both `setup` and `update` accept `--install-agy` to install the Google CLI when needed. Updates preserve `.codex` project settings and the plugin’s enabled state. Re-running `update` with the same version replaces the build or recovers an interrupted update.
 
-If you packed version 0.0.1 locally, you can also run `npx --yes file:./kyun.si-codex-polish-0.0.1.tgz uninstall` in the directory containing the archive. Uninstall removes the plugin and its marketplace, clears cooldowns and session pointers for the active Codex profile, and prints the backup path for any manually edited installation files. It keeps shared `agy` binaries and project `.codex` files.
+If you packed version `0.0.1-beta.1` locally, you can also run `npx --yes file:./kyun.si-codex-polish-0.0.1-beta.1.tgz uninstall` in the directory containing the archive. Uninstall removes the plugin and its marketplace, clears cooldowns and session pointers for the active Codex profile, and prints the backup path for any manually edited installation files. It keeps shared `agy` binaries and project `.codex` files.

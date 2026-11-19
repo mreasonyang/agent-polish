@@ -13,13 +13,13 @@ In one test, Codex had to report that the export button was fixed and had passed
 
 You need macOS or Linux, Node.js 22.16+, and a [Codex CLI](https://developers.openai.com/codex/cli/) with plugin support. In T3 Code, select Codex and install the plugin on the machine running that backend.
 
-1. **Install the plugin.** To install the latest release distributed through npm, run the following command.
+1. **Install the plugin.** The first beta is `0.0.1-beta.1`. Once it is published to npm, use this command to install the version tagged `beta`.
 
    ```sh
-   npx @kyun.si/codex-polish@latest setup
+   npx @kyun.si/codex-polish@beta setup
    ```
 
-   You can also install directly from the GitHub source.
+   You can also install directly from the GitHub source, even before the first npm release.
 
    ```sh
    git clone https://github.com/mreasonyang/codex-polish.git
@@ -56,12 +56,13 @@ For a rewrite, Google receives your current question and reply draft. The plugin
 
 Exact-output requests, already clear drafts when OpenAI checks are active, missing models, or failed checks keep the original draft. Say **"Check Codex Polish setup"** to inspect `agy` and cooldowns, **"Choose a rewrite model"** to verify model access, or **"Why wasn't my last reply polished?"** for the turn's reason.
 
-## Update and Uninstall
+## Check, Update, or Uninstall
 
-| Action | From an npm release | From the source directory |
+| Action | From the npm beta | From the source directory |
 | --- | --- | --- |
-| Update | `npx @kyun.si/codex-polish@latest update` | Get the latest source, then run `node scripts/install.mjs update` |
-| Uninstall | `npx @kyun.si/codex-polish@latest uninstall` | `node scripts/install.mjs uninstall` |
+| Check the current project | `npx @kyun.si/codex-polish@beta doctor` | `node scripts/install.mjs doctor` |
+| Update | `npx @kyun.si/codex-polish@beta update` | Get the latest source, then run `node scripts/install.mjs update` |
+| Uninstall | `npx @kyun.si/codex-polish@beta uninstall` | `node scripts/install.mjs uninstall` |
 
 Updates preserve your project settings and the plugin’s enabled state. Start a new chat after upgrading, and review the updated hook if Codex prompts you. Uninstalling keeps your `.codex` project settings and shared `agy` binary.
 

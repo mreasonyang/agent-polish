@@ -15,8 +15,24 @@ fail() { echo "$*" >&2; exit 1; }
 tag_commit=$(git ls-remote --exit-code origin "refs/tags/$RELEASE_TAG" "refs/tags/$RELEASE_TAG^{}" | tail -n 1 | cut -f1)
 [[ "$tag_commit" == "$SOURCE_SHA" ]] || fail "The tag no longer points to the tested commit."
 
-expected_integrity="sha512-$(openssl dgst -sha512 -binary "$archive" | openssl base64 -A)"
-expected_digest="sha256:$(sha256sum "$archive" | cut -d' ' -f1)"
+qualified_archive=$archive
+use_archive() {
+  archive=$1
+  expected_integrity="sha512-$(openssl dgst -sha512 -binary "$archive" | openssl base64 -A)"
+  expected_digest="sha256:$(sha256sum "$archive" | cut -d' ' -f1)"
+}
+use_archive "$qualified_archive"
+
+# Different gzip implementations can encode the exact same tar differently.
+# Compare the complete tar streams (including paths, modes and headers)
+# before reusing an archive users can already download.
+use_existing_archive() {
+  local candidate=$1
+  gzip -dc "$qualified_archive" > "$work/qualified.tar"
+  gzip -dc "$candidate" > "$work/existing.tar"
+  cmp -s "$work/qualified.tar" "$work/existing.tar" || fail "Existing archive differs from the tested tar."
+  use_archive "$candidate"
+}
 
 # A missing resource is valid before the first release. Other HTTP errors are fatal.
 fetch_json() {
@@ -40,13 +56,19 @@ inspect_release() {
       fail "The existing GitHub release is not a published prerelease for $RELEASE_TAG."
     if jq -e --arg name "$filename" '.assets | any(.name == $name)' "$work/github.json" > /dev/null; then
       has_asset=true
-      jq -e --arg name "$filename" --arg digest "$expected_digest" '.assets | any(.name == $name and .state == "uploaded" and .digest == $digest)' "$work/github.json" > /dev/null ||
-        fail "The existing GitHub release asset differs from the tested archive."
+      local digest
+      digest=$(jq -er --arg name "$filename" '.assets[] | select(.name == $name and .state == "uploaded") | .digest' "$work/github.json")
+      if [[ "$digest" != "$expected_digest" && ${1:-} == reuse ]]; then
+        mkdir -p "$work/github"
+        gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --pattern "$filename" --dir "$work/github"
+        use_existing_archive "$work/github/$filename"
+      fi
+      [[ "$expected_digest" == "$digest" ]] || fail "The existing GitHub release asset checksum differs."
     fi
   fi
 }
 
-inspect_release
+inspect_release reuse
 nonce="$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
 fetch_json "$registry/latest?verify=$nonce-before" "$work/latest.json"
 fetch_json "$registry/beta?verify=$nonce-before" "$work/beta.json"
@@ -66,6 +88,11 @@ if [[ -n "$beta_before" && "$beta_before" != "$version" ]]; then
 fi
 
 if jq -e --arg v "$version" '.version == $v' "$work/version.json" > /dev/null; then
+  if ! "$has_asset" && [[ "$integrity_before" != "$expected_integrity" ]]; then
+    mkdir -p "$work/npm"
+    curl -fsS --retry 2 "https://registry.npmjs.org/@kyun.si/codex-polish/-/codex-polish-$version.tgz" -o "$work/npm/$filename"
+    use_existing_archive "$work/npm/$filename"
+  fi
   [[ "$integrity_before" == "$expected_integrity" ]] || fail "Published version $version has different contents."
 else
   npm publish "$archive" --registry=https://registry.npmjs.org/ --tag beta --access public --provenance --ignore-scripts

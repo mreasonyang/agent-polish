@@ -32,3 +32,7 @@ npm pack --ignore-scripts --pack-destination dist
 ## 提交补丁
 
 请通过 GitHub Pull Request 提交改动，附上改动原因、复现或验证方法，以及实际跑过的测试结果。如果改动涉及 Gemini 或 OpenAI，写明用的是模拟服务还是真实账号。测试样本请使用虚构内容，或已获授权且脱敏的材料。本项目采用 [Apache License 2.0](LICENSE)。
+
+## 发布到 npm
+
+包名是 `@kyun.si/codex-polish`。首次发布由拥有该 scope 发布权限的维护者完成。然后在 npm 包设置中为 GitHub 仓库 `mreasonyang/codex-polish` 添加可信发布者，工作流文件名填写 `publish.yml`。后续发版时，更新包版本并创建对应的 GitHub Release，例如版本 `0.0.2` 对应标签 `v0.0.2`。工作流会核对版本、跑测试并发布。[npm 可信发布设置](https://docs.npmjs.com/trusted-publishers/)

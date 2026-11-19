@@ -33,3 +33,7 @@ Report security vulnerabilities privately. [Security policy](SECURITY.en.md)
 ## Submitting a Verifiable Patch
 
 Open a GitHub pull request with the reason for the change, steps to reproduce or verify it, and results from the tests you ran. For changes involving a provider, say whether you used a mock or a live account. Use synthetic samples or authorized, de-identified material. The project uses the [Apache License 2.0](LICENSE).
+
+## Publishing to npm
+
+A maintainer with publish access to the `@kyun.si` scope publishes the first version of `@kyun.si/codex-polish`. In the npm package settings, add a GitHub trusted publisher for `mreasonyang/codex-polish` and enter `publish.yml` as the workflow filename. For subsequent versions, update the package version and publish a matching GitHub Release (for example, tag `v0.0.2` for version `0.0.2`). The workflow checks the tag and runs the tests before publishing. [npm trusted publishing](https://docs.npmjs.com/trusted-publishers/)

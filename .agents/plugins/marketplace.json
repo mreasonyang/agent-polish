@@ -1,0 +1,12 @@
+{
+  "name": "codex-polish-local",
+  "interface": { "displayName": "Codex Polish · 回复润色" },
+  "plugins": [
+    {
+      "name": "codex-polish",
+      "source": { "source": "local", "path": "./plugins/codex-polish" },
+      "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" },
+      "category": "Productivity"
+    }
+  ]
+}

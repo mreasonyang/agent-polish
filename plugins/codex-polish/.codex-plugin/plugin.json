@@ -1,0 +1,21 @@
+{
+  "name": "codex-polish",
+  "version": "0.0.1",
+  "description": "Rewrites Codex drafts with Gemini for cleaner replies. 用 Gemini 改写 Codex 草稿，让回复更清晰。",
+  "skills": "./skills/",
+  "hooks": "./hooks/hooks.json",
+  "extensions": {
+    "com.openai": {
+      "onboardingSkill": "./skills/codex-polish-setup/SKILL.md"
+    }
+  },
+  "interface": {
+    "displayName": "Codex Polish · 回复润色",
+    "shortDescription": "把生硬的 Codex 草稿改得更好读。 Turn rough Codex drafts into clearer replies.",
+    "category": "Productivity",
+    "defaultPrompt": [
+      "用一句话解释 DNS，再把你的回复润色一下。",
+      "Explain what DNS does in one sentence, then polish your reply."
+    ]
+  }
+}

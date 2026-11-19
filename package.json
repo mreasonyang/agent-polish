@@ -1,0 +1,49 @@
+{
+  "name": "@kyun.si/codex-polish",
+  "version": "0.0.1",
+  "license": "Apache-2.0",
+  "description": "Codex plugin that rewrites replies with Gemini via Antigravity ACP · 通过 Antigravity ACP 调用 Gemini 改写 Codex 回复的插件",
+  "os": [
+    "darwin",
+    "linux"
+  ],
+  "bin": {
+    "codex-polish": "scripts/install.mjs"
+  },
+  "files": [
+    ".agents/plugins/marketplace.json",
+    "plugins/codex-polish",
+    "scripts/install.mjs",
+    "scripts/native_cache.mjs",
+    "安装回复润色.command",
+    "Install Codex Polish.command",
+    "README.en.md",
+    "CONTRIBUTING.md",
+    "CONTRIBUTING.en.md",
+    "SECURITY.md",
+    "SECURITY.en.md",
+    "CHANGELOG.md",
+    "docs/",
+    "evaluation/README.md",
+    "evaluation/README.en.md"
+  ],
+  "type": "module",
+  "engines": {
+    "node": ">=22.16.0"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mreasonyang/codex-polish.git"
+  },
+  "homepage": "https://github.com/mreasonyang/codex-polish#readme",
+  "bugs": {
+    "url": "https://github.com/mreasonyang/codex-polish/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
+}

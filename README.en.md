@@ -13,13 +13,13 @@ In one test, Codex had to report that the export button was fixed and had passed
 
 You need macOS or Linux, Node.js 22.16+, and a [Codex CLI](https://developers.openai.com/codex/cli/) with plugin support. In T3 Code, select Codex and install the plugin on the machine running that backend.
 
-1. **Install the plugin.** The first beta is `0.0.1-beta.1`. Once it is published to npm, use this command to install the version tagged `beta`.
+1. **Install the plugin.** Use this command to install the beta from npm.
 
    ```sh
    npx @kyun.si/codex-polish@beta setup
    ```
 
-   You can also install directly from the GitHub source, even before the first npm release.
+   You can also clone the repository and run the installer locally.
 
    ```sh
    git clone https://github.com/mreasonyang/codex-polish.git

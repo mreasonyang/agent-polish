@@ -15,13 +15,13 @@
 
 支持 macOS 和 Linux。需要 Node.js 22.16 或更新版本，以及支持插件的 [Codex CLI](https://developers.openai.com/codex/cli/)。如果你用 T3 Code，选择 Codex 后端，并把插件装在运行该后端的机器上。
 
-1. **安装插件。** 首个测试版为 `0.0.1-beta.1`。发布到 npm 后，可用以下命令安装 `beta` 标签对应的版本。
+1. **安装插件。** 用下面的命令安装 npm 上的测试版。
 
    ```sh
    npx @kyun.si/codex-polish@beta setup
    ```
 
-   也可以直接从 GitHub 源码安装，包括在 npm 首次发布之前。
+   也可以下载源码，运行仓库里的安装脚本。
 
    ```sh
    git clone https://github.com/mreasonyang/codex-polish.git

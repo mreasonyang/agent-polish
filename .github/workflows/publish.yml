@@ -1,47 +1,96 @@
 name: Publish beta to npm
 on:
-  release:
-    types: [published]
+  push:
+    tags: ['v*-beta.*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing beta tag to publish or verify
+        required: true
+        type: string
+
 permissions:
   contents: read
+
+concurrency:
+  group: npm-beta
+  queue: max
+
+env:
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+
 jobs:
-  publish:
-    if: github.event.release.prerelease
+  qualify:
+    if: (github.event_name == 'push' && !github.event.deleted) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write
+    outputs:
+      source_sha: ${{ steps.source.outputs.sha }}
     steps:
+      - name: Check the release tag
+        shell: bash
+        run: |
+          number='(0|[1-9][0-9]*)'
+          [[ "$RELEASE_TAG" =~ ^v${number}\.${number}\.${number}-beta\.${number}$ ]]
       - uses: actions/checkout@v4
         with:
+          ref: refs/tags/${{ env.RELEASE_TAG }}
           persist-credentials: false
+      - id: source
+        name: Record the tagged commit
+        run: |
+          sha=$(git rev-parse HEAD)
+          if [[ "$GITHUB_EVENT_NAME" == push ]]; then
+            test "$sha" = "$(git rev-parse "$GITHUB_SHA^{commit}")"
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
-          registry-url: https://registry.npmjs.org
-      - name: Verify beta version and npm channel
+      - run: npm install --global npm@11.20.0 @openai/codex@0.170.0
+      - name: Verify package and plugin versions
         run: |
           node --input-type=module <<'NODE'
           import assert from 'node:assert/strict';
           import pkg from './package.json' with { type: 'json' };
           import plugin from './plugins/codex-polish/.codex-plugin/plugin.json' with { type: 'json' };
-          assert.match(pkg.version, /^\d+\.\d+\.\d+-beta\.(0|[1-9]\d*)$/);
+          assert.equal(pkg.name, '@kyun.si/codex-polish');
+          assert.equal('v' + pkg.version, process.env.RELEASE_TAG);
           assert.equal(plugin.version, pkg.version);
-          assert.equal(process.env.GITHUB_REF_NAME, 'v' + pkg.version);
           assert.equal(pkg.publishConfig.tag, 'beta');
+          assert.equal(pkg.publishConfig.access, 'public');
+          assert.equal(pkg.publishConfig.registry, 'https://registry.npmjs.org/');
           NODE
-      - name: Check whether the package has been created on npm
-        id: registry
-        run: |
-          status=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' 'https://registry.npmjs.org/@kyun.si%2fcodex-polish')
-          case "$status" in
-            200) echo 'exists=true' >> "$GITHUB_OUTPUT" ;;
-            404) echo 'First npm publication requires a scope maintainer. Publish the beta tarball with --tag beta --access public, then configure trusted publishing.' >> "$GITHUB_STEP_SUMMARY" ;;
-            *) echo "npm registry returned HTTP $status" >&2; exit 1 ;;
-          esac
-      - if: steps.registry.outputs.exists == 'true'
-        run: npm install --global npm@11.20.0 @openai/codex@0.170.0
-      - if: steps.registry.outputs.exists == 'true'
-        run: npm test
-      - if: steps.registry.outputs.exists == 'true'
-        run: npm publish --tag beta --access public --provenance --ignore-scripts
+      - run: npm test
+      - name: Pack the tagged source
+        run: npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-beta
+          path: ${{ runner.temp }}/kyun.si-codex-polish-*.tgz
+          if-no-files-found: error
+
+  publish:
+    runs-on: ubuntu-latest
+    needs: qualify
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm install --global npm@11.20.0
+      - uses: actions/download-artifact@v4
+        with:
+          name: npm-beta
+          path: ${{ runner.temp }}/npm-beta
+      - name: Publish the verified archive via npm OIDC and attach it to the GitHub prerelease
+        run: bash .github/scripts/publish-beta.sh
+        env:
+          SOURCE_SHA: ${{ needs.qualify.outputs.source_sha }}
+          GH_TOKEN: ${{ github.token }}

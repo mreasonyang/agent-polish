@@ -34,14 +34,15 @@ Report security vulnerabilities privately. [Security policy](SECURITY.en.md)
 
 Open a GitHub pull request with the reason for the change, steps to reproduce or verify it, and results from the tests you ran. For changes involving a provider, say whether you used a mock or a live account. Use synthetic samples or authorized, de-identified material. The project uses the [Apache License 2.0](LICENSE).
 
-## Publishing to npm
+## Publishing a beta
 
-For the first release, a maintainer with publish access to `@kyun.si` must sign in to npm, test and pack the project as shown above, then publish the tarball manually from the repository root.
+Set the version in both `package.json` and the plugin manifest to `X.Y.Z-beta.N`. Commit the change and push the matching Git tag. For example, to publish `0.0.1-beta.2`:
 
 ```sh
-npm publish ./dist/kyun.si-codex-polish-0.0.1-beta.1.tgz --tag beta --access public
+git tag v0.0.1-beta.2
+git push origin v0.0.1-beta.2
 ```
 
-After the first publish succeeds, add a GitHub trusted publisher in the npm package settings. Select `mreasonyang/codex-polish` and enter `publish.yml` as the workflow filename. [npm trusted publishing](https://docs.npmjs.com/trusted-publishers/)
+GitHub Actions tests the tagged code, publishes the package to npm with the `beta` tag, and creates a GitHub prerelease. If a step fails, run the publishing workflow again from the Actions tab and enter the existing tag.
 
-For subsequent betas, use a Git tag of the form `vX.Y.Z-beta.N`. For example, after updating the package version to `0.0.1-beta.2`, create a GitHub Release for tag `v0.0.1-beta.2` and select **Set as a pre-release**. The workflow checks the version, runs the tests, and publishes with the npm `beta` tag. Reserve `latest` for stable releases.
+npm grants publishing access per package. Configure this package’s trusted publisher for the `mreasonyang/codex-polish` repository and the `publish.yml` workflow, with direct publishing enabled. GitHub authenticates the workflow to npm on each release without a stored npm token. [npm trusted publishing](https://docs.npmjs.com/trusted-publishers/)

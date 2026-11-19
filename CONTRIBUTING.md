@@ -33,14 +33,15 @@ npm pack --ignore-scripts --pack-destination dist
 
 请通过 GitHub Pull Request 提交改动，附上改动原因、复现或验证方法，以及实际跑过的测试结果。如果改动涉及 Gemini 或 OpenAI，写明用的是模拟服务还是真实账号。测试样本请使用虚构内容，或已获授权且脱敏的材料。本项目采用 [Apache License 2.0](LICENSE)。
 
-## 发布到 npm
+## 发布 beta
 
-首次发布时，拥有 `@kyun.si` 发布权限的维护者需登录 npm，完成上面的测试和打包，然后在源码根目录手动发布该压缩包。
+将 `package.json` 和插件清单中的版本一同改为 `X.Y.Z-beta.N`，提交后推送同名 Git 标签。例如发布 `0.0.1-beta.2` 时运行：
 
 ```sh
-npm publish ./dist/kyun.si-codex-polish-0.0.1-beta.1.tgz --tag beta --access public
+git tag v0.0.1-beta.2
+git push origin v0.0.1-beta.2
 ```
 
-首次发布成功后，在 npm 包设置中为 GitHub 仓库 `mreasonyang/codex-polish` 添加可信发布者，工作流文件名填写 `publish.yml`。[npm 可信发布设置](https://docs.npmjs.com/trusted-publishers/)
+GitHub Actions 会测试这个标签的代码，将安装包发布到 npm 的 `beta` 标签，并创建 GitHub 预发布版。如果某一步失败，可以在 Actions 中选择发布工作流，用已有标签重试。
 
-后续测试版使用 `vX.Y.Z-beta.N` 格式的 Git 标签。比如将包版本更新为 `0.0.1-beta.2` 后，在 GitHub 上用标签 `v0.0.1-beta.2` 创建 Release，勾选 **Set as a pre-release**。工作流会核对版本、运行测试，再发布到 npm 的 `beta` 标签。`latest` 留给正式版。
+npm 按包授权。此包使用 GitHub 仓库 `mreasonyang/codex-polish` 的 `publish.yml` 工作流，可信发布者需勾选允许直接发布。发布时 GitHub 会向 npm 证明工作流身份，仓库无需保存 npm 令牌。[npm 可信发布设置](https://docs.npmjs.com/trusted-publishers/)

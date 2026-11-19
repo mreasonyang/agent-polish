@@ -45,4 +45,4 @@ git push origin v0.0.1-beta.2
 
 GitHub Actions tests the tagged code, publishes the package to npm with the `beta` tag, and creates a GitHub prerelease. If a step fails, run the publishing workflow again from the Actions tab and enter the existing tag.
 
-npm grants publishing access per package. Configure this package’s trusted publisher for the `mreasonyang/codex-polish` repository and the `publish.yml` workflow, with direct publishing enabled. GitHub authenticates the workflow to npm on each release without a stored npm token. [npm trusted publishing](https://docs.npmjs.com/trusted-publishers/)
+npm grants publishing access per package. Configure this package’s trusted publisher for the `mreasonyang/codex-polish` repository and the `publish.yml` workflow, and enable **Allow npm publish** and **Allow npm dist-tag**. Tag access lets the workflow remove `latest` if npm sets it on the first beta. GitHub authenticates the workflow to npm on each release without a stored npm token. [npm trusted publishing](https://docs.npmjs.com/trusted-publishers/)

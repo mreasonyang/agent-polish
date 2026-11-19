@@ -70,11 +70,11 @@ inspect_release() {
 
 inspect_release reuse
 nonce="$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
-fetch_json "$registry/latest?verify=$nonce-before" "$work/latest.json"
-fetch_json "$registry/beta?verify=$nonce-before" "$work/beta.json"
+tags='https://registry.npmjs.org/-/package/@kyun.si%2fcodex-polish/dist-tags'
+fetch_json "$tags?verify=$nonce-before" "$work/tags.json"
 fetch_json "$registry/$version?verify=$nonce-before" "$work/version.json"
-latest_before=$(jq -c '.version' "$work/latest.json")
-beta_before=$(jq -r '.version // empty' "$work/beta.json")
+expected_latest=$(jq -r '.latest // empty' "$work/tags.json")
+beta_before=$(jq -r '.beta // empty' "$work/tags.json")
 integrity_before=$(jq -r '.dist.integrity // empty' "$work/version.json")
 expected_beta=$version
 
@@ -100,18 +100,30 @@ fi
 
 # npm can return success while a new package is still being processed.
 deadline=$((SECONDS + 900))
+tag_repaired=false
 for ((attempt = 1; ; attempt++)); do
   query="verify=$nonce-after-$attempt"
   fetch_json "$registry/$version?$query" "$work/version.json"
-  fetch_json "$registry/beta?$query" "$work/beta.json"
-  fetch_json "$registry/latest?$query" "$work/latest.json"
-  if [[ $(jq -r '.dist.integrity' "$work/version.json") == "$expected_integrity" &&
-        $(jq -r '.version' "$work/beta.json") == "$expected_beta" &&
-        $(jq -c '.version' "$work/latest.json") == "$latest_before" ]]; then
-    break
+  fetch_json "$tags?$query" "$work/tags.json"
+  beta=$(jq -r '.beta // empty' "$work/tags.json")
+  latest=$(jq -r '.latest // empty' "$work/tags.json")
+  if [[ $(jq -r '.dist.integrity' "$work/version.json") == "$expected_integrity" && "$beta" == "$expected_beta" ]]; then
+    if [[ "$latest" == "$version" && "$beta" == "$version" ]] && ! "$tag_repaired"; then
+      # npm sometimes assigns latest to the first real version even with --tag beta.
+      # Only remove it when the registry has never contained a stable release.
+      fetch_json "$registry?$query" "$work/package.json"
+      jq -e --arg v "$version" '.versions | has($v) and (keys | all(test("^[0-9]+[.][0-9]+[.][0-9]+-")))' "$work/package.json" > /dev/null ||
+        fail "Refusing to change latest without a verified prerelease-only version history."
+      npm dist-tag rm @kyun.si/codex-polish latest --registry=https://registry.npmjs.org/ ||
+        fail "Enable Allow npm dist-tag on this package's GitHub trusted publisher, then retry the tag."
+      tag_repaired=true
+      expected_latest=''
+    elif [[ "$latest" == "$expected_latest" && "$latest" != "$version" ]]; then
+      break
+    fi
   fi
   if (( SECONDS >= deadline )); then
-    fail "Registry verification timed out for $version (beta=$(jq -c '.version' "$work/beta.json"), latest=$(jq -c '.version' "$work/latest.json"))."
+    fail "Registry verification timed out for $version (beta=$beta, latest=$latest)."
   fi
   if (( attempt == 1 || attempt % 6 == 0 )); then
     echo "Waiting for npm to serve the verified $version archive and its dist-tags."

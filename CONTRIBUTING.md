@@ -44,4 +44,4 @@ git push origin v0.0.1-beta.2
 
 GitHub Actions 会测试这个标签的代码，将安装包发布到 npm 的 `beta` 标签，并创建 GitHub 预发布版。如果某一步失败，可以在 Actions 中选择发布工作流，用已有标签重试。
 
-npm 按包授权。此包使用 GitHub 仓库 `mreasonyang/codex-polish` 的 `publish.yml` 工作流，可信发布者需勾选允许直接发布。发布时 GitHub 会向 npm 证明工作流身份，仓库无需保存 npm 令牌。[npm 可信发布设置](https://docs.npmjs.com/trusted-publishers/)
+npm 按包授权。此包使用 GitHub 仓库 `mreasonyang/codex-polish` 的 `publish.yml` 工作流，可信发布者勾选 **Allow npm publish** 和 **Allow npm dist-tag**。后一项让工作流在 npm 把首个 beta 同时标记为 `latest` 时自动清理标签。发布时 GitHub 会向 npm 证明工作流身份，仓库无需保存 npm 令牌。[npm 可信发布设置](https://docs.npmjs.com/trusted-publishers/)

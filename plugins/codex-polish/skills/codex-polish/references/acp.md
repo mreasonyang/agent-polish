@@ -58,10 +58,9 @@
 发送 prompt 前，用 [请求组装脚本](../scripts/acp_payload.mjs) 的绝对路径和**原项目目录**。脚本通过标准输入接收 `{"sessionId":"<本次 ACP 会话>","question":"<受保护的本轮问题>","draft":"<受保护的原稿>"}`。在本轮临时目录执行以下命令，将返回的一条 JSON-RPC 帧直接交给已经打开的官方进程。用本轮真实值替换示例内容。命令只把历史保存在内存中，不要先打印帧、让模型复述历史或把帧写入文件。
 
 ```sh
-frame=$(node "<插件内 acp_payload.mjs 的绝对路径>" --cwd "<原项目绝对路径>" <<'CODEX_POLISH_INPUT'
+node "<插件内 acp_payload.mjs 的绝对路径>" --cwd "<原项目绝对路径>" > .acp-in <<'CODEX_POLISH_INPUT'
 {"sessionId":"<本次 ACP 会话>","question":"<受保护的问题>","draft":"<受保护的原稿>"}
 CODEX_POLISH_INPUT
-) && printf '%s\n' "$frame" > .acp-in
 ```
 
 使用原生 stdin 通道时，在同一工具调用内部将脚本成功返回的完整 stdout 直接写入进程句柄，输出预算须足以容纳整帧。截断、脚本报错或传输结果不明时沿用原稿，不尝试重发。用户本轮禁止附带历史时，省略 `--cwd`；禁止外发时跳过整个流程。

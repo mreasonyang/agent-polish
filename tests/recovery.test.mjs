@@ -27,7 +27,7 @@ test('absent records and nonservice errors create nothing', t => {
   assert.equal(activeFailure(project), null);
   assert.equal(clearFailure(project, 'a'.repeat(32)), false);
   for (const scope of [null, 'relative']) assert.equal(noteFailure(scope, 'api_timeout'), false);
-  for (const reason of ['', 'api_refusal', 'meaning_changed', 'missing_api_key', 'acp_permission_requested', null]) assert.equal(noteFailure(project, reason), false);
+  for (const reason of ['', 'api_refusal', 'already_clear', 'missing_api_key', 'acp_permission_requested', null]) assert.equal(noteFailure(project, reason), false);
   assert.equal(fs.existsSync(cache), false);
 });
 

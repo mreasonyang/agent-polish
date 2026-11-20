@@ -13,26 +13,38 @@ function sameDirectory(a, b) {
 
 function accessSetting(directory, operation, filename, value) {
   const target = path.join(directory, filename);
-  if (operation === 'read') {
+  if (operation === 'read' || operation === 'read-bytes') {
     const fd = fs.openSync(target, O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
     try {
-      if (!fs.fstatSync(fd).isFile()) return '';
+      const stat = fs.fstatSync(fd);
+      if (!stat.isFile() || (operation === 'read-bytes' && stat.nlink > 1)) return '';
       const raw = Buffer.alloc(value + 1);
-      const size = fs.readSync(fd, raw, 0, raw.length, 0);
+      let size = 0;
+      while (size < raw.length) {
+        const count = fs.readSync(fd, raw, size, raw.length - size, size);
+        if (!count) break;
+        size += count;
+      }
       if (size > value) return '';
-      return raw.subarray(0, size).toString('latin1').replace(/^[\t-\r ]+|[\t-\r ]+$/g, '');
+      const bytes = raw.subarray(0, size);
+      return operation === 'read-bytes' ? bytes : bytes.toString('latin1').replace(/^[\t-\r ]+|[\t-\r ]+$/g, '');
     } finally {
       fs.closeSync(fd);
     }
   }
-  if (operation !== 'write') throw new Error('invalid operation');
+  if (operation !== 'write' && operation !== 'remove') throw new Error('invalid operation');
   const current = fs.lstatSync(target, { throwIfNoEntry: false });
   if (current && !current.isFile()) throw Object.assign(new Error('invalid setting'), { code: 'EINVAL' });
+  if (operation === 'remove') {
+    if (current) fs.unlinkSync(target);
+    return null;
+  }
   const temporary = path.join(directory, '.' + filename + '-' + randomBytes(12).toString('hex'));
   const fd = fs.openSync(temporary, 'wx', 0o600);
   try {
     try {
-      fs.writeFileSync(fd, value + '\n', 'ascii');
+      if (Buffer.isBuffer(value)) fs.writeFileSync(fd, value);
+      else fs.writeFileSync(fd, value + '\n', 'ascii');
     } finally {
       fs.closeSync(fd);
     }
@@ -65,7 +77,7 @@ export function accessProjectSetting(directory, operation, filename, value) {
 
 const invalid = '';
 
-export function readProjectSetting(cwd, filename, maxBytes, { allowMissingLink = false } = {}) {
+export function readProjectSetting(cwd, filename, maxBytes, { allowMissingLink = false, raw = false } = {}) {
   if (typeof cwd !== 'string' || !path.isAbsolute(cwd)) return [invalid, null];
   try {
     const directory = fs.realpathSync(cwd);
@@ -79,7 +91,7 @@ export function readProjectSetting(cwd, filename, maxBytes, { allowMissingLink =
             return [invalid, base];
           }
         } else {
-          return [accessProjectSetting(settings, 'read', filename, maxBytes), base];
+          return [accessProjectSetting(settings, raw ? 'read-bytes' : 'read', filename, maxBytes), base];
         }
       } catch (error) {
         if (error.code !== 'ENOENT') return [invalid, base];

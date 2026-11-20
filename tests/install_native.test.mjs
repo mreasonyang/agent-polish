@@ -65,6 +65,8 @@ nativeTest(
     const chinese = invoke(join(download, '安装回复润色.command'), []);
     assert.ok(chinese.includes('用一句话解释 DNS。'));
     assert.match(chinese, /未设置模式的项目默认自动润色/);
+    assert.match(chinese, /切换到 Turbo 模式.*跳过 OpenAI/);
+    assert.match(chinese, /只有 Gemini 改写会附带以前的问答，默认最近最多 2 轮/);
     assert.match(chinese, /\/hooks.*信任.*UserPromptSubmit.*新开/);
     assert.ok(chinese.includes('复用你现有的 Antigravity 登录'));
     assert.ok(chinese.includes(join(snapshot(), GUIDE)));
@@ -74,6 +76,8 @@ nativeTest(
     const english = invoke(join(download, 'Install Codex Polish.command'), []);
     assert.ok(english.includes('Explain what DNS does in one sentence.'));
     assert.match(english, /without a saved mode default to automatic polishing/);
+    assert.match(english, /Switch to turbo mode.*skip OpenAI/);
+    assert.match(english, /Only Gemini receives earlier exchanges, up to two by default/);
     assert.match(english, /trust.*UserPromptSubmit.*\/hooks.*new chat/);
     const first = snapshot();
     assert.ok(first.startsWith(join(profile,'codex-polish','sources') + '/'));

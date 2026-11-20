@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { isDeepStrictEqual, parseArgs } from 'node:util';
-import { CREDENTIAL, DISPLAY_CONTROL, PREFIX } from '../skills/codex-polish/scripts/text_guard.mjs';
+import { CREDENTIAL, DISPLAY_CONTROL } from '../skills/codex-polish/scripts/text_guard.mjs';
 import { DEFAULT_HISTORY_TURNS, MAX_HISTORY_TURNS } from './preferences.mjs';
 
 export const MAX_HISTORY_BYTES = 16 * 1024;
@@ -13,7 +13,7 @@ const ATTACHMENTS = ['images', 'file_ids', 'local_images', 'audio', 'audio_refer
 
 function safeText(text) {
   return typeof text === 'string' && text.trim() !== '' && text.length <= MAX_HISTORY_BYTES && text.isWellFormed() &&
-    !CREDENTIAL.test(text) && !DISPLAY_CONTROL.test(text) && !HOST_TEXT.test(text) && !text.includes(PREFIX);
+    !CREDENTIAL.test(text) && !DISPLAY_CONTROL.test(text) && !HOST_TEXT.test(text);
 }
 
 function textMessage(parts, kind) {

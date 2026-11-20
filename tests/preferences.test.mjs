@@ -123,6 +123,74 @@ test('decision policy inherits, and invalid decisions disable only OpenAI', t =>
   assert.deepEqual(policy(), ['auto', 'auto', true]);
 });
 
+test('rewrite mode inherits independently of the trigger and Decisions settings', t => {
+  const { cwd, project, call, check } = fixture(t);
+  const parent = { where: project };
+  const setting = path.join(project, '.codex/codex-polish.rewrite-mode');
+  function modeSelection(options) {
+    const { rewrite_mode, rewrite_mode_configured } = check(options);
+    return [rewrite_mode, rewrite_mode_configured];
+  }
+  assert.deepEqual(modeSelection(), ['normal', false]);
+  assert.equal(fs.existsSync(setting), false);
+  assert.deepEqual(json(call(['set-rewrite-mode', 'turbo'], parent)), { rewrite_mode: 'turbo', file: setting });
+  assert.equal(fs.statSync(setting).mode & 0o777, 0o600);
+  json(call(['set-mode', 'manual']));
+  json(call(['set-decisions', 'off']));
+  assert.deepEqual(modeSelection(), ['turbo', true]);
+  const child = json(call(['set-rewrite-mode', 'normal']));
+  const status = check();
+  assert.deepEqual([status.rewrite_mode, status.rewrite_mode_configured, status.mode, status.decisions_mode], ['normal', true, 'manual', 'off']);
+  assert.equal(fs.readFileSync(setting, 'utf8'), 'turbo\n');
+  assert.deepEqual(modeSelection(parent), ['turbo', true]);
+  assert.equal(call(['set-rewrite-mode', 'fast']).status, 2);
+  assert.equal(fs.readFileSync(child.file, 'utf8'), 'normal\n');
+  fs.unlinkSync(child.file);
+  fs.writeFileSync(path.join(cwd, '.git'), 'gitdir: ../.git');
+  assert.deepEqual(modeSelection(), ['normal', false]);
+});
+
+test('invalid or linked rewrite strategy settings prevent provider calls', t => {
+  const { call, check, env, project } = fixture(t);
+  const { file } = json(call(['set-rewrite-mode', 'turbo']));
+  const inspect = () => {
+    const options = { env: { ...env, OPENAI_API_KEY: 'example' } };
+    const status = check(options);
+    assert.equal(status.rewrite_mode, null);
+    assert.equal(status.decisions_enabled, false);
+    assert.equal(status.prompt_source, 'default');
+    assert.ok(status.blockers.includes('rewrite_mode_invalid'));
+    assert.equal(json(call(['decision', 'judge', '--trigger', 'explicit'], options)).reason, 'rewrite_mode_invalid');
+    const prompt = call(['prompt'], options);
+    assert.equal(prompt.status, 1);
+    assert.match(prompt.stderr, /set-rewrite-mode/);
+  };
+  fs.writeFileSync(file, 'typo'); inspect();
+  fs.unlinkSync(file);
+  const parent = json(call(['set-rewrite-mode', 'normal'], { where: project }));
+  fs.symlinkSync(parent.file, file); inspect();
+  assert.notEqual(call(['set-rewrite-mode', 'turbo']).status, 0);
+  assert.equal(fs.readFileSync(parent.file, 'utf8'), 'normal\n');
+});
+
+test('prompt shows the default for the current rewrite mode and keeps the custom style across modes', t => {
+  const { call } = fixture(t);
+  const prompt = () => json(call(['prompt']));
+  const normal = prompt();
+  json(call(['set-rewrite-mode', 'turbo']));
+  const turbo = prompt();
+  assert.equal(turbo.source, 'default');
+  assert.notEqual(turbo.text, normal.text);
+  assert.match(turbo.text, /rephrase|rewrite/i);
+  const custom = 'Keep each paragraph short.';
+  json(call(['set-prompt'], { input: custom }));
+  assert.deepEqual(prompt(), { source: 'custom', text: custom });
+  json(call(['set-rewrite-mode', 'normal']));
+  assert.deepEqual(prompt(), { source: 'custom', text: custom });
+  json(call(['set-prompt', '--reset']));
+  assert.deepEqual(prompt(), normal);
+});
+
 test('portable project hook does not require the plugin environment', t => {
   const { mode, cwd, env, project } = fixture(t);
   fs.writeFileSync(mode, 'auto');

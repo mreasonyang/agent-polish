@@ -3,13 +3,19 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { tmpdir } from 'node:os';
-import { configurationSteps, showSetupGuidance, doctor } from '../scripts/install.mjs';
+import { homedir, tmpdir } from 'node:os';
+import { PassThrough } from 'node:stream';
+import { setImmediate } from 'node:timers/promises';
+import { chooseSetupMode, configurationSteps, showSetupGuidance, doctor } from '../scripts/install.mjs';
+import { rewriteModeSettings } from '../plugins/codex-polish/hooks/rewrite_mode.mjs';
+import { makeProject } from './hook_fixture.mjs';
 
 const checks = {
   ui_language: 'en',
   blockers: [],
   mode: 'auto',
+  rewrite_mode: 'normal',
+  rewrite_mode_configured: true,
   google_auth_method: 'existing-session',
   decisions_mode: 'auto',
   decisions_enabled: false,
@@ -26,6 +32,21 @@ test('bilingual setup and doctor distinguish auth, project model, history, decis
     const data = { ...checks, ui_language: lang };
     const summarize = (extra) => configurationSteps({ ...data, ...extra })[0].join('\n');
     assert.match(summarize({}), lang === 'en' ? /go straight to Gemini/ : /直接交给 Gemini/);
+    const withOpenAI = summarize({ decisions_enabled: true });
+    assert.match(
+      withOpenAI,
+      lang === 'en' ? /OpenAI uses only the current question, draft, and any custom polishing prompt/ : /OpenAI 只用本轮问题、草稿和已设置的自定义润色提示词/
+    );
+    assert.doesNotMatch(withOpenAI, /meaning|原意/);
+    const turbo = { rewrite_mode: 'turbo', mode: 'manual' };
+    const turboSummary = summarize(turbo);
+    assert.match(turboSummary, lang === 'en' ? /Turbo skips the OpenAI check/ : /Turbo 会跳过 OpenAI 检查/);
+    assert.doesNotMatch(turboSummary, /Set up OpenAI Decisions|配置 OpenAI Decisions/);
+    assert.match(doctor({ ...data, ...turbo }), lang === 'en' ? /When to polish: only when asked\nRewrite mode: turbo/ : /润色时机：只在我要求时\n改写模式：turbo/);
+    const invalidMode = { rewrite_mode: null, blockers: ['rewrite_mode_invalid'] };
+    assert.match(summarize(invalidMode), lang === 'en' ? /rewrite mode is invalid/ : /改写模式无效/);
+    assert.doesNotMatch(summarize(invalidMode), /go straight to Gemini|直接交给 Gemini/);
+    assert.match(doctor(data), lang === 'en' ? /Gemini receives up to 2 earlier completed exchanges/ : /Gemini 改写时最多带上最近 2 轮完整问答/);
     assert.match(summarize({}), lang === 'en' ? /Explain what DNS does in one sentence\./ : /用一句话解释 DNS。/);
     assert.match(summarize({ mode: 'manual' }), lang === 'en' ? /then polish your reply/ : /再把你的回复润色一下/);
     assert.match(summarize({ mode: 'off' }), lang === 'en' ? /Switch to on-demand rewrites/ : /改回手动润色/);
@@ -65,7 +86,154 @@ test('bilingual setup and doctor distinguish auth, project model, history, decis
     }
   }
 });
+test('rewrite mode picker responds to arrows, Enter and cancellation and restores the terminal', async (t) => {
+  const down = '\x1b[B', up = '\x1b[A', enter = '\r';
+  for (const [name, keys, expected, lang, initiallyRaw] of [
+    ['Enter accepts the default', [enter], 'normal', 'en', false],
+    ['Down selects Turbo', [down, enter], 'turbo', 'zh', false],
+    ['Up returns to Normal', [down, up, enter], 'normal', 'en', true],
+    ['2 leaves Normal highlighted', ['2', enter], 'normal', 'en', false],
+    ['1 does not confirm a choice', ['1', down, enter], 'turbo', 'en', false],
+    ['Escape cancels a pending selection', [down, '\x1b'], null, 'zh', false],
+    ['Ctrl+C cancels', ['\x03'], null, 'en', false],
+    ['Ctrl+D cancels', ['\x04'], null, 'en', false],
+    ['EOF cancels', [null], null, 'en', false]
+  ]) {
+    await t.test(name, { timeout: 3000 }, async (t) => {
+      const input = new PassThrough({ autoDestroy: false }), output = new PassThrough();
+      input.isTTY = output.isTTY = true;
+      input.isRaw = initiallyRaw;
+      input.setRawMode = (enabled) => {
+        input.isRaw = enabled;
+        return input;
+      };
+      t.after(() => { input.destroy(); output.destroy(); });
+      let display = '';
+      output.setEncoding('utf8').on('data', (chunk) => { display += chunk; });
+      const selection = chooseSetupMode('/project', lang, input, output);
+      await setImmediate();
+      assert.equal(input.isRaw, true);
+      assert.match(display, /Normal/);
+      assert.match(display, /Turbo/);
+      assert.match(display, lang === 'en' ? /Enter/i : /回车|Enter/);
+      assert.match(display, /↑/);
+      assert.match(display, /↓/);
+      for (const key of keys) {
+        const previousDisplay = display;
+        if (key === null) input.end();
+        else input.write(key);
+        await setImmediate();
+        if (key === '1' || key === '2') assert.equal(input.isRaw, true, 'numeric input leaves the menu open');
+        if (key === down || key === up) assert.notEqual(display, previousDisplay, 'redraw the highlighted choice');
+      }
+      assert.equal(await selection, expected);
+      assert.equal(input.isRaw, initiallyRaw);
+    });
+  }
+});
+
+test('closing the terminal during selection cancels the picker', async () => {
+  const input = new PassThrough(), output = new PassThrough();
+  input.isTTY = output.isTTY = true;
+  input.setRawMode = () => input;
+  const selection = chooseSetupMode('/project', 'en', input, output);
+  input.destroy();
+  assert.equal(await selection, null);
+  output.destroy();
+});
+
+test('first interactive setup chooses a mode before agy, saves it and refreshes its guidance', async (t) => {
+  for (const [lang, expected] of [['en', 'normal'], ['zh', 'turbo']]) {
+    await t.test(lang, async (t) => {
+      const { project, cwd } = makeProject(t);
+      const transcript = [], questions = [], reads = [];
+      t.mock.method(console, 'log', (line) => transcript.push(line));
+      const ok = await showSetupGuidance({
+        cwd: project,
+        interactive: true,
+        check(where) {
+          reads.push(where);
+          return { ...checks, ...rewriteModeSettings(where), ui_language: lang, blockers: ['agy_missing'], agy_available: false };
+        },
+        chooseMode(where, language) {
+          assert.equal(where, project);
+          assert.equal(language, lang);
+          questions.push('mode');
+          return expected;
+        },
+        install: () => assert.fail('the user declined the dependency installation'),
+        prompt(message) {
+          assert.match(message, /agy/i);
+          questions.push('agy');
+          return 'n';
+        }
+      });
+      assert.equal(ok, true);
+      assert.deepEqual(questions, ['mode', 'agy']);
+      assert.deepEqual(reads, [project, project]);
+      assert.equal(fs.readFileSync(join(project, '.codex/codex-polish.rewrite-mode'), 'utf8'), expected + '\n');
+      assert.deepEqual(rewriteModeSettings(cwd), { rewrite_mode: expected, rewrite_mode_configured: true });
+      assert.match(transcript.at(-1), expected === 'normal' ? /go straight to Gemini/ : /Turbo 会跳过 OpenAI 检查/);
+    });
+  }
+});
+
+test('inherited modes, invalid settings, noninteractive and dependency-only setup skip mode selection', async (t) => {
+  const { project, cwd } = makeProject(t);
+  const setting = join(project, '.codex/codex-polish.rewrite-mode');
+  const chooseMode = t.mock.fn(() => null), saveRewriteMode = t.mock.fn();
+  t.mock.method(console, 'log', () => {});
+  const setup = (options = {}) => showSetupGuidance({
+    cwd, interactive: true, chooseMode, saveRewriteMode,
+    prompt: () => assert.fail('unexpected text prompt'),
+    check: (where) => ({ ...checks, ...rewriteModeSettings(where) }), ...options
+  });
+  await setup({ interactive: false });
+  await setup({ dependencyOnly: true });
+  for (const value of ['normal', 'turbo', 'invalid']) {
+    fs.writeFileSync(setting, value + '\n');
+    await setup();
+    assert.equal(fs.readFileSync(setting, 'utf8'), value + '\n');
+  }
+  assert.equal(chooseMode.mock.callCount(), 0);
+  fs.unlinkSync(setting);
+  await setup();
+  assert.equal(chooseMode.mock.callCount(), 1, 'a cancelled choice leaves the project unconfigured');
+  assert.equal(saveRewriteMode.mock.callCount(), 0);
+  assert.equal(fs.existsSync(join(cwd, '.codex')), false);
+});
+
+test('setup outside a project lets the user defer or choose a project directory', async (t) => {
+  const { project } = makeProject(t);
+  const fresh = { ...checks, rewrite_mode_configured: false };
+  const saveRewriteMode = t.mock.fn(), chooseMode = t.mock.fn(() => 'normal');
+  t.mock.method(console, 'log', () => {});
+  for (const [cwd, answer] of [[homedir(), ''], ['/', null], [join(homedir(), 'Downloads'), '']]) {
+    const prompt = t.mock.fn(() => answer);
+    await showSetupGuidance({ cwd, interactive: true, check: () => fresh, saveRewriteMode, chooseMode, prompt });
+    assert.equal(prompt.mock.callCount(), 1);
+    assert.equal(chooseMode.mock.callCount(), 0);
+    assert.equal(saveRewriteMode.mock.callCount(), 0);
+  }
+  const answers = [join(project, 'missing'), homedir(), '/', project];
+  await showSetupGuidance({
+    cwd: homedir(), interactive: true,
+    check: (where) => ({
+      ...fresh, rewrite_mode_configured: saveRewriteMode.mock.calls.some(call => call.arguments[1] === where)
+    }),
+    saveRewriteMode, chooseMode,
+    prompt() {
+      assert.ok(answers.length, 'unexpected prompt');
+      return answers.shift();
+    }
+  });
+  assert.deepEqual(answers, []);
+  assert.deepEqual(chooseMode.mock.calls.map(call => call.arguments), [[project, 'en']]);
+  assert.deepEqual(saveRewriteMode.mock.calls.map(call => call.arguments), [['normal', project]]);
+});
+
 test('interactive dependency prompts, opt-ins, browser consent, failure messaging and noninteractive behavior', async (t) => {
+  const { project } = makeProject(t);
   const output = [];
   t.mock.method(console, 'log', (...args) => output.push(args.join(' ')));
   t.mock.method(console, 'error', (...args) => output.push(args.join(' ')));
@@ -85,6 +253,7 @@ test('interactive dependency prompts, opt-ins, browser consent, failure messagin
       installed = false;
     output.length = 0;
     const ok = await showSetupGuidance({
+      cwd: project,
       interactive,
       installDependency,
       dependencyOnly,

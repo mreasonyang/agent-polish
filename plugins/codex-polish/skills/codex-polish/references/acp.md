@@ -7,7 +7,13 @@
 ## 启动和认证
 
 1. 确认宿主支持持续输入、中断与回收，检查返回的 `agy_path` 是官方 Antigravity CLI 可执行文件的绝对路径。要求 1.2.1 或更新版本。使用本地环境检查返回的 `google_auth_method`。默认 `existing-session` 表示让官方进程自行使用已有登录。凭据文件和密钥值始终由 `agy` 管理，不要读取、打印或向用户索取。专用角色会去掉默认工具并关闭命令自动执行；Antigravity 部署自己的 hooks 仍可能运行。
-2. 用执行工具运行 `mktemp -d`，保留它返回的绝对路径。以该目录为工作目录，创建 `.agents/agents/codex-polish-editor/`，把随 Skill 分发的 [纯文本编辑角色](codex-polish-editor.md) 复制到 `.agents/agents/codex-polish-editor/agent.md`。这个工作区只含角色文件，角色允许的工具列表为空，关闭命令自动执行。用 `agy acp --agent codex-polish-editor --sandbox` 启动官方进程；启动前清除其子进程环境的 `OPENAI_API_KEY`。角色无法发现就回原稿。不要附加项目目录或编辑器工具。在 macOS/Linux 的本轮私有临时目录中，用 `mkfifo -m 600 .acp-in` 创建输入管道。用持久执行工具启动官方进程，令它从该管道读入、向执行工具输出。保留进程句柄并持续读取输出。将下例中的 `<agy_path>` 换成 `check.agy_path` 并按一个 shell 参数安全引用，即使桌面端的 PATH 缺少它的目录也能启动。下列命令在临时目录执行；若使用 PTY，选 `tty: true`、`login: false`。
+2. 用执行工具运行 `mktemp -d`，保留它返回的绝对路径。以该目录为工作目录，创建 `.agents/agents/codex-polish-editor/`。改写时运行下面的命令，将当前项目的编辑角色写入私有工作区，成功后才启动 ACP。本轮不带历史时也传原项目目录。只检查连接或查看模型菜单时，使用随插件分发的[默认角色](codex-polish-editor.md)，直接复制到同一路径即可。
+
+   ```sh
+   node "<Skill 目录>/scripts/editor_role.mjs" --cwd "<原项目绝对路径>" > .agents/agents/codex-polish-editor/agent.md
+   ```
+
+   这个工作区只含角色文件，角色允许的工具列表为空，关闭命令自动执行。用 `agy acp --agent codex-polish-editor --sandbox` 启动官方进程；启动前清除其子进程环境的 `OPENAI_API_KEY`。角色无法发现就回原稿。不要附加项目目录或编辑器工具。在 macOS/Linux 的本轮私有临时目录中，用 `mkfifo -m 600 .acp-in` 创建输入管道。用持久执行工具启动官方进程，令它从该管道读入、向执行工具输出。保留进程句柄并持续读取输出。将下例中的 `<agy_path>` 换成 `check.agy_path` 并按一个 shell 参数安全引用，即使桌面端的 PATH 缺少它的目录也能启动。下列命令在临时目录执行；若使用 PTY，选 `tty: true`、`login: false`。
 
    ```sh
    unset OPENAI_API_KEY
@@ -55,17 +61,17 @@
 
 ## 提交一次、读到结束
 
-发送 prompt 前，用 [请求组装脚本](../scripts/acp_payload.mjs) 的绝对路径和**原项目目录**。脚本通过标准输入接收 `{"sessionId":"<本次 ACP 会话>","question":"<受保护的本轮问题>","draft":"<受保护的原稿>"}`。在本轮临时目录执行以下命令，将返回的一条 JSON-RPC 帧直接交给已经打开的官方进程。用本轮真实值替换示例内容。命令只把历史保存在内存中，不要先打印帧、让模型复述历史或把帧写入文件。
+发送 prompt 前，用 [请求组装脚本](../scripts/acp_payload.mjs) 的绝对路径和**原项目目录**。将本次会话 ID、通过本地检查的本轮问题和完整草稿原样作为 `sessionId`、`question` 和 `draft` 传入脚本的标准输入。在本轮临时目录执行以下命令，把 JSON-RPC 帧直接交给已经打开的官方进程。两条路径都传已加载的角色文件，并用首次检查的 `check.rewrite_mode` 替换下面的 `<check.rewrite_mode>`。用户要求本轮不带历史时，在下面的命令中加 `--no-history`。用本轮真实值替换示例内容。命令只把历史保存在内存中，不要先打印帧、让模型复述历史或把帧写入文件。
 
 ```sh
-node "<插件内 acp_payload.mjs 的绝对路径>" --cwd "<原项目绝对路径>" > .acp-in <<'CODEX_POLISH_INPUT'
-{"sessionId":"<本次 ACP 会话>","question":"<受保护的问题>","draft":"<受保护的原稿>"}
+node "<插件内 acp_payload.mjs 的绝对路径>" --cwd "<原项目绝对路径>" --editor-role-file .agents/agents/codex-polish-editor/agent.md --rewrite-mode "<check.rewrite_mode>" > .acp-in <<'CODEX_POLISH_INPUT'
+{"sessionId":"<本次 ACP 会话>","question":"<本轮问题原文>","draft":"<完整草稿原文>"}
 CODEX_POLISH_INPUT
 ```
 
-使用原生 stdin 通道时，在同一工具调用内部将脚本成功返回的完整 stdout 直接写入进程句柄，输出预算须足以容纳整帧。截断、脚本报错或传输结果不明时沿用原稿，不尝试重发。用户本轮禁止附带历史时，省略 `--cwd`；禁止外发时跳过整个流程。
+使用原生 stdin 通道时，在同一工具调用内部将脚本成功返回的完整 stdout 直接写入进程句柄，输出预算须足以容纳整帧。截断、脚本报错或传输结果不明时沿用原稿，不尝试重发。用户禁止外发时跳过整个流程。若材料超限、改写模式与首次检查不同，或已加载的角色与当前提示词不符，组装脚本会在生成帧前停止。本轮保留原稿，不记录为服务故障。
 
-脚本生成一条 `session/prompt`（请求 id 为 6）。第一块是编辑指令，第二块是包含 `question`、`draft` 以及可选 `history` 的 JSON 文本。脚本在组装请求时读取原项目的历史轮数，默认 2 轮，最多附上 10 轮、合计 16 KiB 的历史正文。每轮以 `{"user":"…","assistant":"…"}` 表示本轮之前一次已完成的问答，历史按时间排列。它帮助理解指代和语气，新结论必须在原稿中有依据。启用 Decisions 时，两次判定只使用本轮材料。轮数为 0 或找不到可用记录时，脚本省略 `history`。
+脚本生成一条 `session/prompt`（请求 id 为 6）。编辑规则由启动时加载的专用角色提供。采用项目自定义提示词时，普通和 Turbo 模式的角色正文都只有用户原文。若用户在这轮中途更改改写模式或润色提示词，结束当前 ACP 会话，新设置从下次改写生效。请求只有一个文本块，内容是含 `question`、`draft` 和可选 `history` 的 JSON 对象序列化后的字符串。脚本在组装请求时读取原项目的历史轮数，默认 2 轮，最多附上 10 轮、合计 16 KiB 的历史正文。每轮以 `{"user":"…","assistant":"…"}` 表示本轮之前一次已完成的问答，历史按时间排列。仅 Gemini 的请求可附带历史问答。紧凑 UTF-8 JSON 材料上限为 256 KiB；先移除最老的完整问答，始终保留本轮原文。轮数为 0 或找不到可用记录时，脚本省略 `history`。
 
 按换行缓冲解析 JSON-RPC 2.0，保留跨读取的残帧。先用 `method` 区分服务端请求／通知和响应；两端各自分配的 ID 可能相同。每次最多一个待响应请求，响应必须有对应 ID（含类型）且只有 `result` 或 `error` 之一。进程仍在运行时，空读只表示暂无输出。按顺序处理同批中的通知与响应，忽略其他会话及思考、进度文本。只在本次 prompt 等待期间拼接本会话 `agent_message_chunk` 中 `content.type == "text"` 的字符串 `text`，逐字保留标点、空白和换行。正文夹有非文本内容就放弃整份候选。匹配的 `end_turn` 到达时必须已有完整非空正文，且没有之前触发的错误，才能进入本地校验。
 

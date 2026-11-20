@@ -5,9 +5,10 @@ import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
 import { createHash, randomUUID } from 'node:crypto';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import { on } from 'node:events';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import { createInterface } from 'node:readline';
+import { clearLine, createInterface, cursorTo, emitKeypressEvents, moveCursor } from 'node:readline';
 import { createInterface as createPrompt } from 'node:readline/promises';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { isDeepStrictEqual } from 'node:util';
@@ -583,13 +584,18 @@ async function setup(root, store, run, setEnabled, action) {
   const lines = [
     status,
     tr(
-      '未设置模式的项目默认自动润色，已保存的模式继续生效。改写时，Google 会收到用占位符保护了固定内容的本轮问题和草稿，以及按原文附带的历史问答（默认最多 2 轮）。开启 OpenAI 检查时，OpenAI 只收到本轮材料。',
-      'Projects without a saved mode default to automatic polishing. Saved modes still apply. On a rewrite, Google receives the current question and draft with fixed details masked, plus earlier exchanges as written (up to two by default). Optional OpenAI checks use only current-turn material.',
+      '未设置模式的项目默认自动润色，已保存的模式继续生效。使用默认的普通改写模式并开启风格检查时，OpenAI 根据本轮问题和草稿原文判断要不要润色。改写时，Google 会收到本轮问题和草稿原文。只有 Gemini 改写会附带以前的问答，默认最近最多 2 轮。',
+      'Projects without a saved mode default to automatic polishing. Saved modes still apply. In normal rewrite mode (the default), the optional OpenAI style check uses your current question and draft as written. Google receives the current question and draft when Gemini rewrites. Only Gemini receives earlier exchanges, up to two by default.',
       lang
     ),
     tr(
-      '要自动润色或附带历史，请在 Codex 的「设置 → Hooks」（CLI 输入 /hooks）中信任本插件的 UserPromptSubmit，再新开一个聊天。想改模式，可以说「只在我要求时润色」或「关闭回复润色」。',
-      'For automatic polishing or history, trust the plugin’s UserPromptSubmit hook in Codex Settings → Hooks (/hooks in the CLI), then start a new chat. To change modes, say “Only polish when I ask” or “Turn off Codex Polish”.',
+      '如果你写了自己的润色提示词，插件会把它和草稿一起发给 Google。开了 OpenAI 检查的话，OpenAI 只在判断草稿要不要改时用到这段提示词。',
+      'If you set a custom polishing prompt, it is also sent to Google when rewriting. If the OpenAI style check is on, it also uses that prompt to decide whether the draft needs editing.',
+      lang
+    ),
+    tr(
+      '要自动润色或附带历史，请在 Codex 的「设置 → Hooks」（CLI 输入 /hooks）中信任本插件的 UserPromptSubmit，再新开一个聊天。想改触发时机，可以说「只在我要求时润色」或「关闭回复润色」。说「切换到 Turbo 模式」可跳过 OpenAI，把每份符合条件的草稿直接交给 Gemini。',
+      'For automatic polishing or history, trust the plugin’s UserPromptSubmit hook in Codex Settings → Hooks (/hooks in the CLI), then start a new chat. To change when polishing runs, say “Only polish when I ask” or “Turn off Codex Polish”. Say “Switch to turbo mode” to skip OpenAI and send each eligible draft directly to Gemini.',
       lang
     )
   ];
@@ -768,15 +774,24 @@ export async function manage(action, root, store, run = codex, setEnabled = writ
     return setup(root, store, run, setEnabled, action);
   });
 }
-function readChecks() {
+function projectPreference(args, cwd) {
   const helper = join(ROOT, PRODUCT, 'hooks/preferences.mjs');
-  const result = spawnSync(process.execPath, [helper, 'check', '--cwd', process.cwd()], {
+  return spawnSync(process.execPath, [helper, ...args, '--cwd', cwd], {
     encoding: 'utf8',
     timeout: 10_000
   });
+}
+function readChecks(cwd = process.cwd()) {
+  const result = projectPreference(['check'], cwd);
   if (result.status !== 0 || result.error)
     throw fail('没法读取插件的环境检查结果。', "Couldn't read the plugin environment check results.");
   return JSON.parse(result.stdout);
+}
+function saveSetupMode(mode, cwd) {
+  const result = projectPreference(['set-rewrite-mode', mode], cwd);
+  if (result.status !== 0 || result.error || JSON.parse(result.stdout).rewrite_mode !== mode)
+    throw fail(`插件已安装，但没能将改写模式保存到 ${cwd}。请检查项目的写入权限。`,
+      `The plugin is installed, but the rewrite mode could not be saved in ${cwd}. Check the project’s write permissions.`);
 }
 async function runBootstrap(script, target, options) {
   const proc = spawn('/bin/bash', [script, '--dir', target], { ...options, stdio: 'ignore', detached: true });
@@ -857,23 +872,29 @@ export async function installAgy() {
   });
 }
 function decisionsSummary(checks, lang) {
+  if (checks.rewrite_mode === 'turbo')
+    return tr(
+      'Turbo 会跳过 OpenAI 检查，把每份符合条件的草稿直接交给 Gemini。可在项目里说「恢复普通模式」。',
+      'Turbo skips the OpenAI check and sends each eligible draft directly to Gemini. Say “Switch back to normal mode” to restore the normal workflow.',
+      lang
+    );
   if (checks.decisions_mode === 'off')
     return tr(
-      '改写检查：未开启，回复会直接交给 Gemini 润色。',
-      'Rewrite checks: off. Replies go straight to Gemini.',
+      'OpenAI 风格检查已关闭，草稿会直接交给 Gemini 润色。',
+      'The OpenAI style check is off. Drafts go straight to Gemini.',
       lang
     );
   if (checks.blockers.includes('openai_key_invalid'))
-    return tr('OpenAI 检查目前用不了。', "OpenAI checks aren't available right now.", lang);
+    return tr('OpenAI 风格检查目前用不了。', "The OpenAI style check isn't available right now.", lang);
   if (checks.decisions_enabled)
     return tr(
-      '改写检查：已配置 OpenAI Decisions，先判断要不要改写，改完再核对原意没变。',
-      'Rewrite checks: using OpenAI Decisions to decide whether a reply needs a rewrite and verify the meaning stays intact.',
+      '已启用 OpenAI Decisions。OpenAI 只用本轮问题、草稿和已设置的自定义润色提示词判断是否需要改写。',
+      'OpenAI Decisions is on. OpenAI uses only the current question, draft, and any custom polishing prompt to decide whether to rewrite.',
       lang
     );
   return tr(
-    '改写检查：回复直接交给 Gemini 润色。想加一层检查，在 Codex 里说「配置 OpenAI Decisions」。',
-    'Rewrite checks: replies go straight to Gemini. If you want extra checks, tell Codex “Set up OpenAI Decisions”.',
+    '草稿会直接交给 Gemini 润色。想先让 OpenAI 判断草稿是否需要润色，可以在 Codex 里说「配置 OpenAI Decisions」。',
+    'Drafts go straight to Gemini. To have OpenAI check whether they need editing first, tell Codex “Set up OpenAI Decisions”.',
     lang
   );
 }
@@ -901,9 +922,17 @@ const issues = {
     '移除 CODEX_POLISH_AGY_AUTH 就能恢复 Antigravity 默认登录（existing-session）。',
     'Unset CODEX_POLISH_AGY_AUTH to use the default Antigravity sign-in (existing-session).'
   ],
+  rewrite_mode_invalid: [
+    '这个项目的改写模式无效。请在 Codex 里说「恢复普通模式」或「切换到 Turbo 模式」。',
+    'The project rewrite mode is invalid. Ask Codex to “Switch back to normal mode” or “Switch to turbo mode”.'
+  ],
   gemini_model_invalid: [
     '这个项目的改写模型设置无效。请在 Codex 里说「选择改写模型」。',
     "The project's model setting is invalid. Ask Codex to “Choose a rewrite model”."
+  ],
+  editor_prompt_invalid: [
+    '这个项目的润色提示词无效。请在 Codex 里说「设置润色提示词」并提供新文本，或说「恢复默认润色提示词」。',
+    'The project polishing prompt is invalid. Ask Codex to “Set the polishing prompt” with new text or “Restore the default polishing prompt”.'
   ],
   unsupported_node: [
     '安装 Node.js 22.16 或更高版本，再用 node --version 检查。',
@@ -945,8 +974,8 @@ export function configurationSteps(checks) {
         lang
       )
     );
+  if (checks.rewrite_mode) lines.push(decisionsSummary(checks, lang));
   lines.push(
-    decisionsSummary(checks, lang),
     tr(
       '在项目里新开一个 Codex 对话，说「配置回复润色」就能查看或修改设置。',
       'Open a new project chat in Codex and say “Set up Codex Polish” to view or change settings.',
@@ -977,7 +1006,7 @@ async function ask(prompt) {
   io.once('SIGINT', cancel);
   io.once('close', cancel);
   try {
-    return (await io.question(prompt, { signal: controller.signal })).trim().toLowerCase();
+    return (await io.question(prompt, { signal: controller.signal })).trim();
   } catch {
     console.log();
     return null;
@@ -991,18 +1020,88 @@ function openPage(url) {
       .status === 0
   );
 }
+function isProjectDirectory(directory) {
+  return directory !== dirname(directory) && directory !== canonical(homedir());
+}
+async function chooseSetupProject(cwd, prompt, lang) {
+  const launchedFromPackage = cwd === ROOT && !fs.existsSync(join(ROOT, '.git'));
+  const launchedFromDownloads = cwd === canonical(join(homedir(), 'Downloads'));
+  if (isProjectDirectory(cwd) && !launchedFromPackage && !launchedFromDownloads &&
+      process.env.CODEX_POLISH_INSTALL_WINDOW !== '1') return cwd;
+  for (;;) {
+    const answer = await prompt(tr('输入要配置的项目目录，或按回车稍后在 Codex 里选择：',
+      'Enter the project folder, or press Enter to choose later in Codex: ', lang));
+    if (!answer) return null;
+    const name = answer.startsWith('~/') ? join(homedir(), answer.slice(2)) : resolve(cwd, answer);
+    try {
+      const project = fs.realpathSync(name);
+      if (isProjectDirectory(project) && fs.statSync(project).isDirectory()) return project;
+    } catch { /* Ask again if the folder does not exist or cannot be accessed. */ }
+    console.log(tr('请输入已有的项目文件夹。', 'Enter an existing project folder.', lang));
+  }
+}
+export async function chooseSetupMode(project, lang, input = process.stdin, output = process.stdout) {
+  if (input.destroyed || input.readableEnded) return null;
+  const wasRaw = !!input.isRaw;
+  const wasFlowing = input.readableFlowing;
+  let selected = 'normal';
+  // Keep only the two short option rows in the redraw area. Descriptions may wrap.
+  function draw() {
+    clearLine(output, 0);
+    output.write((selected === 'normal' ? '❯ ● Normal' : '  ○ Normal') + '\r\n');
+    clearLine(output, 0);
+    output.write(selected === 'turbo' ? '❯ ● Turbo' : '  ○ Turbo');
+  }
+  function restoreInput() {
+    if (!wasRaw && input.isRaw && !input.destroyed) input.setRawMode(false);
+  }
+  emitKeypressEvents(input);
+  const keys = on(input, 'keypress', { close: ['end', 'close'] });
+  // A stream may destroy its terminal handle immediately after emitting end.
+  input.once('end', restoreInput);
+  try {
+    if (!wasRaw) input.setRawMode(true);
+    input.resume();
+    output.write(tr(
+      `为这个项目选择改写模式：${project}\nNormal（默认）：按需润色，可先用 OpenAI 判断。\nTurbo：跳过 OpenAI，将每条可润色的回复直接交给 Gemini。\n用 ↑ ↓ 方向键移动，按回车确认。\n`,
+      `Choose a rewrite mode for ${project}\nNormal (default): Polish as needed, with an optional OpenAI check.\nTurbo: Skip OpenAI and send every eligible reply directly to Gemini.\nUse the ↑ ↓ arrow keys to move and press Enter to confirm.\n`, lang));
+    draw();
+    for await (const [, key] of keys) {
+      if (key.name === 'return' || key.name === 'enter') return selected;
+      if (key.name === 'escape' || (key.ctrl && ['c', 'd'].includes(key.name))) return null;
+      if (key.name !== 'up' && key.name !== 'down') continue;
+      const next = key.name === 'up' ? 'normal' : 'turbo';
+      if (next === selected) continue;
+      selected = next;
+      moveCursor(output, 0, -1);
+      cursorTo(output, 0);
+      draw();
+    }
+    return null;
+  } finally {
+    await keys.return();
+    input.off('end', restoreInput);
+    restoreInput();
+    if (!wasFlowing) input.pause();
+    output.write('\n');
+  }
+}
 export async function showSetupGuidance({
+  cwd = process.cwd(),
   installDependency = false,
   dependencyOnly = false,
   interactive = process.stdin.isTTY && process.stdout.isTTY,
   check = readChecks,
+  saveRewriteMode = saveSetupMode,
+  chooseMode = chooseSetupMode,
   install = installAgy,
   prompt = ask,
   browse = openPage
 } = {}) {
   let checks, lang;
+  const project = interactive && !dependencyOnly ? await chooseSetupProject(cwd, prompt, language(cwd)) : cwd;
   try {
-    checks = check();
+    checks = check(project ?? cwd);
     lang = checks.ui_language || language();
   } catch {
     console.log(
@@ -1013,23 +1112,32 @@ export async function showSetupGuidance({
     );
     return !installDependency;
   }
+  if (interactive && !dependencyOnly && project && checks.rewrite_mode && checks.rewrite_mode_configured === false) {
+    const selected = await chooseMode(project, lang);
+    if (selected) {
+      await saveRewriteMode(selected, project);
+      checks = check(project);
+      console.log(tr(`已为这个项目保存 ${selected === 'turbo' ? 'Turbo' : 'Normal'} 模式。`,
+        `Saved ${selected === 'turbo' ? 'Turbo' : 'Normal'} mode for this project.`, lang));
+    }
+  }
   if (checks.blockers.includes('agy_missing')) {
     let requested = installDependency;
     if (interactive && !requested)
       requested = ['', 'y', 'yes', '是'].includes(
-        await prompt(
+        (await prompt(
           tr(
             '改写回复需要 Google 的 Antigravity 命令行工具（agy）。现在安装吗？[Y/n] ',
             'Codex Polish needs Google’s Antigravity CLI (agy). Install it now? [Y/n] ',
             lang
           )
-        )
+        ))?.toLowerCase()
       );
     if (requested) {
       try {
         console.log(tr('正在从 Google 下载并安装 agy…', 'Downloading and installing agy from Google…', lang));
         await install();
-        checks = check();
+        checks = check(project ?? cwd);
         if (!checks.agy_available)
           throw fail('装好后仍找不到 agy。', 'The installer finished, but agy is still missing.');
         console.log(tr('agy 已安装，可以使用。', 'agy is installed and ready to use.', lang));
@@ -1061,7 +1169,7 @@ export async function showSetupGuidance({
         'Type y to open the official links above, or press Enter to skip: ',
         lang
       )
-    )) === 'y'
+    ))?.toLowerCase() === 'y'
   ) {
     for (const page of pages)
       if (!browse(page))
@@ -1089,21 +1197,22 @@ export function doctor(checks = readChecks()) {
   const lang = checks.ui_language,
     modes = { manual: ['只在我要求时', 'only when asked'], auto: ['自动改写', 'automatic'], off: ['已关闭', 'off'] };
   const lines = [
-    tr('当前项目模式：', 'Project mode: ', lang) + tr(...modes[checks.mode], lang),
-    tr('项目改写模型：', 'Rewrite model: ', lang) + (checks.gemini_model || tr('设置无效', 'invalid setting', lang)),
-    decisionsSummary(checks, lang)
+    tr('润色时机：', 'When to polish: ', lang) + tr(...modes[checks.mode], lang),
+    tr('改写模式：', 'Rewrite mode: ', lang) + (checks.rewrite_mode || tr('设置无效', 'invalid setting', lang)),
+    tr('项目改写模型：', 'Rewrite model: ', lang) + (checks.gemini_model || tr('设置无效', 'invalid setting', lang))
   ];
+  if (checks.rewrite_mode) lines.push(decisionsSummary(checks, lang));
   const turns = checks.history_turns;
   lines.push(
     turns
       ? tr(
-          `最多带上最近 ${turns} 组问答（你的提问 + Codex 的回复），这一次的提问和草稿另算。`,
-          `Sends up to ${turns} past Q&As (your question + Codex's reply), plus your current request and draft.`,
+          `Gemini 改写时最多带上最近 ${turns} 轮完整问答，本轮问题和草稿另算。`,
+          `Gemini receives up to ${turns} earlier completed exchanges when it rewrites, plus the current question and draft.`,
           lang
         )
       : tr(
-          '历史记录设为 0，只发这一次的提问和草稿。',
-          'History is off, so only your current request and draft go out.',
+          '历史记录设为 0，Gemini 改写时不附带以前的问答。',
+          'History is off. Gemini rewrites use only the current turn and any custom polishing prompt.',
           lang
         )
   );

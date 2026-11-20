@@ -7,7 +7,7 @@
 ## 改哪里
 
 - `scripts/install.mjs` 和两个 `.command` 启动脚本负责安装、更新、环境检查和卸载。
-- `plugins/codex-polish/` 里有插件清单、钩子和两个技能。`codex-polish` 负责改写与校验，`codex-polish-setup` 负责设置、选择模型和检查环境。改动用户提示时，请一起更新中英文。
+- `plugins/codex-polish/` 里有插件清单、钩子和两个技能。`codex-polish` 通过可选的 OpenAI 风格检查判断是否需要润色，交给 Gemini 改写，并在本地检查改稿，`codex-polish-setup` 负责设置、选择模型和检查环境。改动用户提示时，请一起更新中英文。
 - 完整源码的 `tests/` 放回归测试，`evaluation/` 放评测脚本和合成样本。[评测说明](evaluation/README.md)
 
 ## 本地测试与打包
@@ -21,7 +21,7 @@ mkdir -p dist
 npm pack --ignore-scripts --pack-destination dist
 ```
 
-`npm pack` 会把 `@kyun.si/codex-polish` 的 `0.0.1-beta.3` 版打包为 `dist/kyun.si-codex-polish-0.0.1-beta.3.tgz`。默认测试无需 API 密钥，原生安装测试会使用临时 Codex 配置。另有一项在线测试需要显式开启，会向 OpenAI 发出四次付费请求。[运行在线检查](docs/technical.md)
+`npm pack` 会把 `@kyun.si/codex-polish` 的 `0.0.1-beta.3` 版打包为 `dist/kyun.si-codex-polish-0.0.1-beta.3.tgz`。默认测试无需 API 密钥，原生安装测试会使用临时 Codex 配置。Decisions 测试使用模拟响应验证风格判定。
 
 ## 反馈问题
 

@@ -74,7 +74,8 @@ export function readProjectSetting(cwd, filename, maxBytes, { allowMissingLink =
       const settings = path.join(base, '.codex');
       try {
         if (fs.lstatSync(settings).isSymbolicLink()) {
-          if (!allowMissingLink || fs.lstatSync(path.join(settings, filename), { throwIfNoEntry: false })) {
+          if (!allowMissingLink || !fs.statSync(settings, { throwIfNoEntry: false })?.isDirectory() ||
+              fs.lstatSync(path.join(settings, filename), { throwIfNoEntry: false })) {
             return [invalid, base];
           }
         } else {

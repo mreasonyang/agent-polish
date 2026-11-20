@@ -1,6 +1,6 @@
 ---
 name: codex-polish
-description: Uses Gemini to polish Codex's final reply when you ask, or when project auto mode prompts. 你要求润色这轮回复，或项目自动模式触发时运行。
+description: Polishes Codex's final reply with Gemini when you ask or a trusted automatic-mode hook prompts. 在你点名或受信任的自动润色 hook 提醒时运行。
 ---
 
 # 润色本轮回复
@@ -9,7 +9,7 @@ description: Uses Gemini to polish Codex's final reply when you ask, or when pro
 
 ## 本轮可否处理
 
-用本文件的安装位置定位 `scripts/`、`references/` 和 `../../hooks/preferences.mjs`。记住**本轮开始时实际工作目录的绝对路径**（即使它是仓库的子目录），后面的 `--cwd` 始终用它。用户本轮主动点名时 `--trigger explicit`，仅因项目提醒触发时 `--trigger auto`。重复的提醒只处理一次。用户本轮禁止外发、材料不适合外发、宿主无法持续读写并回收同一个子进程，直接交付原稿。
+用本文件的安装位置定位 `scripts/`、`references/` 和 `../../hooks/preferences.mjs`。记住**本轮开始时实际工作目录的绝对路径**（即使它是仓库的子目录），后面的 `--cwd` 始终用它。用户本轮主动点名时用 `--trigger explicit`。普通提问只有收到本轮受信任的 `UserPromptSubmit` 提醒才用 `--trigger auto`，即使项目采用默认的自动模式也是如此。重复的提醒只处理一次。用户本轮禁止外发、材料不适合外发、宿主无法持续读写并回收同一个子进程，直接交付原稿。
 
 使用 Node.js 22.16 或更新版本。先在实际执行工具的环境运行 `node …/hooks/preferences.mjs check --cwd "<原项目目录>"`。模式为 `off`、仅提醒触发而模式为 `manual`、`blockers` 非空、或自动触发且 `cooldown` 非空时，直接交付原稿。找不到 Node.js、帮助脚本无法运行或结果不完整，也沿用原稿。记下本轮 `gemini_model`，默认值为 `gemini-4-hydrogen`。插件状态提示使用本项目的界面语言。在自动语言模式下优先跟随本轮用户说的中文或英文，无法判断时用 `check.ui_language`。最终答复始终保持待润色原稿的语言。按 `google_auth_method` 选择 ACP 步骤。默认的 `existing-session` 由官方进程使用已有登录，直接建立新会话。显式指定 API key 或企业身份时，才发送对应的认证请求。CLI 能否找到 `codex` 供安装排查参考，正在运行的宿主可以直接提供执行工具。
 

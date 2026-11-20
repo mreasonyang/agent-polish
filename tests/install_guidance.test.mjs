@@ -9,7 +9,7 @@ import { configurationSteps, showSetupGuidance, doctor } from '../scripts/instal
 const checks = {
   ui_language: 'en',
   blockers: [],
-  mode: 'manual',
+  mode: 'auto',
   google_auth_method: 'existing-session',
   decisions_mode: 'auto',
   decisions_enabled: false,
@@ -26,6 +26,8 @@ test('bilingual setup and doctor distinguish auth, project model, history, decis
     const data = { ...checks, ui_language: lang };
     const summarize = (extra) => configurationSteps({ ...data, ...extra })[0].join('\n');
     assert.match(summarize({}), lang === 'en' ? /go straight to Gemini/ : /直接交给 Gemini/);
+    assert.match(summarize({}), lang === 'en' ? /Explain what DNS does in one sentence\./ : /用一句话解释 DNS。/);
+    assert.match(summarize({ mode: 'manual' }), lang === 'en' ? /then polish your reply/ : /再把你的回复润色一下/);
     assert.match(summarize({ mode: 'off' }), lang === 'en' ? /Switch to on-demand rewrites/ : /改回手动润色/);
     const enterprise = summarize({ google_auth_method: 'agent-platform' });
     assert.doesNotMatch(enterprise, /GEMINI_API_KEY|https:/);

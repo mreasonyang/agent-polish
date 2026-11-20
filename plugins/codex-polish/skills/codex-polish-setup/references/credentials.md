@@ -2,7 +2,7 @@
 
 [English](credentials.en.md)
 
-在项目里开一个新聊天，试一句 **“用一句话解释 DNS，再把你的回复润色一下。”** 插件默认沿用 Antigravity 登录，普通登录不用额外申请密钥。如果想让 OpenAI 判断什么时候值得润色、改稿有没有保留原意，再配置下面的可选服务。
+插件默认沿用 Antigravity 登录，普通登录不用额外申请密钥。如果想让 OpenAI 判断什么时候值得润色、改稿有没有保留原意，可以配置下面的可选服务。
 
 ## 准备 Antigravity
 
@@ -10,9 +10,11 @@
 
 只有 Antigravity 提示需要登录时，才需要在自己的终端运行 `agy` 登录。如果终端找不到命令，可以直接运行 `~/.local/bin/agy`。登录后回 Codex 再试一次改写。[ACP 认证说明](https://antigravity.google/docs/ide/extensions/acp#authentication)
 
+项目默认自动润色。改写时，Google 会收到本轮问题和草稿，代码、命令、路径等固定内容会先替换成占位符。默认最多附带之前 2 轮完整问答，历史按原文发送。在 Codex 的 **设置 → Hooks**（CLI 输入 `/hooks`）里信任插件的 `UserPromptSubmit`，再开一个项目聊天，问 **“用一句话解释 DNS。”** 如果想自己决定何时润色，可以说 **“只在我要求时润色”**。信任 hook 前也可以点名润色本轮问答。想停用就说 **“关闭回复润色”**。
+
 ## 选配 OpenAI Decisions
 
-默认有 `OPENAI_API_KEY` 时启用 Decisions，没有时直接走 ACP。在项目里说 **“有 key 时用 Decisions”** 可以恢复这个默认设置。想保留现有 OpenAI key、只关掉本项目的两次判定，就说 **“这个项目只用 ACP”**。
+默认有 `OPENAI_API_KEY` 时启用 Decisions，没有时直接走 ACP。OpenAI 会收到用占位符保护了固定内容的本轮问题和草稿，最后一次检查还会收到候选改稿。在项目里说 **“有 key 时用 Decisions”** 可以恢复这个默认设置。想保留现有 OpenAI key、只关掉本项目的两次判定，就说 **“这个项目只用 ACP”**。
 
 要启用 Decisions，可以直接用自己已有的项目密钥，也可以按下面的步骤新建一个。
 

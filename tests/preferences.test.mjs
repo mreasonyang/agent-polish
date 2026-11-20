@@ -25,25 +25,37 @@ function fixture(t) {
   return { ...f, hook, getMode: () => f.call(['mode']).stdout.trim() };
 }
 
-test('only opted-in projects receive reminders', t => {
-  const { mode, getMode, hook } = fixture(t);
-  assert.equal(getMode(), 'manual'); assert.equal(hook(), '');
-  fs.writeFileSync(mode, 'auto\n');
+test('a fresh project receives a reminder for an ordinary prompt without writing settings', t => {
+  const { mode, cwd, getMode, check, hook } = fixture(t);
+  fs.rmdirSync(path.dirname(mode));
   assert.equal(getMode(), 'auto');
+  assert.equal(check().mode, 'auto');
   const output = JSON.parse(hook()).hookSpecificOutput;
   assert.equal(output.hookEventName, 'UserPromptSubmit');
-  assert.match(output.additionalContext, /codex-polish/);
+  assert.match(output.additionalContext, /codex-polish:codex-polish/);
   assert.equal(hook('SessionStart'), '');
-  for (const value of ['off', 'typo', 'auto\n             trailing', '']) {
+  assert.equal(fs.existsSync(path.dirname(mode)), false);
+  assert.equal(fs.existsSync(path.join(cwd, '.codex')), false);
+});
+
+test('explicit project modes apply to subdirectories and malformed modes disable rewriting', t => {
+  const { mode, getMode, hook } = fixture(t);
+  for (const [value, expected] of [
+    ['manual', 'manual'], ['auto\n', 'auto'], ['off', 'off'], ['typo', 'off'],
+    ['auto\n             trailing', 'off'], ['', 'off'],
+  ]) {
     fs.writeFileSync(mode, value);
-    assert.equal(getMode(), 'off'); assert.equal(hook(), '');
+    assert.equal(getMode(), expected);
+    assert.equal(Boolean(hook()), expected === 'auto');
   }
 });
 
 test('closer overrides and nested repository boundaries', t => {
   const { mode, cwd, getMode } = fixture(t);
-  fs.writeFileSync(mode, 'auto'); fs.writeFileSync(path.join(cwd, '.git'), 'gitdir: ../.git');
+  fs.writeFileSync(mode, 'manual');
   assert.equal(getMode(), 'manual');
+  fs.writeFileSync(path.join(cwd, '.git'), 'gitdir: ../.git');
+  assert.equal(getMode(), 'auto');
   fs.mkdirSync(path.join(cwd, '.codex')); fs.writeFileSync(path.join(cwd, '.codex/codex-polish.mode'), 'off');
   assert.equal(getMode(), 'off');
 });
@@ -108,7 +120,7 @@ test('decision policy inherits, and invalid decisions disable only OpenAI', t =>
   assert.deepEqual(policy(), ['auto', 'auto', true]); assert.equal(fs.readFileSync(parent.file, 'utf8'), 'off\n');
   fs.writeFileSync(child.file, 'typo'); assert.deepEqual(policy(), ['auto', 'off', false]);
   fs.unlinkSync(child.file); fs.writeFileSync(path.join(cwd, '.git'), 'gitdir: ../.git');
-  assert.deepEqual(policy(), ['manual', 'auto', true]);
+  assert.deepEqual(policy(), ['auto', 'auto', true]);
 });
 
 test('portable project hook does not require the plugin environment', t => {
@@ -130,16 +142,41 @@ test('mode changes affect only the exact target', t => {
   assert.deepEqual(fs.readdirSync(path.join(cwd, '.codex')), ['codex-polish.mode']);
 });
 
-test('mode writes reject symlinked directories, symlinked settings and FIFOs', t => {
-  const { mode, cwd, call } = fixture(t);
-  fs.writeFileSync(mode, 'off\n');
+test('unsafe mode settings disable rewriting and reject writes', t => {
+  const { mode, cwd, call, hook, getMode } = fixture(t);
+  fs.writeFileSync(mode, 'auto\n');
   const dir = path.join(cwd, '.codex'), marker = path.join(dir, path.basename(mode));
+  const rejectsMode = () => {
+    assert.equal(getMode(), 'off');
+    assert.equal(hook(), '');
+    assert.notEqual(call(['set-mode', 'auto']).status, 0);
+  };
+  fs.symlinkSync(path.join(cwd, 'missing-directory'), dir);
+  rejectsMode();
+  fs.unlinkSync(dir);
   fs.symlinkSync(path.dirname(mode), dir);
-  assert.notEqual(call(['set-mode', 'auto']).status, 0);
+  rejectsMode();
   fs.unlinkSync(dir); fs.mkdirSync(dir); fs.symlinkSync(mode, marker);
-  assert.notEqual(call(['set-mode', 'auto']).status, 0); assert.ok(fs.lstatSync(marker).isSymbolicLink());
+  rejectsMode(); assert.ok(fs.lstatSync(marker).isSymbolicLink());
   fs.unlinkSync(marker); mkfifo(marker);
-  assert.notEqual(call(['set-mode', 'auto']).status, 0); assert.ok(fs.lstatSync(marker).isFIFO()); assert.equal(fs.readFileSync(mode, 'utf8'), 'off\n');
+  rejectsMode(); assert.ok(fs.lstatSync(marker).isFIFO()); assert.equal(fs.readFileSync(mode, 'utf8'), 'auto\n');
+});
+
+test('a linked settings directory with no mode still inherits the nearest mode', t => {
+  const { cwd, mode, getMode } = fixture(t);
+  const empty = path.join(cwd, 'empty-directory');
+  fs.mkdirSync(empty);
+  fs.symlinkSync(empty, path.join(cwd, '.codex'));
+  assert.equal(getMode(), 'auto');
+  fs.writeFileSync(mode, 'manual');
+  assert.equal(getMode(), 'manual');
+});
+
+test('an unreadable mode file disables rewriting', { skip: process.getuid() === 0 }, t => {
+  const { mode, getMode, hook } = fixture(t);
+  fs.writeFileSync(mode, 'auto', { mode: 0o000 });
+  assert.equal(getMode(), 'off');
+  assert.equal(hook(), '');
 });
 
 test('history count has independent default, inheritance and override', t => {

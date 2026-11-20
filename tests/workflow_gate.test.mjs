@@ -8,7 +8,7 @@ import { makeProject, plugin, run } from './hook_fixture.mjs';
 function fixture(t) {
   const f = makeProject(t), installed = path.join(f.home, 'installed'), bin = path.join(f.home, 'bin');
   fs.mkdirSync(installed); fs.cpSync(path.join(plugin, 'hooks'), path.join(installed, 'hooks'), { recursive: true });
-  fs.writeFileSync(f.mode, 'auto'); fs.mkdirSync(bin);
+  fs.mkdirSync(bin);
   const agy = path.join(bin, 'agy'); fs.writeFileSync(agy, '#!/bin/sh\n: > "$FAULT_TEST_CALLS.agy"\n', { mode: 0o700 });
   const script = path.join(installed, 'hooks/preferences.mjs'), helper = path.join(installed, 'skills/codex-polish/scripts/decisions.mjs');
   fs.mkdirSync(path.dirname(helper), { recursive: true });

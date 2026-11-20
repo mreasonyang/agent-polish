@@ -22,7 +22,7 @@ mkdir -p dist
 npm pack --ignore-scripts --pack-destination dist
 ```
 
-`npm pack` writes version `0.0.1-beta.1` of `@kyun.si/codex-polish` to `dist/kyun.si-codex-polish-0.0.1-beta.1.tgz`. Default tests need no API key. Native installer tests use a temporary Codex profile. A separate opt-in test makes four billable OpenAI requests. See the [live test instructions](docs/technical.en.md).
+`npm pack` writes version `0.0.1-beta.2` of `@kyun.si/codex-polish` to `dist/kyun.si-codex-polish-0.0.1-beta.2.tgz`. Default tests need no API key. Native installer tests use a temporary Codex profile. A separate opt-in test makes four billable OpenAI requests. See the [live test instructions](docs/technical.en.md).
 
 ## Reporting Bugs
 

@@ -35,6 +35,7 @@ function fixture(t) {
 test('manual and auto store only metadata and the hook never prints it', t => {
   const { transcript, hook, source, mode, database } = fixture(t);
   fs.writeFileSync(transcript, 'synthetic private conversation');
+  fs.writeFileSync(mode, 'manual');
   assert.equal(hook(), '');
   assert.deepEqual(source(), { session_id: SESSION, turn_id: 'turn-1', transcript_path: transcript });
   fs.writeFileSync(mode, 'auto');
@@ -63,7 +64,7 @@ test('invalid source and disabled project revoke stored metadata', t => {
   const { hook, source, mode } = fixture(t);
   for (const fields of [{ turn_id: null }, { transcript_path: null }, { transcript_path: 'relative.jsonl' }]) {
     hook();
-    assert.equal(hook(fields), '');
+    assert.match(hook(fields), /additionalContext/);
     assert.equal(source(), null);
   }
   hook();
@@ -80,7 +81,7 @@ test('uses private cache only and prunes stale pointers', t => {
   const file = database();
   fs.chmodSync(file, 0o644);
   assert.equal(source(), null);
-  assert.equal(hook(), '');
+  assert.match(hook(), /additionalContext/);
   fs.chmodSync(file, 0o600);
   sql('UPDATE history_source SET updated=0');
   assert.equal(source(), null);

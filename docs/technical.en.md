@@ -2,7 +2,7 @@
 
 [简体中文](technical.md) · [Overview](../README.en.md)
 
-Codex Polish `0.0.1-beta.1` is a Codex plugin for macOS and Linux. Its local scripts use built-in Node.js modules and require Node.js 22.16 or newer. The [rewrite skill](../plugins/codex-polish/skills/codex-polish/SKILL.md) polishes eligible final replies. The [setup skill](../plugins/codex-polish/skills/codex-polish-setup/SKILL.md) checks the environment and manages project settings.
+Codex Polish `0.0.1-beta.2` is a Codex plugin for macOS and Linux. Its local scripts use built-in Node.js modules and require Node.js 22.16 or newer. The [rewrite skill](../plugins/codex-polish/skills/codex-polish/SKILL.md) polishes eligible final replies. The [setup skill](../plugins/codex-polish/skills/codex-polish-setup/SKILL.md) checks the environment and manages project settings.
 
 ## Project Settings and Inheritance
 
@@ -10,7 +10,7 @@ Each project stores its settings as individual files inside `.codex`. The plugin
 
 | File | Values and Default | Behavior |
 | --- | --- | --- |
-| `.codex/codex-polish.mode` | `manual` (default), `auto`, `off` | `manual` runs on explicit requests. `auto` runs on eligible turns with the trusted hook. `off` skips rewrites even when requested. |
+| `.codex/codex-polish.mode` | `auto` (default), `manual`, `off` | Without a saved mode, the project uses `auto`. The trusted hook triggers polishing for ordinary questions. `manual` runs only on explicit requests. `off` skips rewrites even when requested. |
 | `.codex/codex-polish.model` | Model ID, default `gemini-4-hydrogen` (Gemini 4 Hydrogen) | Stores the per-project Gemini model discovered from the signed-in Antigravity account over ACP. |
 | `.codex/codex-polish.history-turns` | Integer `0`–`10`, default `2` | Maximum completed exchanges to attach. Use `0` for the current turn only. Saving a value above `10` returns an error. An invalid or out-of-range setting disables history. Changes apply on the next rewrite. |
 | `.codex/codex-polish.decisions` | `auto` (default), `off` | `auto` uses `OPENAI_API_KEY` to determine whether to run OpenAI’s style and meaning checks. `off` uses ACP only. This setting is independent of the trigger mode. |
@@ -37,7 +37,7 @@ The plugin requires the official Antigravity CLI 1.2.1 or later. By default it r
 
 ## Outgoing Content, Hooks, and Limits
 
-Manual mode needs no hook to polish the current question and draft. Automatic mode requires trusting the plugin's `UserPromptSubmit` hook in Codex (`Settings -> Hooks` or `/hooks` in the CLI) and setting the project mode to `auto`. The same trusted hook is also required to include conversation history in both manual and automatic modes. See [Codex plugins](https://developers.openai.com/plugins/build/plugins) and [Codex hooks](https://learn.chatgpt.com/docs/hooks#where-codex-looks-for-hooks) for host behavior.
+For automatic polishing, trust the plugin's `UserPromptSubmit` hook in Codex (**Settings → Hooks** or `/hooks` in the CLI), then start a fresh chat. Explicit requests to polish the current question and draft work without the hook in both automatic and manual mode. Including earlier exchanges requires the trusted hook in either mode. [Codex plugins](https://developers.openai.com/plugins/build/plugins) · [Codex hooks](https://learn.chatgpt.com/docs/hooks#where-codex-looks-for-hooks)
 
 The hook records which transcript belongs to the current turn. Local Node.js code reads the exchanges directly from that transcript. If the hook is untrusted, the matching transcript is unavailable, no eligible history can be read, or the user limits sharing to the current turn, the plugin can still send the current question and draft alone. One exchange consists of the user's prompt (including follow-up messages within that turn) and Codex's final reply, excluding progress updates and tool output. The current question and draft are sent alongside history and do not count toward `.codex/codex-polish.history-turns`.
 
@@ -95,4 +95,4 @@ Once the beta is published to npm, install it with `npx @kyun.si/codex-polish@be
 
 Both `setup` and `update` accept `--install-agy` to install the Google CLI when needed. Updates preserve `.codex` project settings and the plugin’s enabled state. Re-running `update` with the same version replaces the build or recovers an interrupted update.
 
-If you packed version `0.0.1-beta.1` locally, you can also run `npx --yes file:./kyun.si-codex-polish-0.0.1-beta.1.tgz uninstall` in the directory containing the archive. Uninstall removes the plugin and its marketplace, clears cooldowns and session pointers for the active Codex profile, and prints the backup path for any manually edited installation files. It keeps shared `agy` binaries and project `.codex` files.
+If you packed version `0.0.1-beta.2` locally, you can also run `npx --yes file:./kyun.si-codex-polish-0.0.1-beta.2.tgz uninstall` in the directory containing the archive. Uninstall removes the plugin and its marketplace, clears cooldowns and session pointers for the active Codex profile, and prints the backup path for any manually edited installation files. It keeps shared `agy` binaries and project `.codex` files.

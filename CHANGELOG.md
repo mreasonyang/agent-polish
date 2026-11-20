@@ -2,6 +2,11 @@
 
 [中文使用说明](README.md) · [English README](README.en.md)
 
+## 0.0.1-beta.2
+
+- 项目没有指定润色模式时，普通提问也会自动触发润色。使用前，在 Codex 中信任插件的 `UserPromptSubmit` 钩子。已选“只在我要求时”或“关闭”的项目会沿用该选择。
+- Projects without a saved mode now polish ordinary replies automatically once the `UserPromptSubmit` hook is trusted. Projects set to on-demand or off keep their preference.
+
 ## 0.0.1-beta.1
 
 ### 简体中文

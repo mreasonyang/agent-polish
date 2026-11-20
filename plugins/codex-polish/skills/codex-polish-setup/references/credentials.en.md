@@ -6,13 +6,15 @@
 
 1. Install the plugin on the machine that runs Codex, using the same system account. It looks for `agy` on the Codex process’s PATH and then at `~/.local/bin/agy`. On a first install from Finder or an interactive terminal, you can accept the offer to install Google’s official CLI or skip it. For an unattended install or to add the CLI later, run `node scripts/install.mjs setup --install-agy` from the extracted package. You can also install it directly from Google. [Antigravity installation guide](https://antigravity.google/docs/getting-started/?tab=cli)
 2. The plugin uses your existing Antigravity sign-in. If Antigravity requests authentication, run `agy` in your terminal and sign in. If your shell can’t find the installed CLI, open `~/.local/bin/agy` directly.
-3. Start a fresh Codex chat in your project and say **“Check Codex Polish setup.”** To see which Gemini models the account can use, say **“Choose a rewrite model.”** To try polishing a reply, ask **“Explain what DNS does in one sentence, then polish your reply.”**
+3. Projects default to automatic polishing. On a rewrite, Google receives your current question and draft with fixed details such as code, commands, and paths masked. Up to two earlier completed exchanges are included as written by default. In Codex **Settings → Hooks** (`/hooks` in the CLI), trust the plugin’s `UserPromptSubmit` hook. Start a fresh project chat and ask **“Explain what DNS does in one sentence.”**
 
-The default setup works without API keys. If Codex runs on a remote machine, follow these steps there.
+Say **“Only polish when I ask”** for manual mode or **“Turn off Codex Polish”** to disable polishing. Before trusting the hook, you can still ask explicitly to polish a reply using just the current question and draft. The default setup works without API keys. If Codex runs on a remote machine, follow these steps there.
+
+Say **“Check Codex Polish setup”** to inspect the local configuration or **“Choose a rewrite model”** to see the Gemini models your account can use.
 
 ## Optional OpenAI checks
 
-Turn these on if you want OpenAI to check whether a draft needs editing and whether the edit keeps its meaning. The plugin uses the Decisions API with `gpt-6-luna`. The OpenAI project linked to the key covers the API usage. [Decisions API](https://developers.openai.com/api/docs/guides/decisions)
+When `OPENAI_API_KEY` is set, the default configuration uses OpenAI to check whether the draft needs editing and whether the edit keeps its meaning. These checks send the protected current question and draft to OpenAI, plus the candidate for the final check. The OpenAI project linked to the key covers the Decisions API usage for `gpt-6-luna`. [Decisions API](https://developers.openai.com/api/docs/guides/decisions)
 
 1. Open your OpenAI project’s **API keys** page. Choose **Create new secret key**, name it something like `codex-polish`, and save it in a password manager. For restricted keys, allow `POST /v1/decisions` and make sure the project can use `gpt-6-luna`. [Create a project key](https://platform.openai.com/api-keys)
 2. Pass the key as `OPENAI_API_KEY` to the process running Codex. In a bash or zsh terminal, run these commands. Paste the key when prompted, then press Return. The terminal hides it while you type.

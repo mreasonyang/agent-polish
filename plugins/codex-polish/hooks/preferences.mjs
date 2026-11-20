@@ -32,7 +32,7 @@ const DECISION_REASONS = {
 
 export function projectSettings(cwd) {
   const [value, scope] = readProjectSetting(cwd, MODE_FILE, 16, { allowMissingLink: true });
-  return [value === null ? 'manual' : MODES.includes(value) ? value : 'off', scope];
+  return [value === null ? 'auto' : MODES.includes(value) ? value : 'off', scope];
 }
 
 function parseHistoryTurns(value, lang) {

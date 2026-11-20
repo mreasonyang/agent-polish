@@ -576,25 +576,28 @@ async function setup(root, store, run, setEnabled, action) {
       ),
       false
     ];
-  if (action === 'setup') {
-    const lang = language(),
-      guide = join(target, lang === 'zh' ? GUIDE : GUIDE.replace('credentials.md', 'credentials.en.md'));
-    return [
-      tr(
-        `回复润色 ${version} 已安装。手动润色当前问答可以直接用。\n要自动润色或让 Gemini 参考之前的问答，请在 Codex 的「设置 → Hooks」（CLI 输入 /hooks）中信任「回复润色」的 UserPromptSubmit，然后新开一个聊天。要开启自动润色，可以说「给这个项目开启自动润色」。\n配置指南：${guide}`,
-        `Codex Polish ${version} is installed. You can ask it to polish the current reply right away.\nFor automatic rewrites or to include earlier exchanges, open Settings → Hooks in Codex (/hooks in the CLI), trust the Codex Polish UserPromptSubmit hook, and start a new chat. To enable automatic rewrites, say “Polish automatically in this project”.\nSetup guide: ${guide}`,
-        lang
-      ),
-      true
-    ];
-  }
-  return [
+  const lang = language();
+  const status = action === 'setup'
+    ? tr(`回复润色 ${version} 已安装。`, `Codex Polish ${version} is installed.`, lang)
+    : tr(`回复润色已更新到 ${version}。`, `Updated Codex Polish to ${version}.`, lang);
+  const lines = [
+    status,
     tr(
-      `回复润色已更新到 ${version}。新开一个 Codex 项目对话，说「配置回复润色」就能查看设置。`,
-      `Updated Codex Polish to ${version}. Open a new project chat in Codex and say “Set up Codex Polish”.`
+      '未设置模式的项目默认自动润色，已保存的模式继续生效。改写时，Google 会收到用占位符保护了固定内容的本轮问题和草稿，以及按原文附带的历史问答（默认最多 2 轮）。开启 OpenAI 检查时，OpenAI 只收到本轮材料。',
+      'Projects without a saved mode default to automatic polishing. Saved modes still apply. On a rewrite, Google receives the current question and draft with fixed details masked, plus earlier exchanges as written (up to two by default). Optional OpenAI checks use only current-turn material.',
+      lang
     ),
-    false
+    tr(
+      '要自动润色或附带历史，请在 Codex 的「设置 → Hooks」（CLI 输入 /hooks）中信任本插件的 UserPromptSubmit，再新开一个聊天。想改模式，可以说「只在我要求时润色」或「关闭回复润色」。',
+      'For automatic polishing or history, trust the plugin’s UserPromptSubmit hook in Codex Settings → Hooks (/hooks in the CLI), then start a new chat. To change modes, say “Only polish when I ask” or “Turn off Codex Polish”.',
+      lang
+    )
   ];
+  if (action === 'setup') {
+    const guide = join(target, lang === 'zh' ? GUIDE : GUIDE.replace('credentials.md', 'credentials.en.md'));
+    lines.push(tr(`配置指南：${guide}`, `Setup guide: ${guide}`, lang));
+  }
+  return [lines.join('\n'), action === 'setup'];
 }
 // Node has no unlinkat. Pin each directory as the kernel cwd for this synchronous
 // walk and check inode identity after chdir, before any relative unlink/rmdir.
@@ -950,19 +953,21 @@ export function configurationSteps(checks) {
       lang
     )
   );
-  lines.push(
-    checks.mode === 'off'
-      ? tr(
-          '这个项目已关闭改写。想试用的话，可以先说「改回手动润色」。',
-          'Rewriting is off in this project. To try it, say “Switch to on-demand rewrites”.',
-          lang
-        )
-      : tr(
-          '试一句：「用一句话解释 DNS，再把你的回复润色一下。」',
-          'Try “Explain what DNS does in one sentence, then polish your reply.”',
-          lang
-        )
-  );
+  const examples = {
+    auto: [
+      '在已信任 hook 的新聊天里，直接问「用一句话解释 DNS。」就会触发自动润色。',
+      'After trusting the hook, try automatic polishing in a new chat. Ask “Explain what DNS does in one sentence.”'
+    ],
+    manual: [
+      '这个项目只在点名时润色。试一句：「用一句话解释 DNS，再把你的回复润色一下。」',
+      'This project polishes only when asked. Try “Explain what DNS does in one sentence, then polish your reply.”'
+    ],
+    off: [
+      '这个项目已关闭改写。想试用的话，可以先说「改回手动润色」。',
+      'Rewriting is off in this project. To try it, say “Switch to on-demand rewrites”.'
+    ]
+  };
+  lines.push(tr(...examples[checks.mode], lang));
   return [lines, pages];
 }
 async function ask(prompt) {

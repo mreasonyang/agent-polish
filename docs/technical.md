@@ -2,7 +2,7 @@
 
 [English](technical.en.md) · [项目首页](../README.md)
 
-`codex-polish` 的 `0.0.1-beta.1` 版包含两个 Codex 技能。[改写技能](../plugins/codex-polish/skills/codex-polish/SKILL.md) 在最终答复交付前润色草稿，[设置技能](../plugins/codex-polish/skills/codex-polish-setup/SKILL.md) 检查运行环境并保存项目设置。
+`codex-polish` 的 `0.0.1-beta.2` 版包含两个 Codex 技能。[改写技能](../plugins/codex-polish/skills/codex-polish/SKILL.md) 在最终答复交付前润色草稿，[设置技能](../plugins/codex-polish/skills/codex-polish-setup/SKILL.md) 检查运行环境并保存项目设置。
 
 ## 模式、配置文件与查找规则
 
@@ -10,7 +10,7 @@
 
 | 配置文件 | 取值范围与默认值 | 运行行为 |
 | --- | --- | --- |
-| `.codex/codex-polish.mode` | `manual`（默认）、`auto`、`off` | `manual` 仅在用户点名时润色，处理当前问题和草稿不需要 hook。`auto` 需在宿主设置或 CLI `/hooks` 中信任插件的 `UserPromptSubmit` hook。`off` 完全停用，即使点名要求润色也不会外发。 |
+| `.codex/codex-polish.mode` | `auto`（默认）、`manual`、`off` | 未保存模式时使用 `auto`。在 Codex 的 **设置 → Hooks** 或 CLI `/hooks` 中信任插件的 `UserPromptSubmit`，再新开聊天，普通提问就会触发润色流程。`manual` 仅在点名时触发。两种模式都可以点名润色本轮问答，无需 hook。`off` 跳过所有润色请求。 |
 | `.codex/codex-polish.model` | 模型 ID，默认 `gemini-4-hydrogen`（Gemini 4 Hydrogen） | 保存当前项目选用的 Gemini 模型。选项在运行时通过 ACP 从当前登录的 Antigravity 账号实时读取，不同账号返回的列表可能不同。仅查看模型菜单不会发送草稿或历史。下次改写时会核对所选模型，若已下线则本轮保留原稿。 |
 | `.codex/codex-polish.history-turns` | `0`–`10` 的整数，默认 `2` | 控制附带的最近完整问答轮数，从下次改写起生效。设为 `0` 只发本轮问题和草稿。保存大于 `10` 的值会报错。文件中的值不在范围内或格式无效时，本轮不带历史。无论手动还是自动模式，读取历史都需要受信任的 `UserPromptSubmit` hook。 |
 | `.codex/codex-polish.decisions` | `auto`（默认）、`off` | 与触发模式分开设置。`auto` 按 `OPENAI_API_KEY` 决定是否调用 OpenAI，`off` 始终只用 ACP。 |
@@ -63,7 +63,7 @@
 
 `setup` 和 `update` 支持 `--install-agy`，在缺少 Antigravity CLI 时可自动安装。更新会保留项目设置与插件启用状态。同一版本号的新构建也能用 `update` 覆盖或重试中断的更新。
 
-手头有本地打包的 `0.0.1-beta.1` 版时，也可以在压缩包所在目录运行 `npx --yes file:./kyun.si-codex-polish-0.0.1-beta.1.tgz uninstall`。卸载会清理该插件与专用市场，按当前 Codex 配置清除冷却记录和会话指针，保留各项目的 `.codex/` 配置和共用的 `agy`，并提示被手动修改过的安装文件备份位置。
+手头有本地打包的 `0.0.1-beta.2` 版时，也可以在压缩包所在目录运行 `npx --yes file:./kyun.si-codex-polish-0.0.1-beta.2.tgz uninstall`。卸载会清理该插件与专用市场，按当前 Codex 配置清除冷却记录和会话指针，保留各项目的 `.codex/` 配置和共用的 `agy`，并提示被手动修改过的安装文件备份位置。
 
 ## 已验证记录与真机验收
 

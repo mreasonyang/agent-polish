@@ -2,7 +2,7 @@
 
 [简体中文](technical.md) · [Overview](../README.en.md)
 
-Codex Polish `0.0.1-beta.2` is a Codex plugin for macOS and Linux. Its local scripts use built-in Node.js modules and require Node.js 22.16 or newer. The [rewrite skill](../plugins/codex-polish/skills/codex-polish/SKILL.md) polishes eligible final replies. The [setup skill](../plugins/codex-polish/skills/codex-polish-setup/SKILL.md) checks the environment and manages project settings.
+Codex Polish `0.0.1-beta.3` is a Codex plugin for macOS and Linux. Its local scripts use built-in Node.js modules and require Node.js 22.16 or newer. The [rewrite skill](../plugins/codex-polish/skills/codex-polish/SKILL.md) polishes eligible final replies. The [setup skill](../plugins/codex-polish/skills/codex-polish-setup/SKILL.md) checks the environment and manages project settings.
 
 ## Project Settings and Inheritance
 
@@ -29,11 +29,17 @@ When `.codex/codex-polish.language` is `auto`, chat prompts match the user's cur
 | 2. Style check | Direct ACP proceeds immediately. With Decisions enabled, the protected current question and draft must score `P(needs rewrite) >= 0.80`. |
 | 3. ACP rewrite | The agent launches `agy acp` in a temporary workspace under a dedicated editor role, opens a session with the configured Antigravity identity, reads the live model list, and verifies the project model. It rejects tool permission requests and requires a complete `end_turn` matching the request ID. |
 | 4. Placeholder check | Every placeholder must appear in its original order. After restoring protected spans, the script verifies fixed tokens, numbers, units, and supported Markdown structures. |
-| 5. Meaning check and delivery | Direct ACP delivers the verified rewrite. With Decisions enabled, comparing the protected question, draft, and candidate rewrite must score `P(substantive change) <= 0.05`. Any stage failure returns the original draft, and user cancellation ends the turn. |
+| 5. Meaning check and delivery | Direct ACP accepts the rewrite after local checks. With Decisions enabled, a changed candidate must also score `P(substantive change) <= 0.05` in the meaning check. Any stage failure returns the original draft, and user cancellation ends the turn. |
 
 During a rewrite, `agy` connects to Google. The plugin's Node.js scripts contact a provider only for the optional OpenAI Decisions checks. The current Codex agent starts and cleans up the ACP process, selects the model, and exchanges protocol messages. [ACP operating instructions](../plugins/codex-polish/skills/codex-polish/references/acp.md)
 
 The plugin requires the official Antigravity CLI 1.2.1 or later. By default it reuses the existing Antigravity sign-in on the machine and OS account running Codex. To use an AI Studio key or an enterprise identity, set `CODEX_POLISH_AGY_AUTH` to `gemini-api-key` or `agent-platform`, respectively. [Sign-in guide](../plugins/codex-polish/skills/codex-polish-setup/references/credentials.en.md) · [Google ACP authentication](https://antigravity.google/docs/ide/extensions/acp)
+
+## What Appears in the Final Reply
+
+When Codex adopts a rewrite, it uses ordinary Markdown labels within one final chat message. **Polished by Gemini** introduces the accepted text with protected details restored. **Original GPT draft** introduces the complete draft from before polishing. Both bodies appear verbatim.
+
+If Gemini returns identical text, the reply says it left the draft unchanged and shows the text once. A skip before sending, an incomplete request, or a rejected rewrite gets a brief status based on what happened, followed only by the original. Asking for “only the polished text” gives you just the selected body. Requests for plain JSON, a single command, or other exact output receive the requested content without labels or status.
 
 ## Outgoing Content, Hooks, and Limits
 
@@ -85,7 +91,7 @@ Using Node.js 22.16 and Antigravity CLI 1.5.12, the Codex agent selected `gemini
 
 ### Checks still open
 
-- Verify a complete rewrite in the T3 chat interface. Exercise both routes with authorized, de-identified samples. Compare the tool trace with the selected model, completed output, and process cleanup. Compare the chosen text with the native final message and the transcript after reopening the chat.
+- Verify a complete rewrite in the T3 chat interface. Exercise both routes with authorized, de-identified samples. Compare the tool trace with the selected model, completed output, and process cleanup. Check the status and section order in the native final message and again after reopening the chat. Compare each displayed body with its source.
 - Run Chinese drafts over 4 KiB in two chats simultaneously and check that each keeps its own text, placeholders, and session ID. Check fallback for an unavailable model, a permission request, cancellation, and a truncated stream.
 - Collect at least 200 delivered real samples across the calibration and blind splits. Use the blind split to measure preference rates, severe fact reversals, missed workflows, verbatim display match, and end-to-end latency. Current thresholds are initial defaults, and `evaluation/example.jsonl` contains synthetic records (`demo_only`). See the [evaluation specification](../evaluation/README.en.md) and [contribution guide](../CONTRIBUTING.en.md).
 
@@ -95,4 +101,4 @@ Once the beta is published to npm, install it with `npx @kyun.si/codex-polish@be
 
 Both `setup` and `update` accept `--install-agy` to install the Google CLI when needed. Updates preserve `.codex` project settings and the plugin’s enabled state. Re-running `update` with the same version replaces the build or recovers an interrupted update.
 
-If you packed version `0.0.1-beta.2` locally, you can also run `npx --yes file:./kyun.si-codex-polish-0.0.1-beta.2.tgz uninstall` in the directory containing the archive. Uninstall removes the plugin and its marketplace, clears cooldowns and session pointers for the active Codex profile, and prints the backup path for any manually edited installation files. It keeps shared `agy` binaries and project `.codex` files.
+If you packed version `0.0.1-beta.3` locally, you can also run `npx --yes file:./kyun.si-codex-polish-0.0.1-beta.3.tgz uninstall` in the directory containing the archive. Uninstall removes the plugin and its marketplace, clears cooldowns and session pointers for the active Codex profile, and prints the backup path for any manually edited installation files. It keeps shared `agy` binaries and project `.codex` files.

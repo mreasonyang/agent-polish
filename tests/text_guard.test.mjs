@@ -40,6 +40,72 @@ test('Markdown blocks preserve exact bytes including CRLF', () => {
   assert.deepEqual(restore(source,edit(p.protected_draft)),{ok:true,text:edit(draft)});
 });
 
+test('display restores masked content and labels both versions in the requested language', () => {
+  const draft = '目前已经修复。详见 [记录](https://example.org/a_(b))。';
+  const polished = draft.replace('目前已经', '已经');
+  const [source, p] = prep(draft);
+  assert.notEqual(p.protected_draft, draft);
+  const candidate = p.protected_draft.replace('目前已经', '已经');
+  for (const [language, heading, original] of [
+    ['zh', '**Gemini 润色版**', '**GPT 原稿**'],
+    ['en', '**Polished by Gemini**', '**Original GPT draft**'],
+  ]) {
+    assert.deepEqual(run('restore', { ...source, candidate, display_language: language }), {
+      ok: true, text: polished, display_text: [heading, polished, original, draft].join('\n\n'),
+    });
+  }
+});
+
+test('display shows an identical restored draft once, keeping all source whitespace', () => {
+  const draft = '  See `git log`.  \r\n\t\r\n';
+  const [source, p] = prep(draft);
+  assert.notEqual(p.protected_draft, draft);
+  for (const [language, heading] of [
+    ['zh', '**Gemini 已核对，和 GPT 原稿相同**'],
+    ['en', '**Gemini reviewed the GPT draft and left it unchanged**'],
+  ]) {
+    assert.deepEqual(run('restore', { ...source, candidate: p.protected_draft, display_language: language }), {
+      ok: true, text: draft, display_text: heading + '\n\n' + draft,
+    });
+  }
+});
+
+test('whitespace and Unicode normalization differences count as edits', () => {
+  const draft = 'Café is ready.  \r\n';
+  const [source] = prep(draft);
+  for (const candidate of [draft.trimEnd(), draft.replace('\r\n', '\n'), draft.normalize('NFD')]) {
+    assert.deepEqual(run('restore', { ...source, candidate, display_language: 'en' }), {
+      ok: true, text: candidate,
+      display_text: '**Polished by Gemini**\n\n' + candidate + '\n\n**Original GPT draft**\n\n' + draft,
+    });
+  }
+});
+
+test('display preserves long fenced Markdown, including tabs, CRLF and trailing lines, through the CLI', () => {
+  const draft = '# Update\r\n\r\n- First draft.\r\n\r\n~~~~text\r\n\t' + 'x'.repeat(MAX_TEXT - 150)
+    + '\r\n```\r\n~~~~\r\n\r\n';
+  const [source, p] = prep(draft);
+  const polished = draft.replace('First draft.', 'Revised copy.');
+  const candidate = p.protected_draft.replace('First draft.', 'Revised copy.');
+  const result = cli('restore', JSON.stringify({ ...source, candidate, display_language: 'en' }));
+  assert.deepEqual(JSON.parse(result.stdout), {
+    ok: true, text: polished,
+    display_text: '**Polished by Gemini**\n\n' + polished + '\n\n**Original GPT draft**\n\n' + draft,
+  });
+});
+
+test('failed display requests return only the failure reason', () => {
+  const [source, p] = prep('Use `git log` to inspect the update.');
+  const request = { ...source, candidate: p.protected_draft, display_language: 'en' };
+  assert.deepEqual(run('restore', { ...request, candidate: 'Here is the revised draft.' }),
+    { ok: false, reason: 'marker_mismatch' });
+  assert.deepEqual(run('restore', { ...request, candidate: p.protected_draft + '\n# Conclusion' }),
+    { ok: false, reason: 'structure_changed' });
+  for (const language of [null, false, '', 'auto', 'constructor', ['zh']]) {
+    assert.deepEqual(run('restore', { ...request, display_language: language }), { ok: false, reason: 'invalid_input' });
+  }
+});
+
 test('opaque markers have request and role scope and order', () => {
   const [source,p] = prep('已处理3项，剩下2处。','为什么有10项？');
   const [one,two] = p.protected_draft.match(MARKER);
@@ -104,6 +170,21 @@ test('explicit format requests, commands and machine output bypass rewriting', (
   for (const draft of ['{"key": "value"}','[true, false]','true',' false\n','null','git status','pwd',
     '```sh\ngit log\n```','diff --git a/file b/file','def main():\n    pass'])
     assert.equal(run('prepare',{question:'帮我看下。',draft}).bypass,true);
+});
+
+test('an English request for only the polished text allows a rewrite while exact output still bypasses it', () => {
+  const draft = 'The work is currently complete.';
+  for (const question of ['Only show the polished text.', 'Please return only the polished text.',
+    'Edit for clarity and give me only the polished answer.']) {
+    const [source, p] = prep(draft, question);
+    const candidate = p.protected_draft.replace('currently ', '');
+    assert.deepEqual(restore(source, candidate), { ok: true, text: 'The work is complete.' });
+  }
+  for (const question of ['Output only JSON.', 'Output only JSON. Return only the polished text.',
+    'Return only the polished text as JSON.', 'Keep the quote verbatim and return only the polished text.',
+    'Return exactly the polished text.']) {
+    assert.deepEqual(run('prepare', { question, draft }), { bypass: true, reason: 'fixed_format' });
+  }
 });
 
 test('credentials never appear in CLI failure payloads', () => {

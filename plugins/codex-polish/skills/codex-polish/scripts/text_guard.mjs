@@ -27,7 +27,8 @@ const EXACT = new RegExp([
   /(?:只要|仅需)\s*(?:一(?:条|行|个)\s*)?(?:命令|代码|json|补丁)/.source,
   /(?:原样|逐字|一字不改地?)\s*(?:输出|返回|复述|引用|复制)/.source,
   /(?:固定|严格按(?:照)?|完全按照|严格遵守)(?:指定|以下|下面|这个|此)?格式/.source,
-  /\b(?:return|output|reply with|give me|print)\s+(?:only|exactly)\b/.source,
+  // A final "return only the polished text" clause requests a rewrite without headings.
+  /\b(?:return|output|reply with|give me|print)\s+(?:exactly\b|only\b(?!\s+(?:the\s+)?polished\s+(?:text|reply|answer|version|prose|body)[.!?]?\s*$))/.source,
   /\b(?:json|yaml|code|commands?|patch|diff)\s+only\b|\bverbatim\b/.source,
 ].join('|'), 'iu');
 
@@ -65,6 +66,10 @@ const FENCE = /^ {0,3}(`{3,}|~{3,})/;
 const FROZEN_LINE = /^(?:[ \t]*>| {4,}\S|\t\S|[ \t]*\[[^\]]+\]:|[ \t]*\|.*\||[ \t]*(?:-{3,}|\*{3,}|_{3,})[ \t]*$|[ \t]*(?:\$ |PS> )\S)/;
 const COMMAND_LINE = new RegExp('^[ \\t]*(?:' + COMMANDS + /(?:[ \t]+[ -~]*)?|(?:\.\/|~\/|\/)[A-Za-z0-9_./-]+[ \t]+[ -~]+/.source + ')$');
 const STRUCTURE = /^([ \t]*)(#{1,6}(?=\s)|[-*+](?=\s)|[0-9]+[.)](?=\s)|>|\||`{3,}|~{3,}|\[[^\]]+\]:)/;
+const DISPLAY_LABELS = {
+  zh: { polished: 'Gemini 润色版', original: 'GPT 原稿', unchanged: 'Gemini 已核对，和 GPT 原稿相同' },
+  en: { polished: 'Polished by Gemini', original: 'Original GPT draft', unchanged: 'Gemini reviewed the GPT draft and left it unchanged' },
+};
 
 class Skip extends Error {}
 
@@ -183,7 +188,14 @@ export function run(action, payload) {
     if (!isDeepStrictEqual([...actual.values()], [...literals.values()])) throw new Skip('literal_changed');
     if (!isDeepStrictEqual(structure(text), structure(payload.draft)) || STRUCTURED.test(text))
       throw new Skip('structure_changed');
-    return { ok: true, text };
+    const { draft, display_language } = payload;
+    if (display_language === undefined) return { ok: true, text };
+    if (display_language !== 'zh' && display_language !== 'en') throw new Skip('invalid_input');
+    const labels = DISPLAY_LABELS[display_language];
+    const display_text = text === draft
+      ? `**${labels.unchanged}**\n\n${draft}`
+      : `**${labels.polished}**\n\n${text}\n\n**${labels.original}**\n\n${draft}`;
+    return { ok: true, text, display_text };
   } catch (error) {
     if (!(error instanceof Skip)) throw error;
     return action === 'prepare' ? { bypass: true, reason: error.message } : { ok: false, reason: error.message };

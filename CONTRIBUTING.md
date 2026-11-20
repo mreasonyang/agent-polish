@@ -21,7 +21,7 @@ mkdir -p dist
 npm pack --ignore-scripts --pack-destination dist
 ```
 
-`npm pack` 会把 `@kyun.si/codex-polish` 的 `0.0.1-beta.2` 版打包为 `dist/kyun.si-codex-polish-0.0.1-beta.2.tgz`。默认测试无需 API 密钥，原生安装测试会使用临时 Codex 配置。另有一项在线测试需要显式开启，会向 OpenAI 发出四次付费请求。[运行在线检查](docs/technical.md)
+`npm pack` 会把 `@kyun.si/codex-polish` 的 `0.0.1-beta.3` 版打包为 `dist/kyun.si-codex-polish-0.0.1-beta.3.tgz`。默认测试无需 API 密钥，原生安装测试会使用临时 Codex 配置。另有一项在线测试需要显式开启，会向 OpenAI 发出四次付费请求。[运行在线检查](docs/technical.md)
 
 ## 反馈问题
 
@@ -35,11 +35,11 @@ npm pack --ignore-scripts --pack-destination dist
 
 ## 发布 beta
 
-将 `package.json` 和插件清单中的版本一同改为 `X.Y.Z-beta.N`，提交后推送同名 Git 标签。例如发布 `0.0.1-beta.2` 时运行：
+将 `package.json` 和插件清单中的版本一同改为 `X.Y.Z-beta.N`，提交后推送同名 Git 标签。例如发布 `0.0.1-beta.3` 时运行：
 
 ```sh
-git tag v0.0.1-beta.2
-git push origin v0.0.1-beta.2
+git tag v0.0.1-beta.3
+git push origin v0.0.1-beta.3
 ```
 
 GitHub Actions 会测试这个标签的代码，将安装包发布到 npm 的 `beta` 标签，并创建 GitHub 预发布版。如果某一步失败，可以在 Actions 中选择发布工作流，用已有标签重试。

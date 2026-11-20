@@ -2,12 +2,19 @@
 
 **English** | **[简体中文](README.md)**
 
-Codex Polish uses Gemini through Antigravity’s `agy acp` to polish Codex’s final replies. Projects default to automatic mode. Once you trust the plugin hook and start a new chat, ordinary questions trigger polishing. If the rewrite fails a check, you get the original.
+Codex Polish uses Gemini through Antigravity’s `agy acp` to polish Codex’s final replies. When you get a rewrite, the chat shows Gemini’s version first, followed by the full original GPT draft for comparison. Projects default to automatic mode. Once you trust the plugin hook and start a new chat, ordinary questions trigger polishing.
 
 In one test, Codex had to report that the export button was fixed and had passed local tests. A production check was still pending. Both texts below are translated from that test.
 
-- **Draft** “Regarding progress with the export button fix, let me explain the actual situation. The export button has now been fixed, local tests have passed, and production verification has not yet been done.”
-- **After** “The export button is fixed and passed local tests. It still needs to be checked in production.”
+**Polished by Gemini**
+
+The export button is fixed and passed local tests. It still needs to be checked in production.
+
+**Original GPT draft**
+
+Regarding progress with the export button fix, let me explain the actual situation. The export button has now been fixed, local tests have passed, and production verification has not yet been done.
+
+To see just the rewrite for one reply, say **“Only show the polished text.”** If you ask for plain JSON, a command, or a verbatim quotation, the reply keeps that exact format.
 
 ## Quick Start
 
@@ -54,7 +61,7 @@ For a rewrite, Google receives your current question and reply draft. The plugin
 
 ## If a Reply Stays Unchanged
 
-Exact-output requests, already clear drafts when OpenAI checks are active, missing models, or failed checks keep the original draft. Say **"Check Codex Polish setup"** to inspect `agy` and cooldowns, **"Choose a rewrite model"** to verify model access, or **"Why wasn't my last reply polished?"** for the turn's reason.
+If Gemini returns the same text, the reply says it left the draft unchanged and shows the text once. If polishing was skipped before sending the draft, the request failed to finish, or the rewrite failed a check, the reply says what happened and shows the original GPT draft. Ask **“Why wasn’t my last reply polished?”** for that turn’s reason, or **“Check Codex Polish setup”** to troubleshoot the connection.
 
 ## Check, Update, or Uninstall
 

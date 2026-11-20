@@ -2,6 +2,11 @@
 
 [中文使用说明](README.md) · [English README](README.en.md)
 
+## 0.0.1-beta.3
+
+- 聊天里先显示 Gemini 润色版，再附上完整的 GPT 原稿。Gemini 返回原文时会注明，正文只显示一次。跳过或失败时会说明原因并保留原稿。可以单独要求只看润色后的正文。
+- Replies show the Gemini rewrite followed by the complete original GPT draft. An unchanged reply appears once with a review label. If polishing skips or fails, the reply identifies the outcome and shows the original. You can ask for just the polished text.
+
 ## 0.0.1-beta.2
 
 - 项目没有指定润色模式时，普通提问也会自动触发润色。使用前，在 Codex 中信任插件的 `UserPromptSubmit` 钩子。已选“只在我要求时”或“关闭”的项目会沿用该选择。

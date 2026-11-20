@@ -13,7 +13,7 @@ node --test tests/evaluation.test.mjs
 
 1. Obtain permission to use the samples and remove sensitive content. Assign a stable `case_id` to each original prompt and draft. Record the variants and votes for that case in one JSONL row, assigned to a single split. A repeated ID in any row or split stops the script with the offending line number.
 2. Label independently whether each original draft needs rewriting, then select thresholds on the calibration split. Freeze the plugin settings, model, and concise prompt used for the prompt-only baseline, and use that frozen setup across all blind samples. Each report corresponds to one frozen configuration.
-3. Record the host tool trace, the selected reply text, and the native final message. For each blind sample, generate a prompt-only baseline reply using the same task, Codex model, and context with only a concise style instruction added. For samples that adopt a rewrite, also pair the rewrite against the original draft.
+3. Record the host tool trace, the selected reply text, and the native final message. Use the complete message to check the status, labels, section order, and original draft. For blind rating, take only the displayed body of the selected reply, omitting the plugin’s labels and status. Generate a prompt-only baseline reply using the same task, Codex model, and context with only a concise style instruction added. For samples that adopt a rewrite, also pair the rewrite against the original draft.
 4. Randomize each pair into A and B. Raters see only the user prompt, required context, and two anonymous replies, choosing A, B, or a tie. After unblinding, record `plugin_side` and `pick`. An independent fact checker compares the original draft against the delivered reply and flags any severe fact reversal, such as turning "tests were not run" into "tests passed." The script consumes the collected records, while the data provider verifies authorization, split assignment, and blinding.
 
 ## JSONL Record Fields
@@ -26,11 +26,11 @@ node --test tests/evaluation.test.mjs
 | `workflow_expected`, `workflow_ran` | Whether the turn should run through the plugin, and whether the host trace shows it actually ran. Turns skipped by rule can be `false` |
 | `triggered` | `true` when the check decides to trigger an external rewrite, even if a failure happens afterward |
 | `outcome` | `original` when delivering the initial draft, `adopted` when using the rewrite, `fallback` when delivering the original draft after a workflow error or validation rejection, `cancelled` when the user cancels and nothing is delivered |
-| `selected_text`, `final_text` | The final chosen text and the text actually shown to the user in the native session, preserving spaces and newlines. Omit or set to `null` when cancelled |
+| `selected_text`, `final_text` | Take the first from the chosen rewrite or original draft. Independently take the second from its corresponding body in the native final message. Use the polished body when both versions appear, or the sole body when one appears. Exclude plugin labels and status. Preserve punctuation, spaces, and newlines within the body. Omit or set to `null` when cancelled |
 | `elapsed_ms` | Total milliseconds from draft ready to native final message display. Set to `null` when unmeasured or cancelled |
 | `severe_fact_reversal` | Human fact-check result for the delivered reply. Set `true` if a severe reversal is found, `false` if checked and none is found, or `null` if unchecked or cancelled |
 | `vs_original` | One vote for each blind record that adopted a rewrite. `{"plugin_side":"B","pick":"A"}` means the rewrite appeared on side B and the rater chose the original draft. Use `"pick":"tie"` for a tie |
-| `vs_prompt_only` | One vote for each delivered blind record. The plugin side holds the actual delivered reply and the other side holds the prompt-only baseline, using the same format. Omit or set to `null` when missing or not applicable |
+| `vs_prompt_only` | One vote for each delivered blind record. The plugin side shows `final_text` and the other side shows the prompt-only baseline, using the same format. Omit or set to `null` when missing or not applicable |
 
 ## Reading the Report
 

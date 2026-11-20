@@ -144,15 +144,21 @@ test('unrecognized helper output cannot be delivered or recorded', t => {
   }
 });
 
-test('auto hook suppresses reminders on backoff or missing Node', t => {
+test('auto hook shows a pause notice during backoff and stays silent without Node', t => {
   const { installed, env, cwd, bin, note } = fixture(t);
   const command = JSON.parse(fs.readFileSync(path.join(installed, 'hooks/hooks.json'))).hooks.UserPromptSubmit[0].hooks[0].command;
-  const settings = { ...env, PLUGIN_ROOT: installed };
+  const settings = { ...env, LANG: 'en_US.UTF-8', LC_ALL: 'en_US.UTF-8', PLUGIN_ROOT: installed };
   const hook = () => {
     const p = spawnSync('/bin/sh', ['-c', command], { env: settings, encoding: 'utf8', input: JSON.stringify({ hook_event_name: 'UserPromptSubmit', cwd }) });
     assert.equal(p.status, 0); assert.equal(p.stderr, ''); return p.stdout;
   };
   assert.equal(hook(), ''); fs.symlinkSync(process.execPath, path.join(bin, 'node'));
-  assert.match(hook(), /codex-polish/); note('invalid_api_response'); assert.equal(hook(), '');
-  settings.OPENAI_API_KEY = ''; assert.match(hook(), /codex-polish/); note('acp_timeout'); assert.equal(hook(), '');
+  for (const failure of ['invalid_api_response', 'acp_timeout']) {
+    if (failure === 'acp_timeout') settings.OPENAI_API_KEY = '';
+    assert.match(hook(), /codex-polish:codex-polish/);
+    note(failure);
+    const notice = JSON.parse(hook()).hookSpecificOutput.additionalContext;
+    assert.match(notice, /temporarily paused/);
+    assert.doesNotMatch(notice, /codex-polish:codex-polish/);
+  }
 });

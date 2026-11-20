@@ -2,7 +2,7 @@
 
 [English](technical.en.md) · [项目首页](../README.md)
 
-`codex-polish` 的 `0.0.1-beta.2` 版包含两个 Codex 技能。[改写技能](../plugins/codex-polish/skills/codex-polish/SKILL.md) 在最终答复交付前润色草稿，[设置技能](../plugins/codex-polish/skills/codex-polish-setup/SKILL.md) 检查运行环境并保存项目设置。
+`codex-polish` 的 `0.0.1-beta.3` 版包含两个 Codex 技能。[改写技能](../plugins/codex-polish/skills/codex-polish/SKILL.md) 在最终答复交付前润色草稿，[设置技能](../plugins/codex-polish/skills/codex-polish-setup/SKILL.md) 检查运行环境并保存项目设置。
 
 ## 模式、配置文件与查找规则
 
@@ -28,9 +28,15 @@
 | 2. 风格判定 | 直接 ACP 路径在本地检查通过后立即进入改写。开启 Decisions 时，只有 `P(需要改写) ≥ 0.80` 才进入改写，原本清楚的草稿直接保留。 |
 | 3. ACP 改写 | 在临时工作区启动关闭了默认内置工具的专用编辑角色，使用已配置的 Antigravity 身份建立会话，核对项目选中的模型，拒绝全部权限请求，且只接收请求 ID 匹配的完整 `end_turn`。 |
 | 4. 固定内容还原 | 占位符必须按顺序逐一对应。还原后再次校验固定内容、数值与单位、控制字符、疑似凭据以及受支持的 Markdown 结构。 |
-| 5. 原意复核与交付 | 直接 ACP 路径通过本地校验即采用改稿。开启 Decisions 时还需满足 `P(实质变化) ≤ 0.05`。任一阶段未通过均回退原稿，用户取消则直接结束本轮。 |
+| 5. 原意复核与交付 | 直接 ACP 路径通过本地校验即采用改稿。开启 Decisions 时，有改动的候选还需满足 `P(实质变化) ≤ 0.05`。任一阶段未通过均回退原稿，用户取消则直接结束本轮。 |
 
 相关接口规范见 [Google ACP 认证](https://antigravity.google/docs/ide/extensions/acp)、[Decisions API](https://developers.openai.com/api/reference/resources/decisions/methods/create) 与 [Antigravity 角色的工具配置](https://github.com/google-antigravity/antigravity-cli/releases/tag/1.2.1)。
+
+## 最终回复如何显示
+
+采用改稿时，Codex 在同一条最终消息中用普通 Markdown 标出 **Gemini 润色版** 和 **GPT 原稿**。前一段逐字显示通过检查并还原后的改稿，后一段逐字显示交给插件前的草稿。
+
+如果 Gemini 确实返回了相同的文字，回复会说明 Gemini 返回了原文，正文只显示一次。在发送前跳过、请求未完成或改稿被拒绝时，回复说明可确认的原因，只显示原稿。明确要求“只给润色后的正文”时只交付选定的正文。JSON、单条命令及其他逐字输出按用户要求直接交付，不加标题或状态。
 
 ## 隐私边界、文本保护与历史限制
 
@@ -63,7 +69,7 @@
 
 `setup` 和 `update` 支持 `--install-agy`，在缺少 Antigravity CLI 时可自动安装。更新会保留项目设置与插件启用状态。同一版本号的新构建也能用 `update` 覆盖或重试中断的更新。
 
-手头有本地打包的 `0.0.1-beta.2` 版时，也可以在压缩包所在目录运行 `npx --yes file:./kyun.si-codex-polish-0.0.1-beta.2.tgz uninstall`。卸载会清理该插件与专用市场，按当前 Codex 配置清除冷却记录和会话指针，保留各项目的 `.codex/` 配置和共用的 `agy`，并提示被手动修改过的安装文件备份位置。
+手头有本地打包的 `0.0.1-beta.3` 版时，也可以在压缩包所在目录运行 `npx --yes file:./kyun.si-codex-polish-0.0.1-beta.3.tgz uninstall`。卸载会清理该插件与专用市场，按当前 Codex 配置清除冷却记录和会话指针，保留各项目的 `.codex/` 配置和共用的 `agy`，并提示被手动修改过的安装文件备份位置。
 
 ## 已验证记录与真机验收
 
@@ -88,4 +94,4 @@ CODEX_POLISH_TEST_LIVE_DECISIONS=1 node --test --test-name-pattern='live fidelit
 
 1. 分别在无 OpenAI 密钥和开启 Decisions 的项目中核对工具轨迹，确认只有当前 agent 持有 ACP 进程、模型选择准确且结束后进程回收干净。
 2. 用超过 4 KiB 的中文长文在两个 Codex 会话中并发运行，确认正文、占位符和会话 ID 不串线，并核对缺模型、权限请求、取消和断流时的回退表现。
-3. 对照校验工具输出、原生最终消息和重开会话后的记录，统计盲评偏好、严重事实反转、漏调率、逐字一致率和端到端延迟。统计门槛要求校准集和盲评集合计至少 200 个已交付的真实样本。[验收数据格式和指标](../evaluation/README.md)
+3. 在原生最终消息和重开会话后的记录中核对状态、两版顺序及正文。采用改稿时分别对照还原后的改稿和原始草稿。统计盲评偏好、严重事实反转、漏调率、选定正文的逐字一致率和端到端延迟。统计门槛要求校准集和盲评集合计至少 200 个已交付的真实样本。[验收数据格式和指标](../evaluation/README.md)

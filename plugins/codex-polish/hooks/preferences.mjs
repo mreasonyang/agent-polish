@@ -271,15 +271,15 @@ function runHook() {
   if (event?.hook_event_name !== 'UserPromptSubmit') return;
   const [mode, scope] = projectSettings(event.cwd);
   rememberHistorySource(event, mode);
-  if (mode === 'auto' && !workflowCooldown(scope, decisionsSettings(event.cwd).decisions_enabled)) {
-    console.log(JSON.stringify({ hookSpecificOutput: {
-      hookEventName: 'UserPromptSubmit',
-      additionalContext: tr(
-        '本项目已开启自动改写。完成任务后，在发送最终回复前使用已安装的 codex-polish:codex-polish 技能。请遵守用户本轮指定的输出格式、取消或禁止外发的要求。',
-        'Automatic rewriting is on for this project. After completing the task, use the installed codex-polish:codex-polish skill before sending the final answer. Honor the user’s requested format, cancellations, and requests to keep content local.',
-        language(event.cwd)),
-    } }));
-  }
+  if (mode !== 'auto') return;
+  const lang = language(event.cwd);
+  const paused = workflowCooldown(scope, decisionsSettings(event.cwd).decisions_enabled);
+  const additionalContext = paused
+    ? tr('自动润色因上次服务故障暂时暂停。常规回复请在最终消息里注明本轮未润色，再给出 GPT 原稿。遵守用户的格式要求；若本轮明确点名润色，可按技能手动重试。',
+      'Automatic polishing is temporarily paused after a service failure. For ordinary replies, mark the final answer as unpolished and show the original GPT draft. Honor the requested format. An explicit polish request can still use the skill.', lang)
+    : tr('本项目已开启自动改写。完成任务后，在发送最终回复前使用已安装的 codex-polish:codex-polish 技能。常规回复请在最终消息中显示润色结果和完整 GPT 原稿，两版相同时注明并只显示一次。遵守用户指定的输出格式、取消或禁止外发的要求。',
+      'Automatic rewriting is on for this project. Before sending the final answer, use the installed codex-polish:codex-polish skill. In ordinary replies show the result and the full original GPT draft. If identical, label it and show it once. Honor the requested format, cancellations, and requests to keep content local.', lang);
+  console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext } }));
 }
 
 const commands = {

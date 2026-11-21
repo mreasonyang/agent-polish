@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Install Codex Polish through the native Codex plugin manager.
 import * as fs from 'node:fs';
-import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, normalize, resolve } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
 import { createHash, randomUUID } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
@@ -13,6 +13,7 @@ import { createInterface as createPrompt } from 'node:readline/promises';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { isDeepStrictEqual } from 'node:util';
 import { fileURLToPath } from 'node:url';
+import { executable, windows, agyDirectory, windowsSystemTool, openRegular } from '../plugins/codex-polish/hooks/platform.mjs';
 import { language, tr } from '../plugins/codex-polish/hooks/ui_locale.mjs';
 import { DEFAULT_GEMINI_MODEL, findAgy } from '../plugins/codex-polish/hooks/preferences.mjs';
 import { removeProfileCache, sqliteModule } from '../plugins/codex-polish/hooks/recovery.mjs';
@@ -29,12 +30,12 @@ export const GUIDE = PRODUCT + '/skills/codex-polish-setup/references/credential
 const CODEX_INSTALL = 'https://developers.openai.com/codex/cli/';
 const GEMINI_KEYS = 'https://aistudio.google.com/apikey';
 const AGY_INSTALL = 'https://antigravity.google/docs/getting-started/?tab=cli';
-const AGY_BOOTSTRAP = 'https://antigravity.google/cli/install.sh';
+const AGY_BOOTSTRAP = 'https://antigravity.google/cli/install.' + (windows ? 'ps1' : 'sh');
 const VERSION = '[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][a-zA-Z0-9.+-]+)?';
 const validVersion = new RegExp('^' + VERSION + '$');
 const snapshotName = new RegExp('^' + VERSION + '-[0-9a-f]{20}$');
 const localSource = { source: 'local', path: './' + PRODUCT };
-const { O_RDONLY, O_NOFOLLOW, O_DIRECTORY, O_NONBLOCK } = fs.constants;
+const { O_RDONLY, O_DIRECTORY } = fs.constants;
 const isObject = (value) => !!value && typeof value === 'object' && !Array.isArray(value);
 const sha = (data) => createHash('sha256').update(data);
 const readJSON = (file) => JSON.parse(readPlain(file));
@@ -45,9 +46,8 @@ function statMaybe(path) {
   return fs.lstatSync(path, { throwIfNoEntry: false });
 }
 function readPlain(path) {
-  const fd = fs.openSync(path, O_RDONLY | O_NONBLOCK | O_NOFOLLOW);
+  const fd = openRegular(path);
   try {
-    if (!fs.fstatSync(fd).isFile()) throw fail('文件类型异常。', 'Unexpected file type.');
     return fs.readFileSync(fd);
   } finally {
     fs.closeSync(fd);
@@ -103,7 +103,7 @@ function productFiles(root) {
   return files;
 }
 function fingerprint(root) {
-  const files = [INDEX, ...productFiles(join(root, PRODUCT)).map((file) => join(PRODUCT, file))];
+  const files = [normalize(INDEX), ...productFiles(join(root, PRODUCT)).map((file) => join(PRODUCT, file))];
   const hash = createHash('sha256');
   for (const file of files) {
     const path = join(root,file);
@@ -171,7 +171,7 @@ function verifiedPaths(entry) {
     }
     return true;
   }
-  if (!walk('') || !actual.has(INDEX)) return null;
+  if (!walk('') || !actual.has(normalize(INDEX))) return null;
   try {
     const version = bundleVersion(entry),
       { digest, files } = fingerprint(entry);
@@ -229,18 +229,20 @@ function makeSnapshot(root, store, minimumVersions, registered) {
   }
   return [target, version];
 }
+function codexCommand(env = process.env) {
+  const found = executable('codex', env);
+  if (found) return found;
+  throw fail('没找到 Codex CLI。请按官方指南安装，或把 codex 加入 PATH。\n  ' + CODEX_INSTALL,
+    "Couldn't find Codex CLI. Follow the official installation guide or add codex to PATH.\n  " + CODEX_INSTALL);
+}
 export function codex(...args) {
-  const result = spawnSync('codex', ['plugin', ...args, '--json'], {
+  const cli = codexCommand();
+  const result = spawnSync(cli.command, [...cli.args, 'plugin', ...args, '--json'], {
     encoding: 'utf8',
     timeout: 120_000,
     maxBuffer: 16 * 1024 * 1024,
     stdio: ['ignore', 'pipe', 'pipe']
   });
-  if (result.error?.code === 'ENOENT')
-    throw fail(
-      '没找到 Codex CLI。请按官方指南安装，或把 codex 加入 PATH。\n  ' + CODEX_INSTALL,
-      "Couldn't find Codex CLI. Follow the official installation guide or add codex to PATH.\n  " + CODEX_INSTALL
-    );
   if (result.error || result.signal)
     throw fail(
       'Codex CLI 没有正常结束，请检查后再试。',
@@ -376,7 +378,8 @@ function verifyReceipt(receipt, target, version) {
   }
 }
 export async function nativeConfig(method, params, { experimental = false, cwd, env = process.env } = {}) {
-  const proc = spawn('codex', ['app-server', '--stdio'], { stdio: ['pipe', 'pipe', 'ignore'], cwd, env });
+  const cli = codexCommand(env);
+  const proc = spawn(cli.command, [...cli.args, 'app-server', '--stdio'], { stdio: ['pipe', 'pipe', 'ignore'], cwd, env });
   let ended = false;
   const closed = new Promise((done) =>
     proc.once('close', () => {
@@ -499,7 +502,7 @@ async function rollback(run, setEnabled, previous, before, target, store) {
 export function pendingUpdate(store) {
   let fd;
   try {
-    fd = fs.openSync(join(store, '.pending-update.json'), O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
+    fd = openRegular(join(store, '.pending-update.json'));
   } catch (error) {
     if (error.code === 'ENOENT') return null;
     throw error;
@@ -534,6 +537,8 @@ export function pendingUpdate(store) {
   );
 }
 function syncStore(store) {
+  // Win32 does not expose a Node directory handle that supports fsync.
+  if (windows) return;
   const fd = fs.openSync(store, O_RDONLY | O_DIRECTORY);
   try {
     fs.fsyncSync(fd);
@@ -546,12 +551,15 @@ function writeAtomicJson(file, entry) {
   const tmp = join(dir, '.prepare-update-' + randomUUID());
   const fd = fs.openSync(tmp, 'wx', 0o600);
   try {
-    fs.writeFileSync(fd, JSON.stringify(entry));
-    fs.fsyncSync(fd);
+    try {
+      fs.writeFileSync(fd, JSON.stringify(entry));
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
     fs.renameSync(tmp, file);
     syncStore(dir);
   } finally {
-    fs.closeSync(fd);
     fs.rmSync(tmp, { force: true });
   }
 }
@@ -885,11 +893,16 @@ function saveSetupMode(mode, cwd) {
       `The plugin is installed, but the automatic rewrite mode could not be saved in ${cwd}. Check the project’s write permissions.`);
 }
 async function runBootstrap(script, target, options) {
-  const proc = spawn('/bin/bash', [script, '--dir', target], { ...options, stdio: 'ignore', detached: true });
+  const shell = windows ? windowsSystemTool('WindowsPowerShell/v1.0/powershell.exe') : '/bin/bash';
+  const args = windows ? ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File'] : [];
+  const proc = spawn(shell, [...args, script, '--dir', target], { ...options, stdio: 'ignore', detached: !windows, windowsHide: true });
   function killGroup() {
     if (proc.pid) {
       try {
-        process.kill(-proc.pid, 'SIGKILL');
+        if (windows) {
+          spawnSync(windowsSystemTool('taskkill.exe'), ['/PID', String(proc.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
+          proc.kill('SIGKILL');
+        } else process.kill(-proc.pid, 'SIGKILL');
       } catch (error) {
         if (error.code !== 'ESRCH') throw error;
       }
@@ -928,7 +941,9 @@ async function downloadBootstrap(file) {
 }
 function agyEnvironment() {
   const env = { ...process.env };
-  for (const key of ['OPENAI_API_KEY', 'GEMINI_API_KEY', 'BASH_ENV', 'ENV']) delete env[key];
+  for (const key of Object.keys(env)) {
+    if (['OPENAI_API_KEY', 'GEMINI_API_KEY', 'BASH_ENV', 'ENV'].includes(key.toUpperCase())) delete env[key];
+  }
   return env;
 }
 function supportedAgy(binary) {
@@ -940,7 +955,7 @@ function supportedAgy(binary) {
   return Boolean(version && compareVersions(version[1], '1.2.1') >= 0);
 }
 export async function installAgy() {
-  const target = join(homedir(), '.local/bin');
+  const target = agyDirectory();
   fs.mkdirSync(target, { recursive: true });
   await withLock(join(target, '.codex-polish-agy.sqlite'), async () => {
     const existing = findAgy();
@@ -948,11 +963,11 @@ export async function installAgy() {
       if (supportedAgy(existing)) return;
       throw fail('请将现有的 Antigravity CLI 更新到 1.2.1 或更高版本。', 'Update your existing Antigravity CLI to version 1.2.1 or later.');
     }
-    const binary = join(target, 'agy');
+    const binary = join(target, windows ? 'agy.exe' : 'agy');
     if (statMaybe(binary))
       throw fail(`请先检查 ${binary}，这个路径已被占用。`, `Check ${binary}. That path is already in use.`);
     const temp = fs.mkdtempSync(join(tmpdir(), 'codex-polish-agy-')),
-      script = join(temp, 'install.sh');
+      script = join(temp, windows ? 'install.ps1' : 'install.sh');
     const options = { cwd: temp, env: agyEnvironment() };
     try {
       await downloadBootstrap(script);
@@ -1140,6 +1155,8 @@ async function ask(prompt) {
   }
 }
 function openPage(url) {
+  if (windows)
+    return spawnSync(windowsSystemTool('rundll32.exe'), ['url.dll,FileProtocolHandler', url], { stdio: 'ignore', timeout: 5000 }).status === 0;
   return (
     spawnSync(process.platform === 'darwin' ? '/usr/bin/open' : 'xdg-open', [url], { stdio: 'ignore', timeout: 5000 })
       .status === 0
@@ -1157,7 +1174,8 @@ async function chooseSetupProject(cwd, prompt, lang) {
     const answer = await prompt(tr('输入要配置的项目目录，或按回车稍后在 Codex 里选择：',
       'Enter the project folder, or press Enter to choose later in Codex: ', lang));
     if (!answer) return null;
-    const name = answer.startsWith('~/') ? join(homedir(), answer.slice(2)) : resolve(cwd, answer);
+    const folder = windows ? answer.replace(/^"(.*)"$/, '$1') : answer;
+    const name = folder.startsWith('~/') || (windows && folder.startsWith('~\\')) ? join(homedir(), folder.slice(2)) : resolve(cwd, folder);
     try {
       const project = fs.realpathSync(name);
       if (isProjectDirectory(project) && fs.statSync(project).isDirectory()) return project;
@@ -1221,6 +1239,10 @@ export function chooseSetupMode(project, lang, input, output) {
 export async function discoverSetupModels(checks) {
   const workspace = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), 'codex-polish-models-')));
   try {
+    if (windows) {
+      const { secureDirectory } = await import('../plugins/codex-polish/skills/codex-polish/scripts/acp_windows_io.mjs');
+      secureDirectory(workspace);
+    }
     const skill = join(ROOT, PRODUCT, 'skills/codex-polish');
     const task = [
       'Discover the Gemini models available to this account. This is a metadata lookup. Do not send a prompt to Gemini.',
@@ -1231,7 +1253,8 @@ export async function discoverSetupModels(checks) {
         ' using node, with --catalog, the supplied --agy-path and --auth, and --catalog-log ' + JSON.stringify(join(workspace, 'acp-frames.jsonl')) + '.',
       'Execute its start options unchanged. Execute each send.exec in your host tools, then read the same session for the next event. On catalog, finish and stop. The passive decoder records the actual session/new response for the installer. Do not write the catalog file yourself. If lookup fails, stop.'
     ].join('\n');
-    const child = spawn('codex', ['exec', '--ephemeral', '--skip-git-repo-check', '-C', workspace,
+    const cli = codexCommand();
+    const child = spawn(cli.command, [...cli.args, 'exec', '--ephemeral', '--skip-git-repo-check', '-C', workspace,
       '-c', 'plugins."codex-polish@codex-polish-local".enabled=false', task], { cwd: workspace, stdio: 'ignore' });
     const interrupt = () => child.kill('SIGINT');
     const terminate = () => child.kill('SIGTERM');

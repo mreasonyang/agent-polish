@@ -3,6 +3,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { windows, openRegular } from './platform.mjs';
+import { secureDirectory, checkPrivatePath } from '../skills/codex-polish/scripts/acp_windows_io.mjs';
 import { createHash, randomBytes } from 'node:crypto';
 
 export const APPLICATION_ID = 0x43504f4c;
@@ -29,7 +31,9 @@ export function cacheScope(scope) {
 
 export function databasePath() {
   let base = process.env.XDG_CACHE_HOME || '';
-  if (!path.isAbsolute(base)) base = path.join(os.homedir(), process.platform === 'darwin' ? 'Library/Caches' : '.cache');
+  if (!path.isAbsolute(base))
+    base = windows ? process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local')
+      : path.join(os.homedir(), process.platform === 'darwin' ? 'Library/Caches' : '.cache');
   return path.join(base, 'codex-polish', `runtime-${hash(profile()).slice(0, 16)}.sqlite3`);
 }
 
@@ -74,17 +78,27 @@ function initializeDatabase(file, DatabaseSync) {
 
 function privateDirectory(dir) {
   const entry = fs.lstatSync(dir);
-  if (!entry.isDirectory() || entry.uid !== process.getuid() || entry.mode & 0o022) throw new Error('invalid cache directory');
+  if (!entry.isDirectory()) throw new Error('invalid cache directory');
+  if (windows) checkPrivatePath(dir);
+  else if (entry.uid !== process.getuid() || entry.mode & 0o022) throw new Error('invalid cache directory');
 }
 
-function privateFile(entry) {
-  return entry.isFile() && entry.nlink === 1 && entry.uid === process.getuid() && !(entry.mode & 0o077);
+function privateFile(file, entry) {
+  if (!entry.isFile() || entry.nlink !== 1) return false;
+  if (windows) {
+    checkPrivatePath(file, false);
+    return true;
+  }
+  return entry.uid === process.getuid() && !(entry.mode & 0o077);
 }
 
 export function withCache(mode, use) {
   const { DatabaseSync } = sqliteModule();
   const file = databasePath();
-  if (mode === 'create') fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  if (mode === 'create') {
+    const created = fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+    if (windows && created) secureDirectory(path.dirname(file));
+  }
   privateDirectory(path.dirname(file));
   if (mode === 'create' && !fs.lstatSync(file, { throwIfNoEntry: false })) initializeDatabase(file, DatabaseSync);
   let entry = fs.lstatSync(file);
@@ -93,7 +107,7 @@ export function withCache(mode, use) {
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
     entry = fs.lstatSync(file);
   }
-  if (!privateFile(entry)) throw new Error('invalid cache file');
+  if (!privateFile(file, entry)) throw new Error('invalid cache file');
   const url = pathToFileURL(file);
   url.searchParams.set('mode', mode === 'read' ? 'ro' : 'rw');
   const db = new DatabaseSync(url.href, { readOnly: mode === 'read' });
@@ -110,8 +124,9 @@ export function removeProfileCache() {
   const file = databasePath();
   try {
     privateDirectory(path.dirname(file));
-    if (!privateFile(fs.lstatSync(file))) return file;
-    const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK | fs.constants.O_NOFOLLOW);
+    const expected = fs.lstatSync(file, { bigint: true });
+    if (!privateFile(file, fs.lstatSync(file))) return file;
+    const fd = openRegular(file);
     try {
       const header = Buffer.alloc(72);
       if (fs.readSync(fd, header, 0, header.length, 0) !== header.length ||
@@ -119,14 +134,22 @@ export function removeProfileCache() {
     } finally {
       fs.closeSync(fd);
     }
-    return withCache('write', db => {
+    const retained = withCache('write', db => {
       db.exec('BEGIN EXCLUSIVE');
       const objects = db.prepare('SELECT type, name FROM sqlite_master WHERE sql IS NOT NULL').all();
       if (objects.some(row => row.type !== 'table' || !['history_source', 'reply_origin', 'prompt_link'].includes(row.name))) return file;
       if (db.prepare('PRAGMA journal_mode').get().journal_mode !== 'delete') return file;
-      fs.unlinkSync(file);
+      if (!windows) fs.unlinkSync(file);
       return null;
     });
+    // SQLite's Windows handle cannot be unlinked during the transaction.
+    // After close, Windows rejects deletion if another connection opened it.
+    if (windows && !retained) {
+      const current = fs.lstatSync(file, { bigint: true });
+      if (!current.isFile() || expected.ino !== current.ino || expected.dev !== current.dev) return file;
+      fs.unlinkSync(file);
+    }
+    return retained;
   } catch (cause) {
     if (cause.code === 'ENOENT') return null;
     throw Object.assign(new Error('could not clean up runtime cache', { cause }), { code: 'EIO', path: file });

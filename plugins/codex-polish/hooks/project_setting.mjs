@@ -4,11 +4,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { readPromptLink, savePromptLink } from './prompt_link.mjs';
+import { windows, openRegular } from './platform.mjs';
+import { readPromptLink, savePromptLink, resolvePromptBytes } from './prompt_link.mjs';
 
 export const PROMPT_FILE = 'codex-polish.prompt.md';
 
-const { O_RDONLY, O_DIRECTORY, O_NOFOLLOW, O_NONBLOCK } = fs.constants;
+const { O_RDONLY, O_DIRECTORY, O_NOFOLLOW } = fs.constants;
 
 function sameDirectory(a, b) {
   return a.dev === b.dev && a.ino === b.ino;
@@ -19,11 +20,11 @@ function accessSetting(project, operation, filename, value) {
   if (operation === 'read' || operation === 'read-bytes') {
     if (operation === 'read-bytes' && filename === PROMPT_FILE && fs.lstatSync(target).isSymbolicLink())
       return readPromptLink(project, target);
-    const fd = fs.openSync(target, O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
+    const fd = openRegular(target);
     try {
       const stat = fs.fstatSync(fd);
       if (!stat.isFile() || (operation === 'read-bytes' && stat.nlink > 1)) return '';
-      if (operation === 'read-bytes' && value === undefined) return fs.readFileSync(fd);
+      if (operation === 'read-bytes' && value === undefined) return resolvePromptBytes(project, target, fs.readFileSync(fd));
       const raw = Buffer.alloc(value + 1);
       let size = 0;
       while (size < raw.length) {
@@ -68,13 +69,15 @@ function accessSetting(project, operation, filename, value) {
 
 export function accessProjectSetting(directory, operation, filename, value) {
   const previous = process.cwd();
-  const fd = fs.openSync(directory, O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
+  const expected = fs.lstatSync(directory, { bigint: true });
+  if (!expected.isDirectory()) throw Object.assign(new Error('invalid settings directory'), { code: 'EINVAL' });
+  const fd = windows ? null : fs.openSync(directory, O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
   try {
     // These one-shot CLI helpers run synchronously. Relative filesystem calls stay
     // anchored to the kernel's working directory even if its name is replaced.
     process.chdir(directory);
     try {
-      if (!sameDirectory(fs.fstatSync(fd, { bigint: true }), fs.statSync('.', { bigint: true }))) {
+      if (!sameDirectory(fd === null ? expected : fs.fstatSync(fd, { bigint: true }), fs.statSync('.', { bigint: true }))) {
         throw new Error('project settings directory changed');
       }
       return accessSetting(path.dirname(directory), operation, filename, value);
@@ -82,7 +85,7 @@ export function accessProjectSetting(directory, operation, filename, value) {
       process.chdir(previous);
     }
   } finally {
-    fs.closeSync(fd);
+    if (fd !== null) fs.closeSync(fd);
   }
 }
 

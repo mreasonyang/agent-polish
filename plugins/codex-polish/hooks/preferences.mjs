@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { executable } from './platform.mjs';
 import { parseArgs } from 'node:util';
 import { projectRoot, readProjectSetting, accessProjectSetting } from './project_setting.mjs';
 import { PROMPT_FILE, readEditorPrompt, readPromptInput } from './editor_prompt.mjs';
@@ -155,23 +156,8 @@ export function historySource(cwd) {
   return null;
 }
 
-function findExecutable(name, extra = []) {
-  const directories = (process.env.PATH ?? '/bin:/usr/bin').split(path.delimiter);
-  for (const directory of [...directories, ...extra]) {
-    const file = path.resolve(directory, name);
-    try {
-      if (!fs.statSync(file).isFile()) continue;
-      fs.accessSync(file, fs.constants.X_OK);
-      return file;
-    } catch {
-      // Continue along PATH.
-    }
-  }
-  return null;
-}
-
 export function findAgy() {
-  return findExecutable('agy', [path.join(os.homedir(), '.local/bin')]);
+  return executable('agy')?.command ?? null;
 }
 
 function supportedNode() {
@@ -189,7 +175,7 @@ export function runtimeStatus(cwd, mode, trigger, { selectionOnly = false, noHis
   catch (error) { promptSource = 'invalid'; promptError = error.code === 'PROMPT_LINK_UNBOUND' ? 'editor_prompt_link_unbound' : 'editor_prompt_invalid'; }
   const status = {
     mode, ...rewriteSettings, node_available: supportedNode(),
-    codex_available: Boolean(findExecutable('codex')), agy_available: Boolean(agy), agy_path: agy,
+    codex_available: Boolean(executable('codex')), agy_available: Boolean(agy), agy_path: agy,
     ...decisionsSettings(cwd, rewriteMode, mode), ...modelPreference(cwd), prompt_source: promptSource,
     history_turns: noHistory || selectionOnly ? 0 : projectHistoryTurns(cwd),
     google_auth_method: GOOGLE_AUTH_MODES.includes(googleAuth) ? googleAuth : 'unsupported',
@@ -270,7 +256,7 @@ async function judgeDraft(args) {
   return [result, 0];
 }
 
-function runHook() {
+export function runHook() {
   if (!supportedNode()) {
     console.error('Codex Polish requires Node.js 22.16+.');
     return 1;
@@ -386,6 +372,8 @@ async function main(args) {
     const hook = definition.hooks.UserPromptSubmit[0].hooks[0];
     const quoted = "'" + import.meta.filename.replaceAll("'", "'\\''") + "'";
     hook.command = hook.command.replace('"$' + '{PLUGIN_ROOT}/hooks/preferences.mjs"', () => quoted);
+    const encoded = Buffer.from(import.meta.url).toString('base64');
+    hook.commandWindows = `node -e "import(Buffer.from('${encoded}','base64').toString()).then(m=>process.exitCode=m.runHook()||0)"`;
     console.log(JSON.stringify(definition, null, 2));
     return 0;
   }

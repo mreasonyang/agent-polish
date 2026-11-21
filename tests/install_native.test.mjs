@@ -215,6 +215,19 @@ nativeTest('native hook trust survives identical content and reports package, ed
     initial = changed;
   }
 });
+nativeTest('a separately registered local marketplace with the same name survives setup and uninstall', t => {
+  const { base, cli, invoke, marketplace } = isolated(t);
+  const foreign = join(base, 'another marketplace');
+  fs.mkdirSync(dirname(join(foreign, INDEX)), { recursive: true });
+  fs.copyFileSync(join(ROOT, INDEX), join(foreign, INDEX));
+  fs.cpSync(join(ROOT, PRODUCT), join(foreign, PRODUCT), { recursive: true });
+  cli('marketplace', 'add', foreign);
+  for (const action of ['setup', 'uninstall']) {
+    assert.match(invoke(process.execPath, [join(ROOT, 'scripts/install.mjs'), action], { expect: 1 }), /different source/);
+    assert.equal(fs.realpathSync.native(marketplace()), fs.realpathSync.native(foreign));
+  }
+});
+
 nativeTest('explicit uninstall clears the current plugin after its marketplace was removed', (t) => {
   const { profile, local, cli, invoke } = isolated(t);
   local('setup');

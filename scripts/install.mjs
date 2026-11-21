@@ -282,7 +282,7 @@ function lookup(run, field, key, value, ...args) {
     throw fail('Codex 返回了重复的市场或插件记录。', 'Codex returned duplicate marketplace or plugin records.');
   return found[0] ?? null;
 }
-async function registration(run, sourceConfig = nativeConfig) {
+async function registration(run) {
   const row = lookup(run, 'marketplaces', 'name', MARKET, 'marketplace', 'list');
   if (!row) return null;
   let info = row.marketplaceSource;
@@ -290,7 +290,7 @@ async function registration(run, sourceConfig = nativeConfig) {
   // for a registered plugin. Read its configured source and verify the root
   // independently, including when the plugin itself has not been added yet.
   if (!info && windows && typeof row.root === 'string' && isAbsolute(row.root)) {
-    const { config } = await sourceConfig('config/read', { includeLayers: false });
+    const { config } = await nativeConfig('config/read', { includeLayers: false });
     const saved = config.marketplaces?.[MARKET];
     if (saved?.source_type === 'local' && typeof saved.source === 'string' && isAbsolute(saved.source) &&
         registeredPath(saved.source) === registeredPath(row.root)) {

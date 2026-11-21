@@ -17,8 +17,17 @@ function git(project, args) {
   });
 }
 
+// Windows can spell the same directory with an 8.3 alias in a hook and
+// a long path in the file picker. Keep the last component to inspect link entries.
+function relativeFile(parent, file) {
+  if (!windows) return path.relative(parent, path.resolve(file));
+  const absolute = path.resolve(file);
+  return path.relative(fs.realpathSync.native(parent),
+    path.join(fs.realpathSync.native(path.dirname(absolute)), path.basename(absolute)));
+}
+
 function indexEntry(project, target) {
-  const relative = path.relative(project, path.resolve(target));
+  const relative = relativeFile(project, target);
   if (!relative || relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative)) return null;
   try {
     const entry = git(project, ['ls-files', '--stage', '-z', '--', relative]).toString('utf8');
@@ -96,7 +105,7 @@ export function savePromptLink(project, link, source) {
   }
   const temporary = '.new-prompt-' + randomBytes(12).toString('hex');
   const tracked = trackedTarget(project, target);
-  const relative = tracked ? path.relative(path.dirname(link), target).split(path.sep).join('/') : target;
+  const relative = tracked ? relativeFile(path.dirname(link), target).split(path.sep).join('/') : target;
   if (windows) {
     fs.writeFileSync(temporary, Buffer.concat([referenceHeader, Buffer.from(relative)]), { flag: 'wx', mode: 0o600 });
   } else {

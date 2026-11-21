@@ -316,10 +316,8 @@ test('Codex app-server writes exact UTF-8 to the ACP submit terminal without ech
           rpc(3, 'command/exec/write', { processId, deltaBase64: Buffer.from(JSON.stringify(material) + '\n').toString('base64') });
         }
       } else if (message.id === 3) writeAcknowledged = true;
-      else if (message.id === 2) {
-        exitCode = message.result.exitCode;
-        break;
-      }
+      else if (message.id === 2) exitCode = message.result.exitCode;
+      if (exitCode !== undefined && (!sent || writeAcknowledged)) break;
     }
     assert.equal(exitCode, 0, diagnostic || Buffer.concat(output).toString());
     assert.ok(sent && writeAcknowledged, 'Codex must confirm the terminal write');

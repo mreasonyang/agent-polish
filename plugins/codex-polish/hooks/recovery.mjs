@@ -13,10 +13,12 @@ const hash = value => createHash('sha256').update(value).digest('hex');
 function canonicalPath(value) {
   const absolute = path.resolve(value);
   try {
-    return fs.realpathSync(absolute);
+    return windows ? fs.realpathSync.native(absolute) : fs.realpathSync(absolute);
   } catch (error) {
     if (error.code !== 'ENOENT') throw error;
-    return path.join(canonicalPath(path.dirname(absolute)), path.basename(absolute));
+    const parent = path.dirname(absolute);
+    if (parent === absolute) throw error;
+    return path.join(canonicalPath(parent), path.basename(absolute));
   }
 }
 

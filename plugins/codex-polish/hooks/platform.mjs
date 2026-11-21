@@ -86,8 +86,10 @@ export function replaceSettingFile(source, target, allowLink = false) {
       fs.renameSync(source, target);
       return;
     } catch (error) {
-      const inspectingTarget = error.syscall === 'lstat' && error.path === target;
-      const replacingTarget = error.syscall === 'rename' && error.path === source && error.dest === target;
+      // These are the only two filesystem operations in this try block.
+      // Node can report absolute error paths for relative Windows arguments.
+      const inspectingTarget = error.syscall === 'lstat';
+      const replacingTarget = error.syscall === 'rename';
       const retryable = ['EBUSY', 'EPERM', 'EACCES'].includes(error.code) ||
         (replacingTarget && error.code === 'ENOENT');
       if (!windows || delay > 320 || !(inspectingTarget || replacingTarget) || !retryable) throw error;

@@ -117,6 +117,7 @@ test('non-text updates, non-end stops, and provider failures never yield a parti
     [6,-32603,'private provider message','acp_provider_error'], [3,-32000,'private account','acp_auth_failed'],
     [2,-32602,'private identity','acp_auth_failed'], [6,-32603,'request timed out','acp_timeout'],
     [4,-32602,'Unknown config option','acp_model_unavailable'],
+    [5,-32602,'Unknown config option','acp_thinking_level_unavailable'],
   ]) {
     const {state, events} = readACP(null, chunk('partial') + line({id, error:{code, message}}), {...prompt, pendingId:id});
     assert.deepEqual(events, [{type:'error', reason}]);

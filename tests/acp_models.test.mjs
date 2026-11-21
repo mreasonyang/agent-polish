@@ -18,14 +18,17 @@ function rejects(args, frame) {
 }
 
 const target = 'gemini-4-hydrogen';
+const noThinking = { thinking_config_id: null, current_thinking_level: null, thinking_levels: [] };
 const targetArgs = id => ['--response-id', String(id), '--target-model', target];
-function next(response) {
-  const output = cli(targetArgs(response.id), response);
+function next(response, level) {
+  const args = targetArgs(response.id);
+  if (level) args.push('--thinking-level', level);
+  const output = cli(args, response);
   assert.equal(output.status, 0, output.stderr);
   return JSON.parse(output.stdout);
 }
 
-test('rewrite submits after selecting the model and keeps its current thinking level', async () => {
+test('model change exposes the target thinking options, then the default Medium must be confirmed', async () => {
   const events = [];
   const fixture = new Fixture('ok', line => events.push(JSON.parse(line)));
   const rpc = (id, method, params) => {
@@ -39,18 +42,20 @@ test('rewrite submits after selecting the model and keeps its current thinking l
   const sessionId = opened.result.sessionId;
   const selected = rpc(4, 'session/set_config_option', {sessionId, configId:model.config_id, value:model.value});
   assert.equal(selected.result.configOptions.find(option => option.category === 'thought_level').currentValue, 'high');
-  assert.deepEqual(next(selected), {next:'submit_prompt'});
+  assert.deepEqual(next(selected), {next:'set_thinking_level', config_id:'thought_level', value:'medium'});
+  const confirmed = rpc(5, 'session/set_config_option', {sessionId, configId:'thought_level', value:'medium'});
+  assert.deepEqual(next(confirmed), {next:'submit_prompt'});
 
   const notice = { jsonrpc:'2.0', method:'session/update', params:{sessionId, update:{
-    sessionUpdate:'config_option_update', configOptions:selected.result.configOptions,
+    sessionUpdate:'config_option_update', configOptions:confirmed.result.configOptions,
   }}};
   const observed = cli(['--update-session', sessionId], notice);
   assert.equal(observed.status, 0);
-  assert.deepEqual(JSON.parse(observed.stdout), catalog(selected.result.configOptions));
+  assert.deepEqual(JSON.parse(observed.stdout), catalog(confirmed.result.configOptions));
   const updateArgs = ['--update-session', sessionId, '--target-model'];
   const checked = cli([...updateArgs, target], notice);
   assert.equal(checked.status, 0);
-  assert.deepEqual(JSON.parse(checked.stdout), catalog(selected.result.configOptions));
+  assert.deepEqual(JSON.parse(checked.stdout), catalog(confirmed.result.configOptions));
   rejects([...updateArgs, opened.result.configOptions.find(option => option.category === 'model').currentValue], notice);
   rejects([...updateArgs, 'missing-model'], notice);
   rejects(['--update-session', 'other-session', '--target-model', target], notice);
@@ -59,18 +64,28 @@ test('rewrite submits after selecting the model and keeps its current thinking l
   const prompt = await promptFrame({sessionId, question:'When?', draft:'Tomorrow.'});
   fixture.handle(prompt);
   assert.deepEqual(events.at(-1), {jsonrpc:'2.0', id:6, result:{stopReason:'end_turn'}});
-  assert.equal(fixture.thinking, 'high');
+  assert.equal(fixture.thinking, 'medium');
 });
 
-test('the selected model is ready regardless of its thinking options', () => {
+test('only supported choices can be confirmed, including fixed models with no selector', () => {
   const model = selectOption('model','model','Model',target,[[target,'Gemini 4 Hydrogen']]);
   const response = (id, ...options) => ({jsonrpc:'2.0', id, result:{configOptions:[model, ...options]}});
-  assert.deepEqual(next(response(3)), {next:'submit_prompt'});
-  const choices = [['low','Low'],['medium','Medium'],['high','High']];
+  assert.deepEqual(next(response(3), 'fixed'), {next:'submit_prompt'});
+  rejects(targetArgs(3), response(3));
+  const choices = [['low','Low'],['medium','Medium'],['high','High'],['xhigh','Extra']];
   for (const [value] of choices) {
-    const level = selectOption('thinking','thought_level','Thinking',value,choices);
-    assert.deepEqual(next(response(3,level)), {next:'submit_prompt'});
+    const level = selectOption('thinking','thought_level','Thinking','high',choices);
+    const step = next(response(3, level), value);
+    if (value === 'high') assert.deepEqual(step, {next:'submit_prompt'});
+    else {
+      assert.deepEqual(step, {next:'set_thinking_level', config_id:'thinking', value});
+      rejects([...targetArgs(5), '--thinking-level', value], response(5, level));
+    }
+    assert.deepEqual(next(response(5, {...level, currentValue:value}), value), {next:'submit_prompt'});
+    rejects([...targetArgs(3), '--thinking-level', 'fixed'], response(3, level));
   }
+  const limited = selectOption('thinking','thought_level','Thinking','high',[['low','Low'],['high','High']]);
+  rejects(targetArgs(4), response(4, limited));
 });
 
 test('a failed model change or an unexpected response cannot trigger a prompt or retry', () => {
@@ -92,7 +107,7 @@ test('catalog preserves provider order and uses the provider IDs to identify Gem
   const out = cli(['--response-id','3'], {jsonrpc:'2.0', id:3, result:{
     configOptions:[selector], sessionId:'must-omit', _meta:{hidden:true}}});
   assert.equal(out.status, 0, out.stderr);
-  assert.deepEqual(JSON.parse(out.stdout), {config_id:'model', current_model:'gemini-4-neon',
+  assert.deepEqual(JSON.parse(out.stdout), {...noThinking,config_id:'model', current_model:'gemini-4-neon',
     models:choices.filter(([id]) => id.startsWith('gemini-')).map(([id,name]) => ({id,name}))});
 });
 
@@ -110,7 +125,7 @@ test('model labels can be localized or duplicated without changing the selected 
   const selector = selectOption('model','model','Model','claude-opus', [
     ['gemini-4-neon','Gemini Pro'], ['gemini-4-argon','Gemini Pro'], ['claude-opus','Claude Opus'],
     ['opaque-id','Gemini 4 Hydrogen'], ['google/gemini-2.5-flash','Flash'], ['gemini-4-hydrogen','Hydrogen']]);
-  assert.deepEqual(catalog([selector]), {config_id:'model', current_model:null, models:[
+  assert.deepEqual(catalog([selector]), {...noThinking,config_id:'model', current_model:null, models:[
     {id:'gemini-4-neon', name:'Gemini Pro'}, {id:'gemini-4-argon', name:'Gemini Pro'},
     {id:'google/gemini-2.5-flash', name:'Flash'}, {id:'gemini-4-hydrogen', name:'Hydrogen'}]});
 });
@@ -125,8 +140,8 @@ test('display punctuation, provider aliases and namespace prefixes work from loo
     const option = selectOption('model','model','Model','other',[[id,name],['other','Gemini-looking label']]);
     option.options[0].description = 'not part of the menu';
     const result = n => ({jsonrpc:'2.0',id:n,result:{configOptions:[option]}});
-    const choose = n => JSON.parse(cli(['--response-id',String(n),'--target-model',id],result(n)).stdout);
-    assert.deepEqual(catalog([option]), {config_id:'model',current_model:null,models:[{id,name}]});
+    const choose = n => JSON.parse(cli(['--response-id',String(n),'--target-model',id,'--thinking-level','fixed'],result(n)).stdout);
+    assert.deepEqual(catalog([option]), {...noThinking,config_id:'model',current_model:null,models:[{id,name}]});
     assert.deepEqual(choose(3),{next:'set_model', config_id:'model', value:id});
     option.currentValue = id;
     assert.deepEqual(choose(4),{next:'submit_prompt'});
@@ -138,9 +153,9 @@ test('unrelated malformed entries and duplicate aliases cannot hide a usable mod
   model.options.unshift(null, 1, {value:'other'}, {options:'invalid'}, {name:'no ID'});
   model.options.push({group:'others',options:[{value:'gemini-4-argon'}, null, {value:target,name:'other label'}]});
   const configOptions=[null, {category:'other'}, model];
-  assert.deepEqual(catalog(configOptions), {config_id:'model',current_model:target,models:[
+  assert.deepEqual(catalog(configOptions), {...noThinking,config_id:'model',current_model:target,models:[
     {id:target,name:'Hydrogen'}, {id:'gemini-4-argon',name:'gemini-4-argon'}]});
-  assert.deepEqual(next({jsonrpc:'2.0',id:3,result:{configOptions}}),{next:'submit_prompt'});
+  assert.deepEqual(next({jsonrpc:'2.0',id:3,result:{configOptions}}, 'fixed'),{next:'submit_prompt'});
   model.currentValue = 'unlisted-current-model';
   assert.deepEqual(next({jsonrpc:'2.0',id:3,result:{configOptions}}), {next:'set_model',config_id:'model',value:target});
   rejects(targetArgs(4),{jsonrpc:'2.0',id:4,result:{configOptions}});

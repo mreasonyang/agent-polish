@@ -8,13 +8,13 @@ Codex Polish 支持 Windows、macOS 和 Linux。本地脚本使用 Node.js 22.16
 
 Git 项目的设置保存在最近的仓库根目录的 `.codex/`。同一仓库的子目录共用这份设置，嵌套仓库和独立工作树分别保存。没有 Git 仓库时，设置保存在所选目录。
 
-自动润色的改写模式和 Gemini 模型分别按以下顺序取值：项目设置、当前 Codex 配置的默认值、插件内置默认值。安装器把两项默认值保存在 `$CODEX_HOME/codex-polish/settings/` 下的 `codex-polish.rewrite-mode` 和 `codex-polish.model`。未设置 `CODEX_HOME` 时使用 `~/.codex`。这两个文件只保存模式和模型 ID，API 密钥来自运行 Codex 的进程环境。
+自动润色的改写模式优先使用项目设置，其次是当前 Codex 配置的默认值，最后是插件内置默认值。Gemini 模型和思考等级一起保存，查找顺序相同。安装器把默认设置保存在 `$CODEX_HOME/codex-polish/settings/` 下的 `codex-polish.rewrite-mode` 和 `codex-polish.model`。未设置 `CODEX_HOME` 时使用 `~/.codex`。
 
 | 配置文件 | 取值范围与默认值 | 运行行为 |
 | --- | --- | --- |
 | `.codex/codex-polish.mode` | `auto`（默认）、`manual`、`off` | 未保存模式时使用 `auto`。在 Codex 的 **设置 → Hooks** 或 CLI `/hooks` 中信任插件的 `UserPromptSubmit`，再新开聊天，普通提问就会触发润色流程。`manual` 仅在点名时触发。两种模式都可以点名润色本轮问答，无需 hook。`off` 跳过所有润色请求。 |
 | `.codex/codex-polish.rewrite-mode` | `normal`（内置默认值）、`turbo` | 仅用于自动 hook。两种模式都无须 OpenAI 密钥，未启用检查时都直接交由 Gemini 处理。使用内置提示词时，`normal` 可保留清晰原稿并支持可选的 OpenAI Decisions 检查，`turbo` 则跳过 Decisions 并请 Gemini 改写草稿。 |
-| `.codex/codex-polish.model` | 模型 ID，内置默认值为 `gemini-4-hydrogen`（Gemini 4 Hydrogen） | 保存当前项目选用的 Gemini 模型。选项在运行时通过 ACP 从当前登录的 Antigravity 账号实时读取，不同账号返回的列表可能不同。仅查看模型菜单不会发送草稿或历史。下次改写时会核对所选模型，若已下线则本轮保留原稿。 |
+| `.codex/codex-polish.model` | Gemini 模型和思考等级，默认 `gemini-4-hydrogen`、`medium` | 选模型时可以选择该模型支持的思考等级。普通和 Turbo 模式都使用这组设置。若下次改写时模型或等级已不可用，本轮保留原稿。 |
 | `.codex/codex-polish.history-turns` | `0`–`10` 的整数，默认 `2` | 控制 Gemini 改写整条回复时附带的最近完整问答轮数，从下次改写起生效。设为 `0` 就不附历史问答。保存大于 `10` 的值会报错。手动写入无效值时，插件会报告配置错误和可用范围。无论手动还是自动模式，读取历史都需要受信任的 `UserPromptSubmit` hook。 |
 | `.codex/codex-polish.decisions` | `auto`（默认）、`off` | 仅在 hook 自动触发润色并使用普通模式时生效。`auto` 在当前 Codex 配置保存了格式有效的插件密钥时调用 OpenAI，`off` 始终只用 ACP。 |
 | `.codex/codex-polish.language` | `auto`（默认）、`zh`、`en` | 控制插件设置与终端提示语言。`auto` 下，设置对话优先跟随本条消息所用的中文或英文。只点击菜单或回复数字时沿用对话语言。两者都无法判断时使用系统语言。项目诊断使用项目的语言设置。安装器使用系统语言，未识别出中文或英文时用英文。 |
@@ -23,7 +23,7 @@ Git 项目的设置保存在最近的仓库根目录的 `.codex/`。同一仓库
 
 在聊天中说“切换到 Turbo 模式”或“恢复普通模式”即可保存项目偏好。要从源码目录切换，可运行 `node plugins/codex-polish/hooks/preferences.mjs set-rewrite-mode turbo --cwd /path/to/project`，恢复时将 `turbo` 换为 `normal`。用 `check --cwd /path/to/project` 查看生效的 `rewrite_mode`。值无效时，自动润色会暂停，重新选择任一模式即可恢复。点名润色仍然使用 Turbo。
 
-如果要让项目重新跟随 Codex 配置的默认值，可以说“这个项目沿用全局的改写模式”或“这个项目沿用全局的改写模型”。相应的命令是 `set-rewrite-mode --reset --cwd /path/to/project` 和 `set-model --reset --cwd /path/to/project`，分别移除项目单独保存的模式或模型。当前 Codex 配置也没有保存该选项时，使用内置的普通模式或 Gemini 4 Hydrogen。
+例如，`set-model gemini-4-hydrogen --thinking-level high --cwd /path/to/project` 会把该项目设为 Hydrogen 和高思考等级。用 `--profile` 代替 `--cwd` 可更改整份 Codex 配置的默认值。用 `set-model --reset --cwd /path/to/project` 让项目重新沿用全局的模型和等级。改写模式可用 `set-rewrite-mode --reset --cwd /path/to/project` 单独恢复。
 
 “返回结果 polish”要求润色当前回复，“让 Gemini 重写刚才讲缓存的那条”指定同一聊天里的旧回复。两者都使用 `--trigger explicit`，按 Turbo 模式通过 ACP 把选定的草稿直接交给 Gemini。点名改写只对本次生效，在 `auto` 和 `manual` 下都可以使用。Codex 会结合上下文判断意图，例如“解释一下 Turbo”是在询问功能。普通提问由 hook 以 `--trigger auto` 自动触发，使用该项目当前生效的改写模式。项目设为 `off` 时，两种触发都会跳过。
 
@@ -55,7 +55,7 @@ node -e "child_process.execFileSync(process.execPath, ['plugins/codex-polish/hoo
 | --- | --- |
 | 1. 选取原文 | Codex 按本轮要求选取当前答复、旧答复或指定片段。用户要求跳过润色、禁止外发或要求逐字交付时，直接按要求答复。 |
 | 2. 风格判定 | 直接 ACP 路径将选定的原文交给 Gemini。开启 Decisions 时，OpenAI 只根据本轮问题、草稿和已设置的自定义润色提示词判断是否需要改写，只有 `P(需要改写) > 0.50` 才进入改写。 |
-| 3. ACP 改写 | Gemini 从编辑角色正文加载本次请求使用的润色提示词。在临时工作区关闭默认内置工具，使用已配置的 Antigravity 身份建立会话，发送前核对项目设置和所选模型。Codex 拒绝权限请求，只拼接本次会话的回复正文。收到非空正文和请求 ID 匹配的 `end_turn` 后进入显示阶段。 |
+| 3. ACP 改写 | Gemini 从编辑角色正文加载本次请求使用的润色提示词。在临时工作区关闭默认内置工具，使用已配置的 Antigravity 身份建立会话，选中配置的模型，确认思考等级后再发送草稿。Codex 拒绝权限请求，只拼接本次会话的回复正文。收到非空正文和请求 ID 匹配的 `end_turn` 后进入显示阶段。 |
 | 4. 显示回复 | 正文逐字相同才显示一份。缩进、空白或换行有变化时，对照视图保留两版。 |
 
 相关接口规范见 [Google ACP 认证](https://antigravity.google/docs/ide/extensions/acp)、[Decisions API](https://developers.openai.com/api/reference/resources/decisions/methods/create) 与 [Antigravity 角色的工具配置](https://github.com/google-antigravity/antigravity-cli/releases/tag/1.2.1)。
@@ -68,7 +68,7 @@ Gemini 返回的正文有改动时，Codex 在同一条最终消息中先显示 
 
 用户选中一段文字或指定改写之前的 Gemini 版本时，折叠标题为“查看原文”。展开后可以逐字对照本次提交改写的原文。
 
-本地排版器在收到完整改稿时，使用提交草稿时留在内存中的原文，生成最终 Markdown。改稿的图表引用、空白和换行会原样保留。“只看正文”和原稿对照使用同一份正文。较长的最终消息通过分页交付。
+本地排版器在收到完整改稿时，使用 Codex agent 保留的原稿，生成最终 Markdown。改稿的图表引用、空白和换行会原样保留。“只看正文”和原稿对照使用同一份正文。较长的最终消息通过分页交付。
 
 ## 发送给服务商的内容与历史限制
 
@@ -90,7 +90,7 @@ Google 为默认模型 `gemini-4-hydrogen` 的 Gemini API 公布了 1,048,576 to
 
 ## 认证与故障处理
 
-Windows 上，宿主通过系统自带的 Windows PowerShell 和 .NET 启动 `agy.exe`。Codex agent 逐条提交协议消息，通过单独的控制台句柄传入长文本。本轮结束或取消时，Windows Job Object 一并回收 `agy.exe` 和它的子进程。
+Codex agent 用宿主进程工具直接启动官方 `agy acp`，向同一进程发送每条请求并读取响应。本地脚本只准备角色、组装原稿和解析已收到的回复。在 Windows 仅有终端工具时，agent 将 agy 的标准输出重定向到本轮专用的临时文件，以保留原始 JSON。正常退出或取消时会删除该文件；宿主被强制关闭可能留下它。[ACP 操作步骤](../plugins/codex-polish/skills/codex-polish/references/acp.md)
 
 插件要求官方 Antigravity CLI（`agy`）1.2.1 或更高版本，先在 Codex 的 `PATH` 中查找 `agy`，再查 Google 的默认安装目录，Windows 上是 `%LOCALAPPDATA%\agy\bin`，macOS 和 Linux 上是 `~/.local/bin`。默认通过 `agy acp` 复用本机已有登录，无需配置 Gemini API 密钥，也从不调用 `agy -p`。旧配置如需沿用 AI Studio 密钥可设 `CODEX_POLISH_AGY_AUTH=gemini-api-key`，企业环境可设 `agent-platform`。凭据必须配置在运行 Codex 的机器和对应系统用户下，详见 [首次配置指南](../plugins/codex-polish/skills/codex-polish-setup/references/credentials.md)。
 
@@ -98,7 +98,7 @@ Windows 上，宿主通过系统自带的 Windows PowerShell 和 .NET 启动 `ag
 | --- | --- |
 | Google 认证方式不支持、缺少 agy 或宿主工具不可用 | 保留原稿。插件依次在 PATH 和 Google 的默认安装目录查找 agy。 |
 | Decisions 不可用、密钥无效、响应无效或材料超过接口限额 | 使用原稿继续调用 Gemini。每一轮独立判断。 |
-| ACP 握手失败、未登录、账号无所选模型或中途切换模型 | 当前 agent 结束本次 ACP 请求，回收进程并交付原稿。 |
+| ACP 握手失败、未登录、所选模型或思考等级不可用，或中途发生变更 | 当前 agent 结束本次 ACP 请求，回收进程并交付原稿。 |
 | 生成耗时较长或中断 | 进程仍在运行时继续等待。宿主或服务端明确超时、取消、断流或返回不完整时丢弃候选，同一请求最多发送一次。 |
 | 本轮中途停用、修改要求或取消 | 外发前重新核对项目模式。收到新要求时丢弃旧候选，按新要求作答。用户取消则结束本轮。若只有服务端取消，用户仍在等待，就交付原稿。 |
 
@@ -106,7 +106,7 @@ Windows 上，宿主通过系统自带的 Windows PowerShell 和 .NET 启动 `ag
 
 在任意目录运行 `npx @kyun.si/codex-polish@beta setup` 即可安装 npm beta 版。将最后一个参数换成 `update`、`doctor` 或 `uninstall` 即可更新、检查当前项目或卸载。Windows PowerShell 中使用 `npx.cmd`。从 GitHub 源码安装时，在仓库根目录运行 `node scripts/install.mjs setup`，其余子命令相同。[安装步骤](README.zh-CN.md#快速开始)
 
-macOS 用户也可以解压安装包，在 Finder 中双击安装脚本。从 Finder 或终端安装时，默认设置适用于同一份 Codex 配置下的所有项目。安装器会依次询问尚未保存的改写模式和 Gemini 模型，选择模型需要 `agy` 可用。[Finder 安装脚本](../安装回复润色.command)
+macOS 用户也可以解压安装包，在 Finder 中双击安装脚本。从 Finder 或终端安装时，默认设置适用于同一份 Codex 配置下的所有项目。安装器会先询问尚未保存的改写模式，待 `agy` 可用后，再让你选择 Gemini 模型和思考等级。思考等级固定的模型会跳过等级选择。[Finder 安装脚本](../安装回复润色.command)
 
 `setup` 和 `update` 支持 `--install-agy`，在缺少 Antigravity CLI 时可自动安装。更新会保留项目设置与插件启用状态。同一版本号的新构建也能用 `update` 覆盖或重试中断的更新。
 
@@ -114,6 +114,6 @@ macOS 用户也可以解压安装包，在 Finder 中双击安装脚本。从 Fi
 
 首次交互安装并选用普通模式时，安装器会询问是否启用 OpenAI Decisions API 检查，默认跳过。之后可在运行插件的机器上使用同一份 Codex 配置，运行 `npx @kyun.si/codex-polish@beta openai` 管理密钥。Windows PowerShell 中使用 `npx.cmd`。终端隐藏输入，密钥保存在 `$CODEX_HOME/codex-polish/credentials/openai.key`。插件会忽略 `OPENAI_API_KEY`。[密钥设置与 API 计费](../plugins/codex-polish/skills/codex-polish-setup/references/credentials.md#选配-openai-decisions-api)
 
-卸载会移除插件和专用市场，清除会话指针，并删除这份 Codex 配置保存的改写模式、模型、自定义提示词和 OpenAI 密钥。卸载还会删除这份配置最后保存并记录的项目设置文件。这些文件即使由 Git 跟踪，或后来被手动就地修改，也会删除。其他应用仍可使用共用的 `agy`。
+卸载会移除插件和专用市场，清除会话指针，并删除这份 Codex 配置保存的改写模式、模型、思考等级、自定义提示词和 OpenAI 密钥。卸载还会删除这份配置最后保存并记录的项目设置文件。这些文件即使由 Git 跟踪，或后来被手动就地修改，也会删除。其他应用仍可使用共用的 `agy`。
 
 旧版没有记录创建项目设置的位置。如需一并清理，可到曾配置过的项目中逐项查看 `.codex/codex-polish.*` 文件。安装文件如有手动改动，卸载时会显示备份位置。使用本地打包的版本时，可将 npm 包名换成实际压缩包路径，例如 `npx --yes file:./kyun.si-codex-polish-VERSION.tgz uninstall`。

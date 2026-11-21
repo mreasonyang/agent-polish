@@ -1,288 +1,143 @@
-// Prepare the host command. Only the agent's execution tool launches Antigravity.
-import { execFileSync } from 'node:child_process';
+// Stage only the editor role. The Codex agent owns the provider process and its streams.
 import fs from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { validModelId } from '../../../hooks/preferences.mjs';
+import { openRegular } from '../../../hooks/platform.mjs';
 import { isMain } from './cli_io.mjs';
-import { checkPrivatePath, encode, powershell, psArg, secureDirectory } from './acp_windows_io.mjs';
+import { secureDirectory } from './acp_windows_io.mjs';
 import { editorRole } from './editor_role.mjs';
 
-const self = fileURLToPath(import.meta.url);
-const terminal = fileURLToPath(new URL('acp_terminal.sh', import.meta.url));
-const windowsHost = fileURLToPath(new URL('acp_windows_host.cs', import.meta.url));
-const windowsRelay = fileURLToPath(new URL('acp_windows.mjs', import.meta.url));
-const windows = process.platform === 'win32';
-const observer = fileURLToPath(new URL('acp_observe.mjs', import.meta.url));
-const stockRole = new URL('../references/codex-polish-editor.md', import.meta.url);
 const roleDirectory = '.agents/agents/codex-polish-editor';
 const roleFile = roleDirectory + '/agent.md';
-const paths = ['.', '.agents', '.agents/agents', roleDirectory, roleFile, '.acp-in', '.acp-out', '.acp-owner', '.acp-jobs', '.acp-display'];
-const authMethods = ['existing-session', 'gemini-api-key', 'agent-platform'];
-const quote = value => "'" + value.replaceAll("'", "'\\''") + "'";
-const identity = info => info && `${info.dev}:${info.ino}`;
-const statEntry = path => fs.lstatSync(path, { bigint: true, throwIfNoEntry: false });
-const { O_NONBLOCK, O_NOFOLLOW, O_WRONLY, O_RDONLY } = fs.constants;
+const roleDirectories = ['.agents', '.agents/agents', roleDirectory];
+const windowsOutput = 'provider-output.jsonl';
+const windows = process.platform === 'win32';
+const entries = ['.', ...roleDirectories, roleFile, ...(windows ? [windowsOutput] : [])];
+const stockRole = new URL('../references/codex-polish-editor.md', import.meta.url);
 
-function checkWorkspace(token) {
-  const parts = token?.split(',');
-  if (![3, 4].includes(parts?.length) || parts.some(p => !/^\d+:\d+$/.test(p)) || identity(statEntry('.')) !== parts[0])
-    throw new Error('invalid_workspace');
-  return { fifo: parts[1], owner: parts[2], display: parts[3] };
+function fileId(stat) {
+  // Windows may report different volume serials for an open handle and its path.
+  return windows ? `${stat.ino}:${stat.birthtimeNs}` : `${stat.dev}:${stat.ino}`;
 }
 
-function openDisplay(token, flags) {
-  const { display } = checkWorkspace(token);
-  if (!display) throw new Error('missing_display_pipe');
-  const fd = fs.openSync('.acp-display', flags | O_NOFOLLOW | O_NONBLOCK);
-  try {
-    const stat = fs.fstatSync(fd, { bigint: true });
-    if (!stat.isFIFO() || identity(stat) !== display) throw new Error('workspace_changed');
-    return fd;
-  } catch (error) { fs.closeSync(fd); throw error; }
+function identity(path) {
+  const item = fs.lstatSync(path, { bigint: true, throwIfNoEntry: false });
+  return item && !item.isSymbolicLink() ? fileId(item) : null;
 }
 
-// An O_RDWR reader can open before the submitter; one LF delimits its only record.
-export const openDisplayInput = token => openDisplay(token, fs.constants.O_RDWR);
-export const openDisplayOutput = token => openDisplay(token, O_WRONLY);
-
-function linkOwner(name, owner) {
-  if (identity(statEntry('.acp-owner')) !== owner) throw new Error('workspace_changed');
-  fs.linkSync('.acp-owner', name);
+// Never recursively remove the workspace: Antigravity or the user may have added files.
+function checkLocation(workspace) {
+  if (dirname(workspace) !== fs.realpathSync(tmpdir()) || !/^codex-polish-acp-[a-zA-Z0-9]{6}$/.test(basename(workspace)))
+    throw Error('invalid_workspace');
 }
 
-function activate(token, jobsFile) {
-  const { owner } = checkWorkspace(token);
-  if (jobsFile !== undefined && [3, 4].some(fd => identity(fs.fstatSync(fd, { bigint: true })) !== jobsFile))
-    throw new Error('workspace_changed');
-  linkOwner('.acp-live', owner);
-}
-
-export function claimPrompt(token, sessionId) {
-  const { owner } = checkWorkspace(token);
-  linkOwner('.acp-prompt', owner);
-  const fd = fs.openSync('.acp-prompt', O_WRONLY | O_NOFOLLOW | O_NONBLOCK);
-  try {
-    if (identity(fs.fstatSync(fd, { bigint: true })) !== owner) throw new Error('workspace_changed');
-    fs.writeFileSync(fd, sessionId);
-  } finally { fs.closeSync(fd); }
-}
-
-export function submittedPrompt(token) {
-  const { owner } = checkWorkspace(token);
-  let fd;
-  try {
-    fd = fs.openSync('.acp-prompt', O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
-    const stat = fs.fstatSync(fd, { bigint: true });
-    if (identity(stat) !== owner || !stat.isFile() || stat.size > 16384n) throw new Error('workspace_changed');
-    return fs.readFileSync(fd, 'utf8');
-  } catch (error) {
-    if (error.code === 'ENOENT') return null;
-    throw error;
-  } finally { if (fd !== undefined) fs.closeSync(fd); }
-}
-
-// Bind a single agent-selected producer's stdout to the staged FIFO. Opening
-// nonblocking fails immediately when the official process is gone. Only the
-// producer handles the bytes, including Node stream backpressure on a big draft.
-function writeWithProducer(token, producer, args) {
-  const { fifo, owner } = checkWorkspace(token);
-  if (identity(statEntry('.acp-live')) !== owner) throw new Error('workspace_inactive');
-  const fd = fs.openSync('.acp-in', O_WRONLY | O_NOFOLLOW | O_NONBLOCK);
-  try {
-    const stat = fs.fstatSync(fd, { bigint: true });
-    if (identity(stat) !== fifo || !stat.isFIFO()) throw new Error('workspace_changed');
-    const options = { stdio: [0, fd, 'ignore'] };
-    if (producer === 'frame' && args.length === 1) {
-      execFileSync('/usr/bin/printf', ['%s\n', args[0]], { ...options, timeout: 30000, killSignal: 'SIGKILL' });
-      return;
-    }
-    if (producer !== 'prompt' || !args.includes('--submit') || args.includes('--help') || args.includes('-h')) throw new Error('invalid_producer');
-    execFileSync(process.execPath, [fileURLToPath(new URL('acp_payload.mjs', import.meta.url)), ...args], {
-      ...options, env: { ...process.env, CODEX_POLISH_WRITE_TOKEN: token },
-    });
-  } finally { fs.closeSync(fd); }
-}
-
-// Compare the staged directory and every ancestor before touching known entries.
-// rmdir leaves directories containing files owned by the provider or another job.
-export function dispose(workspace, owners) {
-  if (dirname(workspace) !== fs.realpathSync(tmpdir()) || !/^codex-polish-acp-[A-Za-z0-9]{6}$/.test(basename(workspace))) return;
-  const intact = new Set();
-  for (const [index, name] of paths.entries()) {
-    if (name !== '.' && !intact.has(dirname(name))) continue;
-    const current = statEntry(join(workspace, name));
-    if (current && !current.isSymbolicLink() && identity(current) === owners[index]) intact.add(name);
-  }
-  if (!intact.has('.')) return;
-  // Anchor each unlink/rmdir to the verified parent directory. Even a rename
-  // between the ancestry check and chdir cannot redirect removal outside it.
+function removeOwnedEntries(workspace, owners) {
+  checkLocation(workspace);
+  const temp = dirname(workspace);
   const previous = process.cwd();
-  const parentId = identity(statEntry(dirname(workspace)));
-  const remove = (name, expected) => {
-    const absolute = join(workspace, name);
-    const expectedParent = name === '.' ? parentId : owners[paths.indexOf(dirname(name))];
-    try {
-      process.chdir(dirname(absolute));
-      if (identity(statEntry('.')) !== expectedParent) return;
-      const leaf = basename(absolute);
-      const current = statEntry(leaf);
-      if (!current || identity(current) !== expected) return;
-      if (current.isDirectory()) fs.rmdirSync(leaf);
-      else fs.unlinkSync(leaf);
-    } catch (error) {
-      if (!['ENOENT', 'ENOTDIR', 'ELOOP', 'ENOTEMPTY', 'EEXIST'].includes(error.code)) throw error;
-    }
-  };
+  const tempId = identity(temp);
+  const present = new Set();
   try {
-    for (const link of ['.acp-prompt', '.acp-live']) remove(link, owners[paths.indexOf('.acp-owner')]);
-    for (const name of [...intact].reverse()) remove(name, owners[paths.indexOf(name)]);
+    for (const [index, entry] of entries.entries()) {
+      if (entry !== '.' && !present.has(dirname(entry))) continue;
+      if (owners[index] && identity(join(workspace, entry)) === owners[index]) present.add(entry);
+    }
+    for (const name of [...present].reverse()) {
+      const path = join(workspace, name);
+      const parent = name === '.' ? tempId : owners[entries.indexOf(dirname(name))];
+      try {
+        process.chdir(dirname(path));
+        if (identity('.') !== parent || identity(basename(path)) !== owners[entries.indexOf(name)]) continue;
+        if (name === roleFile || name === windowsOutput) fs.unlinkSync(basename(path));
+        else fs.rmdirSync(basename(path));
+      } catch (error) {
+        if (!['ENOENT', 'ENOTDIR', 'ELOOP', 'ENOTEMPTY', 'EEXIST'].includes(error.code)) throw error;
+      }
+    }
   } finally {
-    if (previous !== workspace || fs.existsSync(previous)) process.chdir(previous);
+    process.chdir(fs.existsSync(previous) ? previous : temp);
   }
 }
 
-export function claimWindowsWorkspace(directory, owners) {
-  if (dirname(directory) !== fs.realpathSync(tmpdir()) || identity(statEntry(directory)) !== owners[0]) throw Error('invalid_workspace');
-  for (const [index, name] of paths.entries()) {
-    if (!owners[index]) continue;
-    const stat = statEntry(join(directory, name));
-    if (stat?.isSymbolicLink() || identity(stat) !== owners[index]) throw Error('workspace_changed');
-  }
-  fs.linkSync(join(directory, '.acp-owner'), join(directory, '.acp-live'));
+function recordedOwners(cleanupToken) {
+  const owners = cleanupToken.split(',');
+  if (owners.length !== entries.length || owners.some(value => !/^\d+:\d+$/.test(value))) throw Error('invalid_cleanup_token');
+  return owners;
 }
 
-function catalogDestination(file) {
-  if (!isAbsolute(file)) throw new Error('invalid_catalog_log');
-  const directory = fs.realpathSync(dirname(file));
-  const info = fs.statSync(directory);
-  if (windows) checkPrivatePath(directory);
-  else if (!info.isDirectory() || info.uid !== process.getuid() || (info.mode & 0o077)) throw new Error('invalid_catalog_log');
-  const destination = join(directory, basename(file));
-  if (fs.lstatSync(destination, { throwIfNoEntry: false })) throw new Error('invalid_catalog_log');
-  return destination;
+export function dispose(workspace, cleanupToken) {
+  removeOwnedEntries(workspace, recordedOwners(cleanupToken));
 }
 
-export function prepareWorkspace({ agyPath, cwd, trigger, selectionOnly, selection, turnsBack, noHistory,
-  auth, model, route, rewriteMode, display, quotedSource, catalog, catalogLog }) {
-  if (!agyPath || !isAbsolute(agyPath) || (windows ? basename(agyPath).toLowerCase() !== 'agy.exe' : basename(agyPath) !== 'agy') || !fs.statSync(agyPath).isFile()) throw new Error('invalid_agy_path');
-  fs.accessSync(agyPath, fs.constants.X_OK);
-  if (!authMethods.includes(auth)) throw new Error('invalid_auth');
-  if (catalog ? (cwd || trigger || selectionOnly || selection || noHistory || turnsBack !== undefined || model || route || rewriteMode || display !== undefined || quotedSource) :
-      (!cwd || !isAbsolute(cwd) || !['auto', 'explicit'].includes(trigger) || !validModelId(model) || catalogLog !== undefined ||
-      !['normal', 'turbo'].includes(rewriteMode) || !['acp', 'decisions'].includes(route) || !['zh', 'en', 'body-only'].includes(display)))
-    throw new Error('invalid_options');
-  if ((turnsBack !== undefined && (!Number.isSafeInteger(turnsBack) || turnsBack < 1)) ||
-      [Boolean(selection), Boolean(selectionOnly), turnsBack !== undefined].filter(Boolean).length > 1 ||
-      (quotedSource && turnsBack !== undefined) || ((selection || selectionOnly || turnsBack !== undefined) && trigger !== 'explicit'))
-    throw new Error('invalid_target');
-  const log = catalogLog === undefined ? undefined : catalogDestination(catalogLog);
-  const observeArgs = ['--auth', auth];
-  if (catalog) {
-    observeArgs.push('--catalog');
-    if (log !== undefined) observeArgs.push('--catalog-log', log);
-  } else {
-    observeArgs.push('--model', model, '--display', display);
-    if (quotedSource) observeArgs.push('--quoted-source');
-  }
+// The terminal on Windows draws a screen. Read the provider's redirected UTF-8 bytes
+// from its private regular output file without opening or writing a provider stream.
+export function readOutput(workspace, cleanupToken, offset) {
+  if (!windows || !Number.isSafeInteger(offset) || offset < 0) throw Error('invalid_output_offset');
+  checkLocation(workspace);
+  const owners = recordedOwners(cleanupToken);
+  if (identity(workspace) !== owners[0]) throw Error('workspace_changed');
+  const fd = openRegular(join(workspace, windowsOutput));
+  try {
+    const info = fs.fstatSync(fd, { bigint: true });
+    if (fileId(info) !== owners[entries.indexOf(windowsOutput)] || info.nlink !== 1n || BigInt(offset) > info.size)
+      throw Error('output_changed');
+    const bytes = Buffer.alloc(8192);
+    const count = fs.readSync(fd, bytes, 0, bytes.length, offset);
+    // The next call rereads an incomplete final UTF-8 character.
+    const text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes.subarray(0, count), { stream: true });
+    return { text, next_offset: offset + Buffer.byteLength(text) };
+  } finally { fs.closeSync(fd); }
+}
+
+export function prepareWorkspace({ cwd, trigger, selectionOnly = false, catalog = false }) {
+  if (catalog ? (cwd !== undefined || trigger !== undefined || selectionOnly) :
+      (typeof cwd !== 'string' || !isAbsolute(cwd) || !['auto', 'explicit'].includes(trigger) || (selectionOnly && trigger !== 'explicit')))
+    throw Error('invalid_options');
   const role = catalog ? fs.readFileSync(stockRole) : editorRole(cwd, trigger, { selectionOnly });
   const workspace = fs.mkdtempSync(join(fs.realpathSync(tmpdir()), 'codex-polish-acp-'));
   const owners = [];
-  const record = name => { owners[paths.indexOf(name)] = identity(statEntry(join(workspace, name))); };
+  function createFile(name, contents) {
+    const path = join(workspace, name);
+    const fd = fs.openSync(path, 'wx', 0o600);
+    try {
+      owners.push(fileId(fs.fstatSync(fd, { bigint: true })));
+      if (contents !== undefined) fs.writeFileSync(fd, contents);
+    } finally { fs.closeSync(fd); }
+    return path;
+  }
   try {
-    record('.');
+    owners.push(identity(workspace));
     if (windows) secureDirectory(workspace);
-    for (const dir of ['.agents', '.agents/agents', roleDirectory]) {
-      fs.mkdirSync(join(workspace, dir), { mode: 0o700 });
-      record(dir);
+    for (const name of roleDirectories) {
+      const path = join(workspace, name);
+      fs.mkdirSync(path, { mode: 0o700 });
+      owners.push(identity(path));
     }
-    const roleFd = fs.openSync(join(workspace, roleFile), 'wx', 0o600);
-    try { record(roleFile); fs.writeFileSync(roleFd, role); }
-    finally { fs.closeSync(roleFd); }
-    const pipes = ['.acp-in', '.acp-out'];
-    if (!catalog) pipes.push('.acp-display');
-    for (const fifo of windows ? [] : pipes) {
-      execFileSync('/usr/bin/mkfifo', ['-m', '600', join(workspace, fifo)], { stdio: 'ignore' });
-      record(fifo);
-    }
-    for (const name of windows ? ['.acp-owner'] : ['.acp-owner', '.acp-jobs']) {
-      fs.closeSync(fs.openSync(join(workspace, name), 'wx', 0o600));
-      record(name);
-    }
-    const tokenPaths = ['.', '.acp-in', '.acp-owner'];
-    if (!catalog) tokenPaths.push('.acp-display');
-    const token = tokenPaths.map(name => owners[paths.indexOf(name)]).join(',');
-    observeArgs.push('--workspace-token', token);
-    let payloadArgs;
-    if (!catalog) {
-      payloadArgs = ['--cwd', cwd, '--editor-role-file', join(workspace, roleFile), '--trigger', trigger,
-        '--route', route, '--rewrite-mode', rewriteMode, '--model', model];
-      if (selectionOnly) payloadArgs.push('--selection-only');
-      if (selection) payloadArgs.push('--selection');
-      if (noHistory) payloadArgs.push('--no-history');
-      if (turnsBack !== undefined) payloadArgs.push('--turns-back', String(turnsBack));
-      observeArgs.push('--payload-args', JSON.stringify(payloadArgs));
-    }
-    if (windows) {
-      const settings = encode({ directory: workspace, owners, auth, model, catalogOnly: catalog, log,
-        payloadArgs, display, quotedSource });
-      const cmd = [
-        "$ErrorActionPreference = 'Stop'",
-        'try {',
-        "Add-Type -ReferencedAssemblies 'System.dll','System.Core.dll' -TypeDefinition ([IO.File]::ReadAllText(" + psArg(windowsHost) + '))',
-        'exit [CodexPolishAcpHost]::Run(' + [agyPath, 'acp --agent codex-polish-editor --sandbox', process.execPath,
-          windowsRelay, settings, workspace].map(psArg).join(', ') + ')',
-        '} catch {',
-        '& ' + [process.execPath, windowsRelay, '--dispose-unclaimed', settings].map(psArg).join(' '),
-        "[Console]::Error.WriteLine('acp_start_failed')",
-        'exit 1',
-        '}',
-      ].join('\n');
-      return { workspace, editor_role_file: join(workspace, roleFile),
-        start: { cmd, workdir: dirname(workspace), shell: powershell, login: false, tty: false,
-          yield_time_ms: 250, max_output_tokens: 32768 } };
-    }
-    const cmd = [
-      `[ . -ef ${quote(workspace)} ] || exit 1`,
-      `acp_activate() ( trap '' HUP INT TERM; exec ${quote(process.execPath)} ${quote(self)} --activate ${quote(token)} ${quote(owners[paths.indexOf('.acp-jobs')])}; )`,
-      `acp_dispose() { ${quote(process.execPath)} ${quote(self)} --dispose ${quote(workspace)} ${quote(owners.join(','))}; }`,
-      `. ${quote(terminal)} || exit 1`,
-      `CODEX_POLISH_SUPERVISOR_PID=$$ ${[process.execPath, observer, ...observeArgs].map(quote).join(' ')} < .acp-out 3>&- 4<&- &`,
-      'acp_observer=$!',
-      `${quote(agyPath)} acp --agent codex-polish-editor --sandbox 0<>.acp-in > .acp-out 2>/dev/null 3>&- 4<&- &`,
-      'acp_provider=$!',
-      'acp_wait',
-    ].join('\n');
-    return { workspace, fifo: join(workspace, '.acp-in'), editor_role_file: join(workspace, roleFile), write_token: token,
-      start: { cmd, workdir: workspace, shell: '/bin/sh', login: false, tty: true, yield_time_ms: 250, max_output_tokens: 32768 } };
+    const editor_role_file = createFile(roleFile, role);
+    const output = windows ? { output_file: createFile(windowsOutput) } : {};
+    return { workspace, editor_role_file, ...output, cleanup_token: owners.join(',') };
   } catch (error) {
-    dispose(workspace, owners);
+    removeOwnedEntries(workspace, owners);
     throw error;
   }
 }
 
 if (isMain(import.meta.url)) {
   try {
-    if (process.argv[2] === '--write') writeWithProducer(process.argv[3], process.argv[4], process.argv.slice(5));
-    else if (process.argv[2] === '--activate' && [4, 5].includes(process.argv.length)) activate(process.argv[3], process.argv[4]);
-    else if (process.argv[2] === '--dispose' && process.argv.length === 5) dispose(process.argv[3], process.argv[4].split(','));
-    else {
+    if (process.argv[2] === '--dispose' && process.argv.length === 5) {
+      dispose(process.argv[3], process.argv[4]);
+    } else if (process.argv[2] === '--read-output' && process.argv.length === 6 && /^\d+$/.test(process.argv[5])) {
+      console.log(JSON.stringify(readOutput(process.argv[3], process.argv[4], Number(process.argv[5]))));
+    } else {
       const { values } = parseArgs({ options: {
-        'agy-path': { type: 'string' }, cwd: { type: 'string' }, trigger: { type: 'string' }, 'selection-only': { type: 'boolean' },
-        selection: { type: 'boolean' }, 'no-history': { type: 'boolean' }, 'turns-back': { type: 'string' },
-        'rewrite-mode': { type: 'string' }, route: { type: 'string' },
-        display: { type: 'string' }, 'quoted-source': { type: 'boolean' },
-        auth: { type: 'string' }, model: { type: 'string' }, catalog: { type: 'boolean' }, 'catalog-log': { type: 'string' },
+        cwd: { type: 'string' }, trigger: { type: 'string' }, 'selection-only': { type: 'boolean' }, catalog: { type: 'boolean' },
       } });
-      console.log(JSON.stringify(prepareWorkspace({ agyPath: values['agy-path'], cwd: values.cwd, trigger: values.trigger,
-        selection: values.selection, noHistory: values['no-history'], turnsBack: values['turns-back'] === undefined ? undefined : Number(values['turns-back']),
-        route: values.route, rewriteMode: values['rewrite-mode'], display: values.display, quotedSource: values['quoted-source'],
-        selectionOnly: values['selection-only'], auth: values.auth, model: values.model, catalog: values.catalog, catalogLog: values['catalog-log'] })));
+      console.log(JSON.stringify(prepareWorkspace({ cwd: values.cwd, trigger: values.trigger,
+        selectionOnly: values['selection-only'], catalog: values.catalog })));
     }
   } catch {
-    process.stderr.write(process.argv[2] === '--write' ? 'acp_write_failed\n' : 'acp_start_failed\n');
+    process.stderr.write('workspace_operation_failed\n');
     process.exitCode = 1;
   }
 }

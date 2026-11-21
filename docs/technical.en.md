@@ -8,13 +8,13 @@ Codex Polish is a Codex plugin for Windows, macOS, and Linux. Its local scripts 
 
 Project settings live in the nearest Git repository’s root `.codex/` directory. All directories in the same repository use those settings. Nested repositories and linked worktrees have their own settings. Outside Git, settings belong to the chosen folder.
 
-The automatic rewrite mode and Gemini model each use the project setting first, then the Codex profile default, then the built-in default. The installer stores the two profile choices in `$CODEX_HOME/codex-polish/settings/` as `codex-polish.rewrite-mode` and `codex-polish.model`. When `CODEX_HOME` is unset, Codex uses `~/.codex`. API keys come from the environment of the process running Codex. The installer stores only the mode and model ID in these files.
+The automatic rewrite mode and the model/level pair each use the project setting first, then the Codex profile default, then the built-in default. The installer stores those profile defaults in `$CODEX_HOME/codex-polish/settings/` as `codex-polish.rewrite-mode` and `codex-polish.model`. When `CODEX_HOME` is unset, Codex uses `~/.codex`.
 
 | File | Values and Default | Behavior |
 | --- | --- | --- |
 | `.codex/codex-polish.mode` | `auto` (default), `manual`, `off` | Without a saved mode, the project uses `auto`. The trusted hook triggers polishing for ordinary questions. `manual` runs only on explicit requests. `off` skips rewrites even when requested. |
 | `.codex/codex-polish.rewrite-mode` | `normal` (built-in default), `turbo` | Applies only to the automatic hook. Neither mode needs an OpenAI key, and without the check both send drafts to Gemini. With the built-in prompts, `normal` can keep a clear draft and optionally checks with OpenAI Decisions, while `turbo` skips Decisions and asks Gemini to rewrite the draft. |
-| `.codex/codex-polish.model` | Model ID, built-in default `gemini-4-hydrogen` (Gemini 4 Hydrogen) | The model picker lists models from the signed-in Antigravity account without sending a draft or history. If the saved model becomes unavailable, that rewrite keeps the original draft. |
+| `.codex/codex-polish.model` | Gemini model and thinking level, default `gemini-4-hydrogen` with `medium` | The picker offers the thinking levels available for the chosen model. Both Normal and Turbo apply the saved pair. If the model or level becomes unavailable, the rewrite keeps the original draft. |
 | `.codex/codex-polish.history-turns` | Integer `0`–`10`, default `2` | Maximum completed exchanges to attach when Gemini rewrites a whole reply. Use `0` to omit earlier exchanges. Saving a value above `10` returns an error. An invalid setting reports the file and the allowed range. Changes apply on the next rewrite. |
 | `.codex/codex-polish.decisions` | `auto` (default), `off` | For hook-triggered polishing in Normal mode, `auto` enables the OpenAI style check when this Codex profile has a saved plugin key that passes the local format check. With `off`, drafts go directly to Gemini. |
 | `.codex/codex-polish.language` | `auto` (default), `zh`, `en` | Sets the language for plugin prompts and setup checks. |
@@ -23,7 +23,7 @@ Trigger mode, automatic rewrite mode, and Decisions accept mixed-case settings. 
 
 Say “Switch to turbo mode” or “Switch back to normal mode” to save the project preference. From a source checkout, run `node plugins/codex-polish/hooks/preferences.mjs set-rewrite-mode turbo --cwd /path/to/project`. Use `normal` to switch back. The `check --cwd /path/to/project` command reports the effective `rewrite_mode`. An invalid value pauses automatic polishing until you save either mode. Explicit requests still use Turbo.
 
-To follow the profile default again, ask “Use my profile’s rewrite mode in this project” or “Use my profile’s model in this project.” The corresponding commands are `set-rewrite-mode --reset --cwd /path/to/project` and `set-model --reset --cwd /path/to/project`. Each removes its project override. If the profile has no saved choice, the built-in defaults are Normal and Gemini 4 Hydrogen.
+For example, `set-model gemini-4-hydrogen --thinking-level high --cwd /path/to/project` saves Hydrogen with High thinking for one project. Use `--profile` in place of `--cwd` to change the profile default. To inherit the profile’s model and level again, use `set-model --reset --cwd /path/to/project`. Use `set-rewrite-mode --reset --cwd /path/to/project` to inherit its rewrite mode.
 
 “Polish the result” applies to the current draft. “Have Gemini rewrite the answer about caching” selects an earlier reply in the same chat. Both use `--trigger explicit` and send the selected draft directly to Gemini over ACP in Turbo mode. The request applies once and works in either `auto` or `manual`. Codex interprets requests in context, so “What does Turbo do?” asks for an explanation. The hook uses `--trigger auto` on ordinary questions and uses the project’s effective rewrite mode. The project’s `off` setting skips both triggers.
 
@@ -56,12 +56,12 @@ node -e "child_process.execFileSync(process.execPath, ['plugins/codex-polish/hoo
 | --- | --- |
 | 1. Select the text | Codex uses the current draft, an earlier answer, or a selected passage, as requested. If you ask it to skip polishing, keep the text local, or return a verbatim answer, it follows that request directly. |
 | 2. Style check | Direct ACP sends the selected text to Gemini. With Decisions enabled, OpenAI considers only the current question, draft, and any custom polishing prompt. Gemini rewrites when `P(needs rewrite) > 0.50`. |
-| 3. ACP rewrite | Gemini loads the polishing prompt for this request from the body of the editor role. The agent launches `agy acp` in a temporary workspace under a dedicated editor role, opens a session with the configured Antigravity identity, reads the live model list, and checks the project settings and selected model before sending. It rejects tool permission requests and collects only reply text from this session. The reply is ready to display once the agent has nonempty text and an `end_turn` matching the request ID. |
+| 3. ACP rewrite | Gemini loads the polishing prompt for this request from the body of the editor role. The agent launches `agy acp` in a temporary workspace under a dedicated editor role, opens a session with the configured Antigravity identity, selects the saved model and confirms its thinking level before sending. It rejects tool permission requests and collects only reply text from this session. The reply is ready to display once the agent has nonempty text and an `end_turn` matching the request ID. |
 | 4. Display | Identical replies appear once. The comparison keeps both versions if their indentation, whitespace, or line endings differ. |
 
-On Windows, the host uses Windows PowerShell and its built-in .NET runtime to start `agy.exe`. A Windows job object ties the provider and its child processes to the rewrite. The agent submits each protocol message itself. Draft input goes through a separate console handle, which accepts long UTF-8 text.
+The Codex agent starts the official executable with its host process tools and writes each request to that process. When only terminal tools are available on Windows, the agent redirects provider output to a private temporary file to preserve the raw JSON. The agent deletes it on normal completion or cancellation. A forced host shutdown can leave the file behind.
 
-During a rewrite, `agy` connects to Google. The plugin's Node.js scripts contact a provider only for the optional OpenAI style check. The current Codex agent starts and cleans up the ACP process, selects the model, and exchanges protocol messages. [ACP operating instructions](../plugins/codex-polish/skills/codex-polish/references/acp.md)
+During a rewrite, `agy` connects to Google. The plugin's Node.js scripts contact a provider only for the optional OpenAI style check. The current Codex agent starts and cleans up the ACP process, selects the model and thinking level, and exchanges protocol messages. [ACP operating instructions](../plugins/codex-polish/skills/codex-polish/references/acp.md)
 
 The plugin requires the official Antigravity CLI 1.2.1 or later. By default it reuses the existing Antigravity sign-in on the machine and OS account running Codex. To use an AI Studio key or an enterprise identity, set `CODEX_POLISH_AGY_AUTH` to `gemini-api-key` or `agent-platform`, respectively. [Sign-in guide](../plugins/codex-polish/skills/codex-polish-setup/references/credentials.en.md) · [Google ACP authentication](https://antigravity.google/docs/ide/extensions/acp)
 
@@ -73,7 +73,7 @@ For a selected passage or a previous Gemini version, the comparison is labeled *
 
 If Gemini returns identical text, the reply says it left the draft unchanged and shows the text once. If polishing is skipped before sending or the ACP request ends without a complete reply, the status explains what happened and the reply shows the original. Asking for “only the polished text” shows just Gemini’s text when the rewrite completes. Requests for plain JSON, a single command, or other exact output receive the requested content without labels or status.
 
-When the full reply arrives, the local formatter uses the original draft held in memory to produce the final Markdown. Both the comparison view and text-only delivery preserve Gemini’s chart references, whitespace, and line endings. Codex can retrieve a long formatted message in pages.
+When the full reply arrives, the local formatter uses the original draft retained by the Codex agent to produce the final Markdown. Both the comparison view and text-only delivery preserve Gemini’s chart references, whitespace, and line endings. Codex can retrieve a long formatted message in pages.
 
 ## Outgoing Content, Hooks, and Limits
 
@@ -101,7 +101,7 @@ The plugin never invokes `agy -p` and writes no draft logs of its own. Codex ses
 | --- | --- |
 | Unsupported Google authentication, missing agy, Node.js or host process tools | Keep the original. The plugin looks for agy in `PATH` and the Google installer’s default directory (`%LOCALAPPDATA%\agy\bin` on Windows, `~/.local/bin` on macOS and Linux). |
 | Decisions unavailable, key invalid, response invalid, or input exceeds the provider limit | Continue to Gemini with the original draft. Each turn makes its own routing decision. |
-| ACP startup failure, auth failure, missing selected model, or mid-stream model switch | The agent aborts the rewrite, terminates the process, and delivers the original draft. |
+| ACP startup failure, auth failure, unavailable model or thinking level, or mid-stream configuration change | The agent aborts the rewrite, terminates the process, and delivers the original draft. |
 | Slow or interrupted generation | Wait while the ACP process is running. On an explicit timeout, cancellation, disconnect or truncated result, discard incomplete output. A request is sent at most once. |
 | Project disabled mid-turn, updated user instructions, or cancellation | Re-checks project mode before sending text out. The agent discards the old candidate on new instructions. User cancellation ends the turn. If only the server cancels while the user waits, the plugin returns the original draft. |
 
@@ -109,7 +109,7 @@ The plugin never invokes `agy -p` and writes no draft logs of its own. Codex ses
 
 Install the npm beta from any folder with `npx @kyun.si/codex-polish@beta setup`. Replace `setup` with `update` to upgrade, `doctor` to check the current project, or `uninstall` to remove the plugin. In Windows PowerShell, use `npx.cmd` for these commands. From a source checkout, run `node scripts/install.mjs setup` from its root. The same subcommands work there. [Quick Start](../README.md#quick-start)
 
-On macOS, you can also double-click the launcher in the extracted archive. Both Finder and terminal installs configure defaults for all projects in the same Codex profile. Interactive setup offers each unsaved default, first the rewrite mode and then, when `agy` is available, the Gemini model. [Finder launcher](../Install%20Codex%20Polish.command)
+On macOS, you can also double-click the launcher in the extracted archive. Both Finder and terminal installs configure defaults for all projects in the same Codex profile. Interactive setup offers each unsaved default, first the rewrite mode and then, when `agy` is available, the Gemini model and its thinking level. For a model with a fixed level, setup skips the level picker. [Finder launcher](../Install%20Codex%20Polish.command)
 
 Both `setup` and `update` accept `--install-agy` to install the Google CLI when needed. Updates preserve `.codex` project settings and the plugin’s enabled state. Re-running `update` with the same version replaces the build or recovers an interrupted update.
 
@@ -117,6 +117,6 @@ The installer registers one local marketplace per Codex profile. Updates stage a
 
 First interactive setup in Normal mode offers the optional OpenAI Decisions API check and skips it by default. To manage the key later, run `npx @kyun.si/codex-polish@beta openai` on the machine and Codex profile that run the plugin. In Windows PowerShell, use `npx.cmd`. Hidden terminal input saves the key to `$CODEX_HOME/codex-polish/credentials/openai.key`. The plugin ignores `OPENAI_API_KEY`. [Credential setup and API billing](../plugins/codex-polish/skills/codex-polish-setup/references/credentials.en.md#optional-openai-decisions-api)
 
-Uninstall removes the plugin, its marketplace, session pointers, and this profile’s saved rewrite mode, model, custom prompt and OpenAI key. It also deletes project settings last saved by this profile when the recorded file is still in place. This includes Git-tracked files and files edited in place. The shared `agy` installation is available for other applications.
+Uninstall removes the plugin, its marketplace, session pointers, and this profile’s saved rewrite mode, model, thinking level, custom prompt and OpenAI key. It also deletes project settings last saved by this profile when the recorded file is still in place. This includes Git-tracked files and files edited in place. The shared `agy` installation is available for other applications.
 
 Older releases did not record where they created project settings. To clear those too, review the `.codex/codex-polish.*` files in each project you configured. The uninstaller prints the backup path for any manually edited installation files. To run an uninstaller from a locally packed release, substitute the archive path for the npm package name, for example `npx --yes file:./kyun.si-codex-polish-VERSION.tgz uninstall`.

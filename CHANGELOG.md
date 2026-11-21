@@ -2,6 +2,17 @@
 
 [中文使用说明](docs/README.zh-CN.md) · [English README](README.md)
 
+## 0.0.1-beta.10
+
+- 修复了 Codex 桌面端在“未润色”和“Gemini 返回了原稿”等状态后显示 HTML 注释的问题。
+- Removed the visible HTML comment after skipped and unchanged reply headings in the Codex app.
+
+- Codex 现在直接启动官方 `agy acp`，通过宿主工具读写每条请求。移除了插件的进程启动器和协议转发器；安装时查询账号模型也使用同一路径。
+- The Codex agent now starts `agy acp` and exchanges requests using its own process tools, both for rewrites and for the installer's account model lookup.
+
+- 安装时可以一起选 Gemini 模型和思考等级。默认使用 Gemini 4 Hydrogen 和 Medium，以后也可以在 Codex 中更改。普通和 Turbo 模式都使用选定的等级。
+- Choose a Gemini model and thinking level during setup, or change them later in Codex. The defaults are Gemini 4 Hydrogen and Medium. Both Normal and Turbo use the selected level.
+
 ## 0.0.1-beta.9
 
 - 默认只用 Gemini，忽略已有的 `OPENAI_API_KEY`。首次交互安装并选用普通模式时，可以选择启用按 API 用量计费的 OpenAI Decisions API 检查。以后可用 `openai` 命令管理当前 Codex 配置保存的密钥，卸载时会删除密钥。

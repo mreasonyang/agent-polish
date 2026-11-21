@@ -35,6 +35,7 @@ function rpcFailure(id, error) {
   if (id === 2 || error.code === -32000) return 'acp_auth_failed';
   if (/\b(timeout|timed out|etimedout|deadline[_ ]exceeded)\b/i.test(error.message)) return 'acp_timeout';
   if (id === 4 && error.code === -32602) return 'acp_model_unavailable';
+  if (id === 5 && error.code === -32602) return 'acp_thinking_level_unavailable';
   return 'acp_provider_error';
 }
 

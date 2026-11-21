@@ -43,7 +43,7 @@ npx @kyun.si/codex-polish@beta setup
 
 For T3 Code, select the Codex backend.
 
-Use **↑ / ↓** and **Enter** to choose the default rewrite mode and Gemini model for this Codex profile. Setup offers to install `agy` before model selection if needed. You can override either default in a project. Rerunning setup skips saved choices. [Other installation options](docs/technical.en.md#installation-updates-and-uninstall)
+Use **↑ / ↓** and **Enter** to choose a rewrite mode, then a Gemini model and its thinking level. The defaults are **Normal**, **Gemini 4 Hydrogen** and **Medium**. Setup offers to install `agy` if needed. Your choices apply to all projects in this Codex profile. [Other installation options](docs/technical.en.md#installation-updates-and-uninstall)
 
 - **Before trusting the hook:** Ask **“Why does a cache hit still take time? Polish the answer.”** Asking for a polish uses Turbo. Gemini receives the draft without earlier exchanges.
 - **Automatic mode (default):** Trust `UserPromptSubmit` in Codex **Settings → Hooks** (`/hooks` in the CLI) and start a **new chat**. Codex then runs the polishing workflow on ordinary questions and can include recent exchanges.
@@ -58,7 +58,7 @@ To add, replace or remove the key later, run `npx @kyun.si/codex-polish@beta ope
 
 - **“Have Gemini rewrite your last answer in two sentences.”** You can name an earlier answer in the same chat. Asking to rewrite the original again uses the question that first prompted it. If Codex can’t identify the original, it asks you to point it out or quote it. A request to polish or rewrite skips the OpenAI Decisions API even when automatic polishing is set to Normal.
 - **“Only polish when I ask.”** Sets the project to manual. **“Make Turbo the default for this project”** sets Turbo for automatic polishing. **“Only show the polished text”** hides the comparison for one reply.
-- **“Choose a rewrite model.”** Shows models available to your Antigravity account. The built-in default is **Gemini 4 Hydrogen** (`gemini-4-hydrogen`).
+- **“Choose a rewrite model.”** Pick a model from your Antigravity account and a thinking level it supports. To change just the level, say **“Use High thinking for Gemini in this project.”** Normal and Turbo both use your selection.
 - **“Set my polishing prompt to: Lead with the conclusion and use short sentences.”** One custom prompt applies to every project in your Codex profile. It replaces the built-in editing instructions for Normal and Turbo. Say **“Restore the default polishing prompt”** to delete the saved text.
 
 ## What gets sent
@@ -80,6 +80,6 @@ Codex Polish sends the selected text as written, including any keys or tokens it
 
 In Windows PowerShell, use `npx.cmd` to run `doctor`, `update`, and `uninstall`. `doctor` checks local dependencies, project settings and hook trust. Ask **“Choose a rewrite model”** to check your Antigravity sign-in and see the available models. After an update, Codex may ask you to trust the hook again.
 
-Uninstall deletes this profile’s saved rewrite mode, model, custom prompt and OpenAI API key, and cleans up recorded project settings. [Uninstall details](docs/technical.en.md#installation-updates-and-uninstall)
+Uninstall deletes this profile’s saved rewrite mode, model, thinking level, custom prompt and OpenAI API key, and cleans up recorded project settings. [Uninstall details](docs/technical.en.md#installation-updates-and-uninstall)
 
 [Credentials Guide](plugins/codex-polish/skills/codex-polish-setup/references/credentials.en.md) · [Technical Reference](docs/technical.en.md) · [Evaluation](evaluation/README.en.md) · [Contributing](CONTRIBUTING.en.md) · [Security](SECURITY.en.md) · [Changelog](CHANGELOG.md) · [Apache-2.0 License](LICENSE)

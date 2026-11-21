@@ -44,6 +44,7 @@ export async function readInputLine(stream, terminal = false, keepOpen = false) 
 }
 
 export async function readHostLine(stream = process.stdin) {
+  stream.ref?.();
   const raw = stream.isTTY && !stream.isRaw;
   if (raw) stream.setRawMode(true);
   try {
@@ -54,4 +55,27 @@ export async function readHostLine(stream = process.stdin) {
     stream.pause();
     stream.unref?.();
   }
+}
+
+// A tool read has a finite output budget. Page the exact text through this
+// helper's own terminal; the agent controls when each page is read.
+export async function writeHostPages(text) {
+  const pageBytes = 6144;
+  let start = 0;
+  do {
+    let end = start;
+    let bytes = 0;
+    for (const character of text.slice(start)) {
+      bytes += Buffer.byteLength(JSON.stringify(character)) - 2;
+      if (bytes > pageBytes) break;
+      end += character.length;
+    }
+    const more = end < text.length;
+    process.stdout.write(JSON.stringify({ text: text.slice(start, end), more }) + '\n');
+    if (more) {
+      const next = await readHostLine();
+      if (next.length && !(next.length === 1 && next[0] === 13)) throw Error('invalid_page_request');
+    }
+    start = end;
+  } while (start < text.length);
 }

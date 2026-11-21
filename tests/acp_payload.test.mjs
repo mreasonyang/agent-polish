@@ -1,13 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { spawnSync } from 'node:child_process';
-import { closeSync, constants, mkdirSync, openSync, readFileSync, readSync, rmSync, writeFileSync, unlinkSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { createInterface } from 'node:readline';
+import { mkdirSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
 import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { agyName, homeEnv, json, run, temporary, useTestProfile, writeTestPrompt } from './hook_fixture.mjs';
 import { saveOpenAIKey } from '../plugins/codex-polish/hooks/openai_credentials.mjs';
-import { prepareWorkspace } from '../plugins/codex-polish/skills/codex-polish/scripts/acp_workspace.mjs';
 
 const plugin = fileURLToPath(new URL('../plugins/codex-polish/', import.meta.url));
 const hook = join(plugin, 'hooks/preferences.mjs');
@@ -342,6 +343,9 @@ test('no ACP frame is written when the approved route, trigger or selected model
   const withDecision = base.map(x => x === 'acp' ? 'decisions' : x);
   assert.equal(render(withDecision).status, 0);
   set('set-decisions', 'off'); block(withDecision);
+  assert.equal(ctx.cli(hook, ['set-model', 'gemini-4-hydrogen', '--thinking-level', 'high', '--cwd', ctx.project]).status, 0);
+  block(base);
+  assert.equal(render([...base, '--thinking-level', 'high']).status, 0);
   set('set-model', 'gemini-other'); block(base);
 });
 
@@ -466,74 +470,31 @@ test('an explicit rewrite sends the selected earlier question and draft, its pre
   }
 });
 
-function submission(t, ctx, scope, flags) {
-  const settings = { agyPath: join(ctx.root, 'bin/agy'), cwd: ctx.project, auth: 'existing-session', trigger: 'explicit',
-    model: 'gemini-4-hydrogen', route: 'acp', rewriteMode: 'turbo', display: 'zh', ...scope };
-  const prepared = prepareWorkspace(settings);
-  const { workspace, write_token, editor_role_file } = prepared;
-  t.after(() => rmSync(workspace, { recursive: true, force: true }));
-  const command = (args, input) => spawnSync(process.execPath, [join(plugin, 'skills/codex-polish/scripts/acp_workspace.mjs'), ...args], {
-    cwd: workspace, env: ctx.env, encoding: 'utf8', input, timeout: 5000,
+test('the offline material helper returns an exact JSON-RPC line in bounded pages to its caller', async t => {
+  const ctx = setup(t);
+  const flags = ctx.workflowFlags(ctx.project, ['--selection-only'], 'explicit');
+  const args = [formatter, '--cwd', ctx.project, '--host-input', ...flags];
+  const child = spawn(process.execPath, args, { env: ctx.env });
+  const done = once(child, 'close');
+  t.after(() => { if (child.exitCode === null) child.kill(); });
+  const lines = createInterface({ input: child.stdout })[Symbol.asyncIterator]();
+  const selection = '  雪🐕\r\n"quotes"\\'.repeat(700);
+  assert.equal((await lines.next()).value, 'input_ready');
+  child.stdin.write(JSON.stringify({ sessionId: 'example-session', selection }) + '\n');
+  let text = '';
+  let pages = 0;
+  for (;;) {
+    const page = JSON.parse((await lines.next()).value);
+    pages++;
+    text += page.text;
+    if (!page.more) break;
+    assert.equal((await lines.next()).value, 'input_ready');
+    child.stdin.write('\n');
+  }
+  assert.deepEqual(await done, [0, null]);
+  assert.ok(pages > 1);
+  assert.deepEqual(JSON.parse(text), {
+    jsonrpc: '2.0', id: 6, method: 'session/prompt',
+    params: { sessionId: 'example-session', prompt: [{ type: 'text', text: JSON.stringify({ draft: selection }) }] },
   });
-  assert.equal(command(['--activate', write_token]).status, 0);
-  const open = name => {
-    const fd = openSync(join(workspace, name), constants.O_RDWR | constants.O_NONBLOCK);
-    t.after(() => closeSync(fd));
-    return fd;
-  };
-  const display = open('.acp-display');
-  const provider = open('.acp-in');
-  const record = fd => {
-    const data = Buffer.alloc(8192);
-    const size = readSync(fd, data);
-    return JSON.parse(data.subarray(0, size).toString('utf8'));
-  };
-  return { workspace, readLocal: () => record(display), readProvider: () => record(provider),
-    send: data => command(['--write', write_token, 'prompt', '--submit', '--session-id', 'fixture-session',
-      '--cwd', ctx.project, '--editor-role-file', editor_role_file, '--route', settings.route, '--rewrite-mode', settings.rewriteMode,
-      '--trigger', settings.trigger, '--model', settings.model, ...flags], JSON.stringify(data) + '\n') };
-}
-
-const fifoTest = process.platform === 'win32' ? test.skip : test;
-
-fifoTest('local display receives the exact earlier question and draft while only ACP gets history and directions', t => {
-  const ctx = setup(t);
-  const earlier = ['Earlier context', 'Earlier response'];
-  const targeted = ['  Which version?\r\n', '  Version two.\n'];
-  ctx.configure([earlier, targeted, ['Later?', 'Later.']], 'Rewrite the second most recent reply.', 1);
-  const pipe = submission(t, ctx, { turnsBack: 2, display: 'en' }, ['--turns-back', '2']);
-  const data = { question: targeted[0], draft: targeted[1], rewrite_request: 'Be concise.' };
-  assert.equal(pipe.send(data).status, 0);
-  assert.deepEqual(pipe.readLocal(), { question: targeted[0], draft: targeted[1] });
-  const expected = { question: targeted[0], draft: targeted[1], history: history([earlier]), rewrite_request: data.rewrite_request };
-  const frame = pipe.readProvider();
-  assert.deepEqual(frame, { jsonrpc: '2.0', id: 6, method: 'session/prompt',
-    params: { sessionId: 'fixture-session', prompt: [{ type: 'text', text: JSON.stringify(expected) }] } });
-  assert.equal(pipe.send(data).status, 1);
-  assert.throws(pipe.readLocal, { code: 'EAGAIN' });
-  assert.throws(pipe.readProvider, { code: 'EAGAIN' });
-});
-
-fifoTest('selected and quoted originals keep all display fields out of the ACP frame', t => {
-  const ctx = setup(t);
-  const pipe = submission(t, ctx, { selection: true, quotedSource: true, display: 'body-only' }, ['--selection']);
-  const data = { selection: 'Only this paragraph.\r\n', rewrite_request: 'Keep the quotation.' };
-  assert.equal(pipe.send(data).status, 0);
-  assert.deepEqual(pipe.readLocal(), { draft: data.selection });
-  const frame = pipe.readProvider();
-  assert.deepEqual(frame.params, { sessionId: 'fixture-session', prompt: [
-    { type: 'text', text: JSON.stringify({ draft: data.selection, rewrite_request: data.rewrite_request }) },
-  ] });
-});
-
-fifoTest('a substituted display pipe prevents submission without writing to the replacement', t => {
-  const ctx = setup(t);
-  const pipe = submission(t, ctx, {}, []);
-  const local = join(pipe.workspace, '.acp-display');
-  unlinkSync(local);
-  writeFileSync(local, 'foreign');
-  assert.equal(pipe.send(primary).status, 1);
-  assert.equal(readFileSync(local, 'utf8'), 'foreign');
-  assert.throws(pipe.readLocal, { code: 'EAGAIN' });
-  assert.throws(pipe.readProvider, { code: 'EAGAIN' });
 });

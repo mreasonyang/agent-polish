@@ -18,6 +18,8 @@ const HISTORY_FILE = 'codex-polish.history-turns';
 const DECISIONS_FILE = 'codex-polish.decisions';
 export const MODEL_FILE = 'codex-polish.model';
 export const DEFAULT_GEMINI_MODEL = 'gemini-4-hydrogen';
+export const DEFAULT_THINKING_LEVEL = 'medium';
+const THINKING_LEVELS = ['low', 'medium', 'high', 'xhigh', 'fixed'];
 export const DEFAULT_HISTORY_TURNS = 2;
 export const MAX_HISTORY_TURNS = 10;
 const GOOGLE_AUTH_MODES = ['existing-session', 'gemini-api-key', 'agent-platform'];
@@ -81,10 +83,17 @@ export function validModelId(value) {
     /^[A-Za-z0-9][A-Za-z0-9._-]*(?:[/:][A-Za-z0-9][A-Za-z0-9._-]*)*$/.test(value);
 }
 
+export function validThinkingLevel(value) {
+  return THINKING_LEVELS.includes(value);
+}
+
 function modelPreference(cwd) {
-  const value = readSettingWithDefault(cwd, MODEL_FILE, 257);
-  return { gemini_model: value === null ? DEFAULT_GEMINI_MODEL : validModelId(value) ? value : null,
-    gemini_model_configured: validModelId(value) };
+  // Model and optional level share a single file so overrides and resets apply to the pair.
+  const value = readSettingWithDefault(cwd, MODEL_FILE, 264);
+  const [model, level = DEFAULT_THINKING_LEVEL, extra] = (value ?? DEFAULT_GEMINI_MODEL).split(' ');
+  const valid = validModelId(model) && validThinkingLevel(level) && extra === undefined;
+  return { gemini_model: valid ? model : null, gemini_thinking_level: valid ? level : null,
+    gemini_model_configured: value !== null && valid };
 }
 
 export function projectGeminiModel(cwd) {
@@ -110,18 +119,14 @@ function writeProjectSetting(cwd, filename, value, lang) {
   return path.join(settings, filename);
 }
 
-function setModel(cwd, model, lang) {
-  if (model === null) {
-    if (cwd === null) model = DEFAULT_GEMINI_MODEL;
-    else {
-      const file = writeProjectSetting(cwd, MODEL_FILE, null, lang);
-      return { gemini_model: projectGeminiModel(cwd), file };
-    }
-  }
+export function saveModelSelection(cwd, model, thinkingLevel, lang) {
   if (!validModelId(model)) throw new RangeError(tr('这个模型 ID 无效，请从当前账号的 Gemini 模型列表里选一个。',
     "This model ID isn't valid. Choose a Gemini model from your account's list.", lang));
-  const file = cwd === null ? writeProfileDefault(MODEL_FILE, model) : writeProjectSetting(cwd, MODEL_FILE, model, lang);
-  return { gemini_model: model, file };
+  if (!validThinkingLevel(thinkingLevel)) throw new RangeError(tr('请选择此模型支持的思考等级。',
+    'Choose a thinking level supported by this model.', lang));
+  const selection = model + ' ' + thinkingLevel;
+  const file = cwd === null ? writeProfileDefault(MODEL_FILE, selection) : writeProjectSetting(cwd, MODEL_FILE, selection, lang);
+  return { gemini_model: model, gemini_thinking_level: thinkingLevel, file };
 }
 
 function validSource(turn, file) {
@@ -241,7 +246,7 @@ async function runOpenaiDecision(cwd, pinned, hostInput) {
   return [{ action, reason, probability }, 0];
 }
 
-export function workflowPolicy(cwd, { trigger, route, rewriteMode, model, selectionOnly = false, noHistory = false, keyStatus }) {
+export function workflowPolicy(cwd, { trigger, route, rewriteMode, model, thinkingLevel, selectionOnly = false, noHistory = false, keyStatus }) {
   const [mode] = projectSettings(cwd);
   const keep = reason => ({ action: 'keep', reason });
   if (mode === null) return keep('mode_invalid');
@@ -252,13 +257,15 @@ export function workflowPolicy(cwd, { trigger, route, rewriteMode, model, select
   if (status.blockers.length) return { ...keep(status.blockers[0]), blockers: status.blockers };
   if (rewriteMode !== undefined && rewriteMode !== status.rewrite_mode) return keep('rewrite_mode_changed');
   if (model !== undefined && model !== status.gemini_model) return keep('gemini_model_changed');
+  if (thinkingLevel !== undefined && thinkingLevel !== status.gemini_thinking_level) return keep('thinking_level_changed');
   const selected = status.decisions_enabled ? 'decisions' : 'acp';
   if (route !== undefined && route !== selected) return keep('decision_route_changed');
   return { action: 'accept', reason: 'workflow_ready', route: selected };
 }
 
 async function judgeDraft(args) {
-  const pinned = { trigger: args.trigger, route: args.route, rewriteMode: args['rewrite-mode'], model: args.model, noHistory: args['no-history'] };
+  const pinned = { trigger: args.trigger, route: args.route, rewriteMode: args['rewrite-mode'], model: args.model,
+    thinkingLevel: args['thinking-level'], noHistory: args['no-history'] };
   const policy = workflowPolicy(args.cwd, pinned);
   if (policy.action === 'keep') return [policy, 0];
   const { route } = policy;
@@ -295,8 +302,8 @@ export function runHook() {
   if (mode !== 'auto') return;
   const lang = language(event.cwd);
   const workflow = JSON.stringify(path.resolve(import.meta.dirname, '../skills/codex-polish/WORKFLOW.md'));
-  const additionalContext = tr(`本项目已开启自动改写。按 ${workflow} 处理最终答复。用户主动要求润色本轮或已有回复时用 --trigger explicit，其余由本提醒触发的润色用 --trigger auto。进入 Gemini 步骤时，用 acp_workspace.mjs 返回的 start 和 send.exec 操作同一进程。保留用户指的原稿，无需播报润色进度。收到完整的最终 Markdown 后直接交付。遵守用户指定的格式、取消或禁止外发的要求。`,
-      `Automatic rewriting is on for this project. Follow ${workflow} for the final reply. When the user asks to polish this reply or an earlier answer, use --trigger explicit. Use --trigger auto for polishing initiated by this reminder alone. For Gemini, execute the prepared start options from acp_workspace.mjs, then each send.exec on that session. Keep the selected draft. Run the polishing steps without progress announcements. Deliver the final Markdown as soon as it is complete. Honor the requested format, cancellations, and requests to keep content local.`, lang);
+  const additionalContext = tr(`本项目已开启自动改写。按 ${workflow} 处理最终答复。用户主动要求润色本轮或已有回复时用 --trigger explicit，其余由本提醒触发的润色用 --trigger auto。进入 Gemini 步骤时，由当前 agent 直接启动 agy acp，并用宿主工具向同一进程写入请求。保留用户指的原稿，无需播报润色进度。收到完整的最终 Markdown 后直接交付。遵守用户指定的格式、取消或禁止外发的要求。`,
+      `Automatic rewriting is on for this project. Follow ${workflow} for the final reply. When the user asks to polish this reply or an earlier answer, use --trigger explicit. Use --trigger auto for polishing initiated by this reminder alone. For Gemini, start agy acp directly and use your host tools to write each request to that process. Keep the selected draft. Run the polishing steps without progress announcements. Deliver the final Markdown as soon as it is complete. Honor the requested format, cancellations, and requests to keep content local.`, lang);
   console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext } }));
 }
 
@@ -308,12 +315,12 @@ const commands = {
   'set-rewrite-mode': ['(normal | turbo | --reset) (--cwd DIR | --profile)', '选择自动润色模式，或恢复默认模式', 'choose an automatic rewrite mode or restore its default'],
   'set-history-turns': ['N --cwd DIR', '设置 Gemini 润色时能看到几轮历史（0 到 10 轮）', 'choose how many earlier exchanges Gemini receives (0–10)'],
   'set-decisions': ['{auto,off} --cwd DIR', '设置是否让 OpenAI 判断原稿是否需要润色', 'choose whether OpenAI decides if a draft needs editing'],
-  'set-model': ['(MODEL_ID | --reset) (--cwd DIR | --profile)', '选择 Gemini 改写模型，或恢复默认模型', 'choose a Gemini model or restore its default'],
+  'set-model': ['(MODEL_ID [--thinking-level LEVEL] | --reset) (--cwd DIR | --profile)', '选择 Gemini 模型和思考等级（默认 medium）', 'choose a Gemini model and thinking level (default medium)'],
   prompt: ['--profile', '查看当前 Codex 配置的润色提示词和来源', 'show the editing prompt for this Codex profile and its source'],
   'set-prompt': ['[--reset] --profile', '从标准输入保存所有项目共用的润色提示词，或恢复默认', 'save an editing prompt from stdin for all projects in this profile or restore the default'],
   'set-language': ['{auto,zh,en} --cwd DIR', '选择设置和提示的显示语言（auto 自动识别，zh 中文，en 英文）', 'choose the language for settings and messages (auto detects, zh Chinese, en English)'],
   check: ['(--cwd DIR | --profile) [--trigger {auto,explicit}] [--selection-only] [--no-history]', '查看当前设置和缺少的依赖', 'check project settings and local requirements'],
-  decision: ['judge --trigger {auto,explicit} --cwd DIR [--route {acp,decisions}] [--rewrite-mode {normal,turbo}] [--model MODEL_ID] [--no-history]', '判断原稿是否需要润色', 'decide whether to rewrite a draft'],
+  decision: ['judge --trigger {auto,explicit} --cwd DIR [--route {acp,decisions}] [--rewrite-mode {normal,turbo}] [--model MODEL_ID] [--thinking-level LEVEL] [--no-history]', '判断原稿是否需要润色', 'decide whether to rewrite a draft'],
 };
 
 function printHelp(command, t) {
@@ -346,6 +353,7 @@ async function main(args) {
   if (['set-model', 'set-rewrite-mode', 'set-prompt'].includes(command)) options.reset = { type: 'boolean' };
   if (command === 'set-prompt' || command === 'decision') options['host-input'] = { type: 'boolean' };
   if (command === 'decision' || command === 'check') options.trigger = { type: 'string' };
+  if (command === 'decision' || command === 'set-model') options['thinking-level'] = { type: 'string' };
   if (command === 'check') options['selection-only'] = { type: 'boolean' };
   if (command === 'check' || command === 'decision') options['no-history'] = { type: 'boolean' };
   if (command === 'decision') {
@@ -360,6 +368,7 @@ async function main(args) {
     return usageError(t('参数无效或缺少参数值。使用 --help 查看用法。', 'Invalid option or missing option value. Use --help for usage.'));
   }
   if (values.profile && values.cwd !== undefined) return usageError(t('请选择 --profile 或 --cwd DIR。', 'Choose either --profile or --cwd DIR.'));
+  if (values.reset && values['thinking-level'] !== undefined) return usageError(t('--reset 会同时重置模型和思考等级。', '--reset restores both the model and its thinking level.'));
   if (profileOnly && !values.profile) return usageError(t('缺少必填参数 --profile。', 'The --profile option is required.'));
   if (options.cwd && !values.profile && !values.cwd) return usageError(t('缺少必填参数 --cwd', 'The --cwd option is required.'));
   const expected = (command.startsWith('set-') && command !== 'set-prompt') || command === 'decision' ? 1 : 0;
@@ -370,6 +379,7 @@ async function main(args) {
   if (command === 'set-decisions' && value === 'on') value = 'auto';
   const choices = { 'set-mode': MODES, 'set-rewrite-mode': REWRITE_MODES, 'set-language': LANGUAGES, 'set-decisions': ['auto', 'off'], decision: ['judge'] };
   const toCheck = values.reset ? [] : [[value, choices[command]]];
+  if (values['thinking-level'] !== undefined) toCheck.push([values['thinking-level'], THINKING_LEVELS]);
   if (command === 'decision' || values.trigger !== undefined) toCheck.push([values.trigger, REWRITE_TRIGGERS]);
   if (command === 'decision') {
     if (values['rewrite-mode'] !== undefined) toCheck.push([values['rewrite-mode'], REWRITE_MODES]);
@@ -442,7 +452,15 @@ async function main(args) {
         break;
       }
       case 'set-language': result = { file: save(LANGUAGE_FILE, value), ...languageSettings(cwd) }; break;
-      case 'set-model': result = setModel(cwd, values.reset ? null : value, lang); break;
+      case 'set-model': {
+        if (values.reset && !values.profile) {
+          const file = writeProjectSetting(cwd, MODEL_FILE, null, lang);
+          result = { ...modelPreference(cwd), file };
+        } else {
+          result = saveModelSelection(cwd, value ?? DEFAULT_GEMINI_MODEL, values['thinking-level'] ?? DEFAULT_THINKING_LEVEL, lang);
+        }
+        break;
+      }
       case 'set-prompt': {
         let data;
         if (values.reset) data = null;

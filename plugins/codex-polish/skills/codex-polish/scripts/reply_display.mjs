@@ -5,8 +5,8 @@ const DISPLAY_LABELS = {
     quoted: 'View original text', unchangedQuote: 'Gemini returned the original text' },
 };
 
-// A single-body status has no disclosure to distinguish it from an author's heading.
-export const STATUS_MARK = ' <!-- codex-polish -->';
+// Earlier transcripts included this suffix in the status heading.
+const STATUS_MARK = ' <!-- codex-polish -->';
 const CHART_ENCODING = '<!-- codex-polish:chart-entities -->\n\n';
 
 // Escape the widget delimiters in the fold, and quote literal entities by one
@@ -34,19 +34,19 @@ function originalDisclosure(label, draft) {
   return `<details><summary>${label}</summary>\n\n${marker}${encoded}\n\n</details>`;
 }
 
-// Only a complete comparison identifies its foreground and folded sections.
-// A heading alone can be part of the user's text.
-export function readReplyDisplay(reply) {
+// An unmarked status heading can be the author's own text. Strip it only
+// when a matching delivery record identifies the reply as formatted.
+export function readReplyDisplay(reply, { formatted = false } = {}) {
   const stop = reply.indexOf('\n\n');
   if (stop < 0) return null;
   const heading = reply.slice(0, stop);
   const marked = heading.endsWith(STATUS_MARK);
   const title = marked ? heading.slice(0, -STATUS_MARK.length) : heading;
   const body = reply.slice(stop + 2);
-  if (marked && /^\*\*(?:未润色|Polishing skipped)\*\* · [^\r\n]+$/.test(title))
+  if ((formatted || marked) && /^\*\*(?:未润色|Polishing skipped)\*\* · [^\r\n]+$/.test(title))
     return { visible: body, original: body };
   for (const labels of Object.values(DISPLAY_LABELS)) {
-    if (marked && [labels.unchanged, labels.unchangedQuote].some(label => title === `**${label}**`))
+    if ((formatted || marked) && [labels.unchanged, labels.unchangedQuote].some(label => title === `**${label}**`))
       return { visible: body, original: body };
     if (title !== `**${labels.polished}**`) continue;
     const html = body.endsWith('\n\n</details>');
@@ -85,7 +85,7 @@ export function formatReply({ draft, candidate: text, display_language, source_l
   const same = text === draft;
   const quoted = source_label === 'quoted';
   const display_text = same
-    ? `**${quoted ? labels.unchangedQuote : labels.unchanged}**${STATUS_MARK}\n\n${text}`
+    ? `**${quoted ? labels.unchangedQuote : labels.unchanged}**\n\n${text}`
     : `**${labels.polished}**\n\n${text}\n\n${originalDisclosure(quoted ? labels.quoted : labels.original, draft)}`;
   return { text, display_text };
 }

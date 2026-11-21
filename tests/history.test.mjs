@@ -243,7 +243,7 @@ test('previous rewrite extracts the displayed GPT original in either language, i
       const display = formatReply({ draft, candidate, display_language: lang }).display_text;
       write(...exchange('old', 'Earlier question.', 'Earlier answer.'), ...exchange('selected', 'Original question.', display),
         start('now'), user('Have Gemini rewrite the last reply.'));
-      assert.deepEqual(readPreviousReply(file, 's', 'now', 1), { selection: candidate });
+      assert.deepEqual(readPreviousReply(file, 's', 'now', 1), { selection: candidate === draft ? display : candidate });
       assert.equal(readPreviousReply(file, 's', 'now', 1, 1, { requireGpt: true }), null);
       const receipt = () => ({ label: 'gpt', origin: 'selected', literal: false });
       assert.deepEqual(readPreviousReply(file, 's', 'now', 1, 1, { lookupOrigin: receipt }), {
@@ -291,8 +291,8 @@ test('the formatter labels user-selected source neutrally and preserves it for l
       assert.ok(!display_text.includes('GPT'));
       assert.equal(originalReplyText(display_text), draft);
       const same = formatReply({ ...input, candidate: draft });
-      assert.equal(same.display_text, `**${unchanged}** <!-- codex-polish -->\n\n${draft}`);
-      assert.equal(originalReplyText(same.display_text), draft);
+      assert.equal(same.display_text, `**${unchanged}**\n\n${draft}`);
+      assert.equal(originalReplyText(same.display_text), same.display_text);
     }
   }
   const badLabel = run(script, [], { input: JSON.stringify({ draft: 'Source.', candidate: 'Result.', source_label: 'unknown' }) });

@@ -1,49 +1,45 @@
-# 用宿主执行工具操作 Antigravity ACP
+# 由 Codex agent 直接操作 Antigravity ACP
 
-当前 Codex agent 直接调用官方 `agy acp`，每一帧都由当前 agent 提交。以下步骤适用于 T3、Codex App 和 CLI。每次改写只启动一个进程，提交一次草稿。需要 Antigravity CLI 1.2.1+。改写整条回复时，准备脚本优先使用当前 Codex 配置保存的完整润色提示词创建编辑角色。明确要求只发送选段时使用内置 Turbo 角色。脚本按当前系统生成宿主命令。Windows 使用 PowerShell，macOS 和 Linux 使用系统 shell。
+当前 agent 用宿主的执行工具启动官方 `agy`，持有它的进程句柄，亲自读写 JSON-RPC。插件的 Node 工具只在本地准备角色、组装材料或解析已经收到的文本。不能把进程或数据流交给插件脚本、ACP 客户端、管道转发器或另一个代理。一次改写只提交一次草稿。
 
-## 1. 取得启动参数
+## 启动
 
-在宿主执行工具中运行以下命令。脚本路径从本技能目录解析；其余值来自这次 `preferences.mjs check`。传入第 1 步选定的路由、改写模式，以及当前任务的 `--no-history`、`--turns-back N`、`--selection` 或 `--selection-only`。
+1. 使用 `check.agy_path` 指向的官方程序。先运行 `node "<技能>/scripts/acp_workspace.mjs" --cwd "<原项目>" --trigger auto|explicit`；只发选段时加 `--selection-only`，模型查询或握手测试则只传 `--catalog`。保存返回的 `workspace`、`editor_role_file`、`cleanup_token`。临时目录包含本次编辑角色。
+2. 如果宿主直接提供能读写标准流的进程工具，在 `workspace` 中启动参数数组 `[agy_path, "acp", "--agent", "codex-polish-editor", "--sandbox"]`。保留可写 stdin、原始 stdout 和进程退出句柄，stderr 单独读，子进程环境移除 `OPENAI_API_KEY`。例如宿主已暴露的 Codex `command/exec` 可用 `processId`、`tty:false`、`streamStdin:true`、`streamStdoutStderr:true`，向同一进程用 `command/exec/write` 写 UTF-8 字节。只使用当前宿主已经提供的工具。
+3. 如果宿主提供的是 `exec_command` / `write_stdin`，在 macOS/Linux 用 `shell:"/bin/sh", login:false, tty:true, workdir:workspace` 执行下面的命令。将占位路径替换为实际路径，用 shell 单引号正确转义。保留返回的 `session_id`；每一帧用 `write_stdin` 直接写到这个句柄，并从同一个句柄读回复。Windows 使用[直接终端步骤](acp-windows.md)。宿主缺少可持续写入的直接进程工具时，说明限制并交付原稿。
 
 ```sh
-node "<本技能>/scripts/acp_workspace.mjs" --cwd "<原项目>" --trigger "<auto 或 explicit>" --agy-path "<agy_path>" --auth "<google_auth_method>" --model "<gemini_model>" --route "<acp 或 decisions>" --rewrite-mode "<rewrite_mode>" --display "<zh、en 或 body-only>"
+unset OPENAI_API_KEY
+stty -icanon -echo -ixon -icrnl -onlcr isig intr '^C' min 1 time 0 && exec '/absolute/path/to/agy' acp --agent codex-polish-editor --sandbox
 ```
 
-按本轮答复选择中文或英文展示；用户明确要求仅正文或严格格式时才选 `body-only`。无历史索引且无法确认整条原文是 GPT 原稿时加 `--quoted-source`。**把准备脚本返回的整个 `start` 对象原样作为宿主 `exec_command` 参数执行一次**。保存宿主返回的进程句柄 `session_id`。启动时和后面空读时，都处理返回的输出。
+## 握手、选择模型和档位
 
-## 2. 按输出逐步操作
+每帧是一行 UTF-8 JSON 加一个 LF。用宿主的序列化器生成字符串。持续收集写入和空读返回的输出，按行解析，保留下一次才收全的尾行，直到收到本次请求的响应。流式字节使用连续的 UTF-8 解码器。留足输出预算，保证工具不会截掉原始响应。若已截断、JSON 损坏或进程异常退出，交付原稿；不要重发草稿。
 
-每行是一个完整的操作提示。输出不全时用 `write_stdin` 对同一宿主句柄传 `chars: ""` 继续读，留足输出预算（例如 `max_output_tokens: 32000`）。有多行就依次处理；运行中的空读表示仍在等待。
+| id | 请求 | 如何使用响应 |
+| --- | --- | --- |
+| 1 | `initialize`，参数 `{"protocolVersion":1,"clientCapabilities":{}}` | 确认 `result.protocolVersion === 1`，记录是否支持 `session/close`。仅测试握手可在这里结束。 |
+| 2 | 仅显式配置 API 或企业身份时发送 `authenticate`，参数 `{"methodId":"<google_auth_method>"}` | 所选方法须在 `authMethods` 中。默认 `existing-session` 直接进入下一步。 |
+| 3 | `session/new`，参数 `{"cwd":"<workspace>","mcpServers":[]}` | 保存返回的 `sessionId` 和 `configOptions`。 |
+| 4 | 若目标模型与当前值不同，发送 `session/set_config_option`，参数 `{sessionId, configId, value}` | 使用 category 为 `model` 的选择器实际 ID，value 为目标模型。以成功响应里的配置确认模型并读取该模型的档位。 |
+| 5 | 若目标档位与当前值不同，同样发送 `session/set_config_option` | 使用该模型 `thought_level` 选择器的实际 ID 和已保存的档位。两项均确认后才可发送草稿。保存为 `fixed` 的模型须无档位选择器。 |
 
-| `event` | 当前 agent 的下一步 |
-| --- | --- |
-| `send` | 把该行的 **`exec` 对象原样交给 `exec_command`**。命令会把这一帧送到 `agy` 的标准输入。然后空读原进程句柄。 |
-| `submit` | 目标模型已选中。按第 3 步原样执行这一行的 `exec`，通过独立的材料输入句柄提交唯一的一份草稿。 |
-| `delivery` | 将 `markdown` 原样作为最终回复发送。里面已经包含本轮的展示格式。 |
-| `answer_pages` | 最终 Markdown 已排好。用 `exec_command` 执行该行的 `exec` 读取第一页，然后依次执行每页的 `next`。顺序拼接各页的 `text`，不加分隔符。读到 `next: null` 就发送。 |
-| `catalog` | 模型查询已完成，使用 `models` 列表，按第 4 步结束。 |
-| `error` | 保留原稿，按 `stage` 和 `reason` 说明失败在哪一步。若工具已报告沙箱限制联网或访问登录凭据，向用户说明这项限制。 |
-| `closed` | 官方会话已关闭。已取得的交付结果仍然有效。 |
+例如第一帧是 `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{}}}`。服务端通知可与响应同时到达；协议请求的 id 由请求方指定。遇到 `session/request_permission`，用原请求 id 直接返回 `{"outcome":{"outcome":"cancelled"}}` 作为 `result`；其他不支持的服务端请求返回 JSON-RPC 错误 `-32601`。不执行 Gemini 请求的本地工具。
 
-`send` 会依次提示初始化、按需认证、创建会话、按需选模。默认 `existing-session` 复用 `agy` 登录，显式 API 身份使用所选认证方法；思考档位沿用账号当前设置。遇到服务端的工具或权限请求，`send` 提供本次请求的拒绝响应。**每一帧都用本轮返回的宿主命令发送。对 `start` 进程句柄，`write_stdin` 只做空读；仅在 macOS 和 Linux 需要中断退出时才向 `start` 的终端句柄（`tty: true`）发送 Ctrl-C，切勿对 Windows 的非 TTY `start` 句柄发 Ctrl-C。** 勿自行改用普通管道或终端输入，否则进程可能立即退出，或长文被终端截断。
+**查询模型**只需第 3 步的模型列表；查询指定模型的档位，可以执行第 4 步，读取选定模型的 `configOptions` 后即结束。无需更改档位或发送草稿。安装时按安装器的请求返回真实响应。模型或档位不在对应选项中时，说明原因。
 
-## 3. 提交改写
+## 改写与交付
 
-将 `submit.exec` 原样交给宿主 `exec_command`。这会打开一个单独的材料输入句柄。读到 `input_ready` 后，用 `write_stdin` 将一行 UTF-8 JSON 加一个换行发给**这个新句柄**。它已绑定正确的 ACP 会话和本轮设置，不需要再拼协议帧或 shell 命令。
+用本地 `scripts/acp_payload.mjs --host-input --cwd "<原项目>" --editor-role-file "<editor_role_file>" --trigger <trigger> --route <route> --rewrite-mode <mode> --model <model> --thinking-level <level>` 准备请求。带上本轮的 `--no-history`、`--turns-back N`、`--selection` 或 `--selection-only`。通过该离线工具自己的输入句柄传 `{sessionId, question, draft}` 或 `{sessionId, selection}`。主动请求可带 `rewrite_request`，只发选段时省略。
 
-完整答复传 `{"question":"原问题","draft":"完整原稿"}`。选段传 `{"selection":"所选文字"}`。普通选段或主动改写可传 `rewrite_request`；只发原文时省略它。使用 JSON 序列化器；例如 `chars: JSON.stringify({question, draft}) + "\n"`。长文可分几次写，最后一次才追加换行。等材料输入句柄退出，状态码为 0 表示这一帧写入完成。
+1. 拼好离线工具返回的完整请求，使用宿主写入工具把这行原样发给 **agy 的句柄**，只在末尾追加一个 LF。长帧可按完整 Unicode 字符分块，只在最后一块追加 LF。不要重新输入、转述或重写材料。
+2. 保存从提交后开始收到的完整协议输出，包含各行的换行，持续读到 id 6 的终止响应。中途收到权限请求时用 agy 的句柄直接回应。其他会话或模型思考文本不得当作润色正文。
+3. 在本地运行 `scripts/acp_answer.mjs --host-input --cwd "<原项目>" --session-id "<sessionId>" --model <model> --thinking-level <level>`。选段时加 `--selection`，旧回答用 `--turns-back N`。传 `{draft, question?, output, display_language?, source_label?}`；这里的 `draft` 是实际提交的原稿（选段即选中的文字），`output` 是宿主已经收到的 id 6 阶段原始输出。常规展示传 `zh` 或 `en`；只要正文时省略 `display_language`。来源不明的可见原文传 `source_label:"quoted"`。该工具只在收到本会话非空正文且 id 6 返回 `end_turn` 时排版。按原文交付最终 Markdown。
+4. 两个离线工具均可用普通 stdin 或带 `--host-input` 的独立终端。后一种等 `input_ready` 后输入单行 JSON 和 LF。结果是 `{text, more}`；若 `more:true`，等下一次 `input_ready`，在**离线工具**句柄输入空行取下一页，按顺序直接拼接各页的 `text`。将字符串和工具返回值保留在宿主调用环境中，避免把草稿、协议流写入命令、项目文件或聊天进度消息。
 
-提交成功后空读宿主句柄直到 `delivery` 或 `answer_pages`。从 `send` 收到的配置和服务端请求照常处理。提交失败、结果不明或输出被截断时按本轮故障保留原稿，勿重发。出现权限请求后服务端可能继续返回正文，以最终状态决定交付。
+## 结束或取消
 
-## 4. 结束与交付
+取消正在生成的回复时，agent 在 agy 的句柄发送 `{"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"<sessionId>"}}`。无论成功、失败、取消或仅查询，均结束**本次**进程。有会话且提供 `session/close` 时发送 id 7 和该 sessionId，随后通过宿主关闭 stdin 或终止该进程。macOS/Linux PTY 发送 Ctrl-C，并等进程退出；Windows 参照终端步骤。最后从临时目录外运行 `node "<技能>/scripts/acp_workspace.mjs" --dispose "<workspace>" "<cleanup_token>"`。
 
-读完最终 Markdown（含长回复的最后一页）或收到 `catalog` 后，宿主命令会自行回收子进程和本轮目录。**正常进行到 `delivery`（或读完 `answer_pages` 最后一页）和 `catalog` 时无需再调工具或发中断**。宿主报告句柄已经退出时，已收到的结果仍然有效。
-
-若用户在生成时取消，Windows 上原样执行 `submit.cancel`，若进程仍在运行再执行 `submit.stop`（等待建立会话期间取消则执行最近的 `send.stop`，切勿对 Windows 非 TTY 句柄发 Ctrl-C）。macOS 或 Linux 上有可用会话时，先向准备脚本返回结果里的 `fifo` 路径写入一行 `{"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"<本轮 ACP sessionId>"}}`，再对 `start` 的终端句柄发送 Ctrl-C 结束进程。连接中断时只处理已确认的结果。
-
-## 只看模型或检查连接
-
-使用 `node "<本技能>/scripts/acp_workspace.mjs" --catalog --agy-path "<agy_path>" --auth "<google_auth_method>"` 准备内置角色。仍然原样执行 `start` 和每条 `send.exec`，都不提交草稿。查询模型运行到 `catalog` 为止，收到 `catalog` 后进程与临时目录会自动回收（若返回 `catalog.finish` 也可执行以立即关闭会话）。若只测试 `initialize` 握手并在收到下一步提示后提前退出（未继续到 `catalog`），Windows 上用 `exec_command` 原样执行最近一条 `send.stop`，不要对非 TTY 的 `start` 句柄发 Ctrl-C；macOS 和 Linux 上对 `start` 的终端句柄发送 Ctrl-C 触发回收。安装器会单独提供 `--catalog-log` 的绝对路径，以便核对真实返回的模型列表。
-
-[Google ACP 与认证](https://antigravity.google/docs/ide/extensions/acp) · [ACP 传输](https://agentclientprotocol.com/protocol/v1/transports) · [会话配置](https://agentclientprotocol.com/protocol/v1/session-config-options) · [生成与取消](https://agentclientprotocol.com/protocol/v1/prompt-turn)
+[ACP 标准流](https://agentclientprotocol.com/protocol/v1/transports) · [会话配置](https://agentclientprotocol.com/protocol/v1/session-config-options) · [生成与取消](https://agentclientprotocol.com/protocol/v1/prompt-turn)

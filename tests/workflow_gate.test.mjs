@@ -212,6 +212,8 @@ test('explicit requests honor the project switch and runtime checks independentl
   const { invoke, judge, calls, mode, agy } = fixture(t);
   const setting = invoke(['set-rewrite-mode', 'normal'])[1].file;
   assert.equal(judge('explicit', ['--model', 'unselected-model'])[1].reason, 'gemini_model_changed');
+  assert.equal(judge('explicit', ['--thinking-level', 'high'])[1].reason, 'thinking_level_changed');
+  assert.equal(judge('explicit', ['--thinking-level', 'medium'])[1].action, 'rewrite');
   assert.equal(fs.readFileSync(setting, 'utf8'), 'normal\n');
   for (const [value, reason] of [['off', 'project_mode'], ['broken', 'mode_invalid']]) {
     fs.writeFileSync(mode, value);

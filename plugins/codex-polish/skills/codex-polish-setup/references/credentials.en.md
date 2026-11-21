@@ -4,7 +4,7 @@
 
 Run interactive `setup` from any folder on the machine running Codex, or double-click the macOS Finder launcher. On first setup, use **↑ / ↓** and **Enter** to choose the automatic rewrite mode. With the built-in prompt, **Normal** can keep a clear draft and supports the optional OpenAI Decisions API check. **Turbo** skips the check and asks Gemini to rewrite the draft.
 
-Once `agy` is available, you can keep **Gemini 4 Hydrogen** or choose from your Antigravity account. Only the live model lookup opens a temporary `codex exec` session and calls `agy acp`. Your choices apply across projects in this Codex profile. To override one in a single project, ask to change its mode or model in that project’s chat.
+Once `agy` is available, pick a Gemini model and a thinking level. The default is **Gemini 4 Hydrogen with Medium thinking**. You can also browse your Antigravity account’s other models and choose a level the selected model supports. Setup saves your choice for all projects in this Codex profile. To adjust it for one project, say “Use High thinking for Gemini in this project.”
 
 ## Use your Antigravity sign-in
 
@@ -14,7 +14,7 @@ Once `agy` is available, you can keep **Gemini 4 Hydrogen** or choose from your 
 
 Say **“Only polish when I ask”** for manual mode or **“Turn off Codex Polish”** to disable polishing. “Polish this reply” uses Turbo and sends the draft directly to Gemini. Before you trust the hook, the request omits earlier exchanges. The default setup works without API keys. If Codex runs on a remote machine, follow these steps there.
 
-Say **“Check Codex Polish setup”** to inspect the local configuration and **“Test the ACP connection”** to check the live connection. **“Choose a rewrite model”** lists the models your account can use. Neither live check sends a draft.
+Say **“Check Codex Polish setup”** to inspect the local configuration and **“Test the ACP connection”** to check the live connection. **“Choose a rewrite model”** shows your account’s models and the thinking levels available for the model you pick. Neither live check sends a draft.
 
 If `agy` works in your terminal but the chat reports a failure at `session/new`, try **“Choose a rewrite model”** in that same chat. If the host reports blocked network access or a denied write to the Antigravity sign-in file, check the permissions for that session. Trusting the hook enables the automatic trigger.
 

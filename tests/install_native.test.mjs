@@ -184,6 +184,7 @@ nativeTest('uninstall clears the saved OpenAI key, global prompt, profile defaul
   const status = () => JSON.parse(set('check', '--profile'));
   assert.equal(status().decisions_enabled, false);
   assert.equal(status().openai_key_configured, false);
+  assert.equal(status().gemini_thinking_level, 'medium');
   const credentials = pathToFileURL(join(dirname(script), 'openai_credentials.mjs')).href;
   invoke(process.execPath, ['--input-type=module', '-e',
     `import {saveOpenAIKey} from ${JSON.stringify(credentials)}; saveOpenAIKey('sk-test-isolated-install');`]);
@@ -192,7 +193,8 @@ nativeTest('uninstall clears the saved OpenAI key, global prompt, profile defaul
   fs.mkdirSync(first);
   fs.mkdirSync(second);
   set('set-rewrite-mode', 'turbo', '--profile');
-  set('set-model', 'gemini-4-hydrogen', '--profile');
+  set('set-model', 'gemini-4-hydrogen', '--thinking-level', 'high', '--profile');
+  assert.equal(status().gemini_thinking_level, 'high');
   set('set-mode', 'manual', '--cwd', first);
   const { file: promptFile } = JSON.parse(invoke(process.execPath, [script, 'set-prompt', '--profile'], { input: 'Use short sentences.' }));
   set('set-history-turns', '4', '--cwd', second);

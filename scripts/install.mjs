@@ -15,13 +15,13 @@ import { isDeepStrictEqual } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { executable, windows, agyDirectory, windowsSystemTool, openRegular, sameEntry } from '../plugins/codex-polish/hooks/platform.mjs';
 import { languageSettings, systemLanguage, tr as translate } from '../plugins/codex-polish/hooks/ui_locale.mjs';
-import { DEFAULT_GEMINI_MODEL, MODEL_FILE, findAgy, validModelId, runtimeStatus, projectSettings } from '../plugins/codex-polish/hooks/preferences.mjs';
+import { DEFAULT_GEMINI_MODEL, DEFAULT_THINKING_LEVEL, MODEL_FILE, findAgy, runtimeStatus, projectSettings, saveModelSelection } from '../plugins/codex-polish/hooks/preferences.mjs';
 import { REWRITE_MODE_FILE, REWRITE_MODES } from '../plugins/codex-polish/hooks/rewrite_mode.mjs';
 import { accessProjectSetting, PROMPT_FILE, readProfileSetting, writeProfileDefault } from '../plugins/codex-polish/hooks/project_setting.mjs';
 import { readOpenAIKey, saveOpenAIKey, clearOpenAIKey } from '../plugins/codex-polish/hooks/openai_credentials.mjs';
 import { cleanupProjectSettings } from '../plugins/codex-polish/hooks/owned_settings.mjs';
 import { removeProfileCache, sqliteModule } from '../plugins/codex-polish/hooks/recovery.mjs';
-import { sessionCatalog } from '../plugins/codex-polish/skills/codex-polish/scripts/acp_models.mjs';
+import { MAX_CONFIG_FRAME_BYTES, sessionCatalog } from '../plugins/codex-polish/skills/codex-polish/scripts/acp_models.mjs';
 import { preserve } from './native_cache.mjs';
 
 export const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -53,9 +53,10 @@ export class SetupError extends Error {}
 function statMaybe(path) {
   return fs.lstatSync(path, { throwIfNoEntry: false });
 }
-function readPlain(path) {
+function readPlain(path, maxBytes) {
   const fd = openRegular(path);
   try {
+    if (maxBytes !== undefined && fs.fstatSync(fd).size > maxBytes) throw new RangeError('File is too large');
     return fs.readFileSync(fd);
   } finally {
     fs.closeSync(fd);
@@ -921,10 +922,10 @@ function readChecks(cwd = process.cwd()) {
   return checks;
 }
 
-function saveSetupDefault(file, value) {
+function saveSetupRewriteMode(value) {
   try {
-    if (file === MODEL_FILE ? !validModelId(value) : !REWRITE_MODES.includes(value)) throw new Error('invalid choice');
-    writeProfileDefault(file, value);
+    if (!REWRITE_MODES.includes(value)) throw new Error('invalid choice');
+    writeProfileDefault(REWRITE_MODE_FILE, value);
   } catch {
     throw new SetupError(tr('无法保存默认设置。请检查 Codex 用户目录的写入权限。',
       'Could not save your defaults. Check write access to your Codex profile.', systemLanguage()));
@@ -1170,8 +1171,8 @@ async function* terminalKeys(input, output, show) {
     output.write('\n');
   }
 }
-async function chooseOption(title, options, lang, input = process.stdin, output = process.stdout) {
-  let selected = 0;
+async function chooseOption(title, options, lang, input = process.stdin, output = process.stdout, initialChoice) {
+  let selected = Math.max(0, options.findIndex(option => option.id === initialChoice));
   function draw() {
     for (const [index, option] of options.entries()) {
       clearLine(output, 0);
@@ -1282,26 +1283,26 @@ export function chooseSetupMode(lang, input, output) {
   ], lang, input, output);
 }
 
-export async function discoverSetupModels(checks) {
+export async function discoverSetupModels(checks, model) {
   const workspace = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), 'codex-polish-models-')));
   try {
     if (windows) {
       const { secureDirectory } = await import('../plugins/codex-polish/skills/codex-polish/scripts/acp_windows_io.mjs');
       secureDirectory(workspace);
     }
-    const skill = join(ROOT, PRODUCT, 'skills/codex-polish');
+    const reference = join(ROOT, PRODUCT, 'skills/codex-polish/references/acp.md');
+    const lastMessage = join(workspace, 'catalog.json');
     const task = [
-      'Discover the Gemini models available to this account. This is a metadata lookup. Do not send a prompt to Gemini.',
-      'Use your own execution tools to directly hold and drive the official agy acp process. Do not run an ACP client script.',
-      'Follow the catalog steps in ' + JSON.stringify(join(skill, 'references/acp.md')) + '.',
+      'Look up the Gemini models available to this account. Read the direct ACP catalog instructions in ' + JSON.stringify(reference) + '.',
       'The official agy executable is ' + JSON.stringify(checks.agy_path) + ' and the authentication mode is ' + JSON.stringify(checks.google_auth_method) + '.',
-      'Run the workspace preparer ' + JSON.stringify(join(skill, 'scripts/acp_workspace.mjs')) +
-        ' using node, with --catalog, the supplied --agy-path and --auth, and --catalog-log ' + JSON.stringify(join(workspace, 'acp-frames.jsonl')) + '.',
-      'Execute its start options unchanged. Execute each send.exec in your host tools, then read the same session for the next event. On catalog, finish and stop. The passive decoder records the actual session/new response for the installer. Do not write the catalog file yourself. If lookup fails, stop.'
+      'Use exec_command to open the official agy acp process yourself. Send each JSON-RPC line directly to its own terminal with write_stdin and read replies from the same handle. No scripts, pipes or relays may operate the connection.',
+      'Use request ID 3 for session/new. Only read configuration metadata. Do not submit a prompt to Gemini.',
+      model ? 'Select ' + JSON.stringify(model) + ' with session/set_config_option (request ID 4) if it is not already the current model. Read the configOptions for that model.' : 'Use the model list in the session/new reply.',
+      'Close the session and process. Return the single successful JSON-RPC response containing the requested configOptions as JSON in your final answer. Preserve the provider’s option IDs, labels, current values and options. No Markdown. If the lookup failed or the complete response is unavailable, return null.'
     ].join('\n');
     const cli = codexCommand();
     const child = spawn(cli.command, [...cli.args, 'exec', '--ephemeral', '--skip-git-repo-check', '-C', workspace,
-      '-c', 'plugins."codex-polish@codex-polish-local".enabled=false', task], { cwd: workspace, stdio: 'ignore' });
+      '-c', 'plugins."codex-polish@codex-polish-local".enabled=false', '--output-last-message', lastMessage, task], { cwd: workspace, stdio: 'ignore' });
     const interrupt = () => child.kill('SIGINT');
     const terminate = () => child.kill('SIGTERM');
     process.once('SIGINT', interrupt);
@@ -1313,37 +1314,73 @@ export async function discoverSetupModels(checks) {
       process.off('SIGINT', interrupt);
       process.off('SIGTERM', terminate);
     }
-    if (code !== 0) return [];
-    for (const line of readPlain(join(workspace, 'acp-frames.jsonl')).toString('utf8').split('\n')) {
-      if (!line.trim()) continue;
-      const frame = JSON.parse(line);
-      if (frame.id === 3 && !frame.method) return sessionCatalog(line, 3n).models;
+    if (code !== 0) return null;
+    try {
+      const line = readPlain(lastMessage, MAX_CONFIG_FRAME_BYTES).toString('utf8').trim();
+      const id = JSON.parse(line)?.id;
+      if (id !== 3 && !(model && id === 4)) return null;
+      const result = sessionCatalog(line, BigInt(id));
+      return !model || result.current_model === model ? result : null;
+    } catch {
+      return null;
     }
-    return [];
   } finally {
     fs.rmSync(workspace, { force: true, recursive: true });
   }
 }
 
-export async function chooseSetupModel(checks, lang, input, output, discover = discoverSetupModels) {
-  const choose = (title, rows) => chooseOption(title, rows, lang, input, output);
+const thinkingLabels = {
+  low: ['低', 'Low'], medium: ['中', 'Medium'], high: ['高', 'High'], xhigh: ['极高', 'Extra High'],
+  fixed: ['由模型固定', 'Fixed by the model']
+};
+
+export async function chooseSetupModel(checks, lang, input = process.stdin, output = process.stdout, discover = discoverSetupModels) {
+  const choose = (title, rows, initial) => chooseOption(title, rows, lang, input, output, initial);
+  const t = (zh, en) => tr(zh, en, lang);
+  const lookup = async (model) => {
+    output.write(t('正在查询 Antigravity…', 'Checking Antigravity…') + '\n');
+    try { return await discover(checks, model); } catch { return null; }
+  };
   const choice = await choose(tr('选择改写用的 Gemini 模型', 'Choose the Gemini model for rewrites', lang), [
     { id: 'default', name: tr('Gemini 4 Hydrogen（默认）', 'Gemini 4 Hydrogen (default)', lang) },
     { id: 'lookup', name: tr('让 Codex 查询我账号的可用模型…', 'Ask Codex to list models available to my account…', lang) }
   ]);
-  if (choice !== 'lookup') return choice === 'default' ? DEFAULT_GEMINI_MODEL : null;
-  console.log(tr('Codex 正在通过 Antigravity 获取模型列表…', 'Codex is reading the model list from Antigravity…', lang));
-  let models;
-  try { models = await discover(checks); } catch { /* Report failed lookup below. */ }
-  if (!Array.isArray(models) || !models.length) {
-    console.log(tr('没能读取模型。稍后在 Codex 里说「选择改写模型」可重试。',
-      'Couldn’t read the model list. Say “Choose a rewrite model” in Codex to retry.', lang));
-    return null;
+  if (!choice) return null;
+  let model = DEFAULT_GEMINI_MODEL;
+  let levels = ['low', 'medium', 'high', 'xhigh'].map(id => ({ id }));
+  let current;
+  if (choice === 'lookup') {
+    const account = await lookup();
+    if (!account?.models?.length) {
+      output.write(t('没能读取模型。稍后在 Codex 里说「选择改写模型」可重试。',
+        'Couldn’t read the model list. Say “Choose a rewrite model” in Codex to retry.') + '\n');
+      return null;
+    }
+    const rows = account.models.map(({ id, name }) => ({
+      id, name: account.models.some(other => other.id !== id && other.name === name) ? name + ' (' + id + ')' : name
+    }));
+    model = await choose(t('用哪个模型改写？', 'Which model should rewrite your replies?'), rows);
+    if (!model) return null;
+    const selected = account.current_model === model ? account : await lookup(model);
+    if (selected?.current_model !== model || !Array.isArray(selected.thinking_levels)) {
+      output.write(t('没能读取这个模型的思考等级。稍后在 Codex 里说「选择改写模型」可重试。',
+        'Couldn’t read this model’s thinking levels. Say “Choose a rewrite model” in Codex to retry.') + '\n');
+      return null;
+    }
+    levels = selected.thinking_levels;
+    current = selected.current_thinking_level;
+    if (!levels.length) {
+      output.write(t('这个模型的思考等级固定。', 'This model has a fixed thinking level.') + '\n');
+      return { model, thinkingLevel: 'fixed' };
+    }
   }
-  const rows = models.map(({ id, name }) => ({
-    id, name: models.some(model => model.id !== id && model.name === name) ? name + ' (' + id + ')' : name
-  }));
-  return choose(tr('用哪个模型改写？', 'Which model should rewrite your replies?', lang), rows);
+  const rows = levels.map(({ id, name }) => {
+    const label = Object.hasOwn(thinkingLabels, id) ? t(...thinkingLabels[id]) : name;
+    return { id, name: id === DEFAULT_THINKING_LEVEL ? label + t('（默认）', ' (default)') : label };
+  });
+  const initial = rows.some(row => row.id === DEFAULT_THINKING_LEVEL) ? DEFAULT_THINKING_LEVEL : current;
+  const thinkingLevel = await choose(t('思考等级', 'Thinking level'), rows, initial);
+  return thinkingLevel ? { model, thinkingLevel } : null;
 }
 
 export async function showSetupGuidance({
@@ -1351,8 +1388,8 @@ export async function showSetupGuidance({
   dependencyOnly = false,
   interactive = process.stdin.isTTY && process.stdout.isTTY,
   check = () => readChecks(null),
-  saveRewriteMode = mode => saveSetupDefault(REWRITE_MODE_FILE, mode),
-  saveModel = model => saveSetupDefault(MODEL_FILE, model),
+  saveRewriteMode = saveSetupRewriteMode,
+  saveModel = ({ model, thinkingLevel }, lang) => saveModelSelection(null, model, thinkingLevel, lang),
   chooseMode = chooseSetupMode,
   chooseModel = chooseSetupModel,
   offerOpenAI = lang => manageOpenAI(lang, { onboarding: true }),
@@ -1422,9 +1459,9 @@ export async function showSetupGuidance({
     console.log(tr('已找到 agy，直接使用现有安装。', 'Found agy. Your existing installation will be used.', lang));
   if (dependencyOnly) return true;
   if (interactive && checks.gemini_model_configured === false && checks.agy_available && !checks.blockers.includes('agy_unsupported')) {
-    const model = await chooseModel(checks, lang);
-    if (model) {
-      await saveModel(model);
+    const selected = await chooseModel(checks, lang);
+    if (selected) {
+      await saveModel(selected, lang);
       checks = check();
     }
   }
@@ -1455,7 +1492,9 @@ export function doctor(checks = readChecks()) {
   const lines = [
     tr('润色时机：', 'When to polish: ', lang) + tr(...(modes[checks.mode] ?? ['设置无效', 'invalid setting']), lang),
     tr('自动润色的改写模式：', 'Automatic rewrite mode: ', lang) + (checks.rewrite_mode || tr('设置无效', 'invalid setting', lang)),
-    tr('项目改写模型：', 'Rewrite model: ', lang) + (checks.gemini_model || tr('设置无效', 'invalid setting', lang))
+    tr('项目改写模型：', 'Rewrite model: ', lang) + (checks.gemini_model || tr('设置无效', 'invalid setting', lang)),
+    tr('思考等级：', 'Thinking level: ', lang) + (Object.hasOwn(thinkingLabels, checks.gemini_thinking_level)
+      ? tr(...thinkingLabels[checks.gemini_thinking_level], lang) : checks.gemini_thinking_level || tr('设置无效', 'invalid setting', lang))
   ];
   if (checks.rewrite_mode && checks.decisions_mode !== null) lines.push(decisionsSummary(checks, lang));
   const turns = checks.history_turns;

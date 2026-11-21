@@ -217,12 +217,51 @@ test('bare, body-only and detached quoted sources keep neutral attribution', t =
   begin('quote', 'Use just the selected sentence.');
   assert.deepEqual(json(previous()), { question, draft: candidate, source_label: 'quoted' });
   const quotation = display({ draft, candidate: draft, source_label: 'gpt', display_language: 'zh' }, '--selection');
-  assert.equal(quotation, '**Gemini 返回了原文** <!-- codex-polish -->\n\n' + draft);
+  assert.equal(quotation, '**Gemini 返回了原文**\n\n' + draft);
   end(quotation);
   begin('next', 'Again.');
   assert.deepEqual(json(previous()), { selection: draft });
   assert.equal(previous(1,'--require-gpt').status, 1);
 });
+
+for (const [status, heading] of [
+  ['skipped', '**Polishing skipped** · Service unavailable.'],
+  ['unchanged', '**Gemini returned the original draft**'],
+]) {
+  test(`history recognizes ${status} headings only with a matching formatted delivery`, t => {
+    const { begin, end, display, previous, gemini } = conversation(t);
+    const question = 'What happened to my request?';
+    const draft = 'Your request was saved.\n';
+    begin('generated', question);
+    const formatted = status === 'skipped'
+      ? display({ draft, reason: 'Service unavailable.', display_language: 'en' }, '--skipped')
+      : display({ draft, candidate: draft, display_language: 'en' });
+    assert.equal(formatted, heading + '\n\n' + draft);
+    end(formatted);
+
+    const literalQuestion = 'Quote the entire example.';
+    begin('literal', literalQuestion);
+    assert.deepEqual(json(previous(1, '--require-gpt')), { question, draft, source_label: 'gpt', turns_back: 1 });
+    end(display({ draft: formatted, candidate: formatted }, '--selection'));
+
+    const ordinaryQuestion = 'Type the same example.';
+    begin('ordinary', ordinaryQuestion);
+    assert.deepEqual(json(previous()), { selection: formatted });
+    assert.equal(previous(1, '--require-gpt').status, 1);
+    assert.deepEqual(gemini({ question: ordinaryQuestion, draft: formatted }).history, [
+      { user: question, assistant: draft }, { user: literalQuestion, assistant: formatted },
+    ]);
+    end(formatted);
+
+    const next = { question: 'Review the example.', draft: 'The example is complete.' };
+    begin('review', next.question);
+    assert.deepEqual(json(previous()), { selection: formatted });
+    assert.equal(previous(1, '--require-gpt').status, 1);
+    assert.deepEqual(gemini(next).history, [
+      { user: literalQuestion, assistant: formatted }, { user: ordinaryQuestion, assistant: formatted },
+    ]);
+  });
+}
 
 test('changed delivery, a stale formatter target or an expired reference cannot attach another question', t => {
   const { begin, end, display, previous, sql } = conversation(t);

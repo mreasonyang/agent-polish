@@ -39,7 +39,7 @@ export class Fixture {
     if (this.scenario !== 'no-hydrogen') models.push(['gemini-4-hydrogen', 'Gemini 4 Hydrogen']);
     const options = [selectOption('model','model','Model',this.model,models)];
     if (this.model === 'gemini-4-hydrogen') options.push(selectOption('thought_level','thought_level','Thinking level',
-      this.thinking,[['high','High'],['low','Low']]));
+      this.thinking,[['high','High'],['medium','Medium'],['low','Low'],['xhigh','Extra']]));
     return options;
   }
 

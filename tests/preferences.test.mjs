@@ -77,13 +77,14 @@ test('a project model override can be reset to the default', t => {
   const { project, cwd, check, call } = fixture(t);
   const def = 'gemini-4-hydrogen';
   assert.equal(check().gemini_model, def);
+  assert.equal(check().gemini_thinking_level, 'medium');
   assert.equal(check().gemini_model_configured, false);
   assert.equal(fs.existsSync(path.join(cwd, '.codex')), false);
   const parent = json(call(['set-model', 'models/gemini-2.5-pro'], { where: project }));
   assert.equal(check().gemini_model, 'models/gemini-2.5-pro');
   if (!windows) assert.equal(fs.statSync(parent.file).mode & 0o777, 0o600);
   const child = json(call(['set-model', 'MODEL_PLACEHOLDER_M8']));
-  assert.equal(check().gemini_model, 'MODEL_PLACEHOLDER_M8'); assert.equal(fs.readFileSync(child.file, 'utf8'), 'MODEL_PLACEHOLDER_M8\n');
+  assert.equal(check().gemini_model, 'MODEL_PLACEHOLDER_M8'); assert.equal(fs.readFileSync(child.file, 'utf8'), 'MODEL_PLACEHOLDER_M8 medium\n');
   assert.equal(json(call(['set-model', '--reset'])).gemini_model, def); assert.equal(check().gemini_model, def);
   assert.equal(child.file, parent.file);
   assert.equal(check({ where: project }).gemini_model, def);
@@ -98,16 +99,18 @@ test('profile settings work without a project, stay isolated by profile, and yie
   const key = 'synthetic-key-only-in-the-environment';
   const profile = (args, other = {}) => run(preferences, [...args, '--profile'], { cwd, env: { ...env, OPENAI_API_KEY: key, ...other } });
   const mode = json(profile(['set-rewrite-mode', 'turbo']));
-  const model = json(profile(['set-model', 'gemini-4-argon']));
+  const model = json(profile(['set-model', 'gemini-4-argon', '--thinking-level', 'high']));
   assert.equal(path.dirname(mode.file), path.join(env.CODEX_HOME, 'codex-polish', 'settings'));
   assert.equal(fs.readFileSync(mode.file, 'utf8'), 'turbo\n');
-  assert.equal(fs.readFileSync(model.file, 'utf8'), 'gemini-4-argon\n');
+  assert.equal(fs.readFileSync(model.file, 'utf8'), 'gemini-4-argon high\n');
   assert.deepEqual(fs.readdirSync(path.dirname(mode.file)).sort(), ['codex-polish.model', 'codex-polish.rewrite-mode']);
   assert.equal(check().gemini_model, 'gemini-4-argon');
+  assert.equal(check().gemini_thinking_level, 'high');
   assert.equal(check().rewrite_mode, 'turbo');
   json(call(['set-model', 'gemini-4-neon']));
   json(call(['set-rewrite-mode', 'normal']));
   assert.equal(check().gemini_model, 'gemini-4-neon');
+  assert.equal(check().gemini_thinking_level, 'medium');
   assert.equal(check().rewrite_mode, 'normal');
   const defaults = json(profile(['check']));
   assert.equal(defaults.gemini_model, 'gemini-4-argon');
@@ -120,10 +123,12 @@ test('profile settings work without a project, stay isolated by profile, and yie
   assert.equal(json(profile(['set-rewrite-mode', '--reset'])).rewrite_mode, 'normal');
   assert.equal(check().rewrite_mode, 'normal');
   assert.equal(json(call(['set-model', '--reset'])).gemini_model, 'gemini-4-argon');
+  assert.equal(check().gemini_thinking_level, 'high');
   assert.equal(json(profile(['check'], { CODEX_HOME: path.join(env.CODEX_HOME, 'other') })).rewrite_mode, 'normal');
   assert.equal(profile(['set-model', 'invalid id']).status, 1);
   assert.notEqual(profile(['set-model', 'gemini-4-hydrogen', '--cwd', cwd]).status, 0);
   assert.equal(json(profile(['set-model', '--reset'])).gemini_model, 'gemini-4-hydrogen');
+  assert.equal(check().gemini_thinking_level, 'medium');
 });
 
 test('invalid ids preserve model; corrupt settings block rewrites; links are handled safely', t => {
@@ -132,7 +137,15 @@ test('invalid ids preserve model; corrupt settings block rewrites; links are han
   const { file } = json(call(['set-model', 'gemini-example']));
   for (const args of [[], ['--reset', 'gemini-other'], ['gemini-a b'], ['gemini-1\nreset'], ['models/../secret'], ['a'.repeat(257)], ['gemini-私密']]) {
     assert.notEqual(call(['set-model', ...args]).status, 0);
-    assert.equal(fs.readFileSync(file, 'utf8'), 'gemini-example\n');
+    assert.equal(fs.readFileSync(file, 'utf8'), 'gemini-example medium\n');
+  }
+  for (const level of ['low', 'medium', 'high', 'xhigh', 'fixed']) {
+    assert.equal(json(call(['set-model', 'gemini-example', '--thinking-level', level])).gemini_thinking_level, level);
+    assert.equal(check().gemini_thinking_level, level);
+  }
+  for (const args of [['gemini-other', '--thinking-level', 'auto'], ['--reset', '--thinking-level', 'high']]) {
+    assert.notEqual(call(['set-model', ...args]).status, 0);
+    assert.equal(fs.readFileSync(file, 'utf8'), 'gemini-example fixed\n');
   }
   fs.writeFileSync(file, 'bad value\n');
   assert.equal(check().gemini_model, null); assert.ok(check().blockers.includes('gemini_model_invalid'));

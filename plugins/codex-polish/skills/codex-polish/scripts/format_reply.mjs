@@ -5,14 +5,14 @@ import { historySource } from '../../../hooks/preferences.mjs';
 import { rememberReplyOrigin } from '../../../hooks/reply_origin.mjs';
 import { isMain, readHostLine, readLimited, utf8 } from './cli_io.mjs';
 import { previousReply } from './previous_reply.mjs';
-import { formatReply, STATUS_MARK } from './reply_display.mjs';
+import { formatReply } from './reply_display.mjs';
 export { formatReply, originalReplyText } from './reply_display.mjs';
 
 function formatSkipped({ draft, reason, display_language }) {
   if (typeof reason !== 'string' || !reason.trim() || /[\r\n\u2028\u2029]/u.test(reason)) throw new Error('invalid reason');
   if (!display_language) return { text: draft };
   const heading = display_language === 'zh' ? '未润色' : 'Polishing skipped';
-  return { text: draft, display_text: `**${heading}** · ${reason}${STATUS_MARK}\n\n${draft}` };
+  return { text: draft, display_text: `**${heading}** · ${reason}\n\n${draft}` };
 }
 
 export function delivery(payload, { cwd, selection, skipped, turnsBack }) {

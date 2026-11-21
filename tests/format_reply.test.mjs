@@ -60,9 +60,21 @@ test('an exactly identical reply displays once in either language', () => {
   const draft = '  Café is ready.  \r\nDoors open tomorrow.\r\n';
   for (const [language, heading] of [['zh', '**Gemini 返回了原稿**'], ['en', '**Gemini returned the original draft**']]) {
     assert.deepEqual(formatReply({ draft, candidate: draft, display_language: language }), {
-      text: draft, display_text: heading + ' <!-- codex-polish -->\n\n' + draft,
+      text: draft, display_text: heading + '\n\n' + draft,
     });
   }
+});
+
+test('skipping a rewrite renders only the localized status and the exact draft', () => {
+  const draft = '  Original <!-- a comment in the draft -->\r\n\r\n';
+  for (const [display_language, title, reason] of [
+    ['zh', '未润色', 'OpenAI 判断原稿已经清晰，无需润色。'],
+    ['en', 'Polishing skipped', 'OpenAI found the draft clear.'],
+  ]) {
+    const input = JSON.stringify({ draft, reason, display_language });
+    assert.equal(cli([formatScript, '--render', '--skipped'], input).stdout, `**${title}** · ${reason}\n\n${draft}`);
+  }
+  assert.equal(cli([formatScript, '--render', '--skipped'], JSON.stringify({ draft, reason: 'Already clear.' })).stdout, draft);
 });
 
 test('edits to indentation, outer whitespace, line endings or Unicode retain the exact original', () => {

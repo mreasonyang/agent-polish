@@ -1,13 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
-import { join, parse } from 'node:path';
+import { delimiter, dirname, join, parse } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { tmpdir } from 'node:os';
 import { PassThrough } from 'node:stream';
 import { setImmediate } from 'node:timers/promises';
-import { chooseSetupModel, chooseSetupMode, manageOpenAI, setupIssues, showSetupGuidance, doctor } from '../scripts/install.mjs';
+import { chooseSetupModel, chooseSetupMode, discoverSetupModels, manageOpenAI, setupIssues, showSetupGuidance, doctor } from '../scripts/install.mjs';
 import { readOpenAIKey } from '../plugins/codex-polish/hooks/openai_credentials.mjs';
 import { projectGeminiModel } from '../plugins/codex-polish/hooks/preferences.mjs';
 import { rewriteModeSettings } from '../plugins/codex-polish/hooks/rewrite_mode.mjs';
@@ -27,6 +27,7 @@ const checks = {
   codex_available: true,
   node_available: true,
   gemini_model: 'gemini-4-hydrogen',
+  gemini_thinking_level: 'medium',
   gemini_model_configured: true,
   history_turns: 2,
   language_mode: 'auto'
@@ -36,6 +37,8 @@ test('doctor explains modes, decisions, history, model and Google authentication
     const data = { ...checks, ui_language: lang };
     const report = (extra = {}) => doctor({ ...data, ...extra });
     const defaults = report();
+    assert.match(defaults, lang === 'en' ? /Thinking level: Medium/ : /思考等级：中/);
+    assert.match(report({ gemini_thinking_level: 'fixed' }), lang === 'en' ? /Fixed by the model/ : /由模型固定/);
     assert.match(defaults, lang === 'en' ? /go straight to Gemini/ : /直接交给 Gemini/);
     assert.match(defaults, lang === 'en' ? /reuses your Antigravity account/ : /复用 Antigravity 里的登录/);
     assert.match(defaults, lang === 'en' ? /Gemini receives up to 2 earlier completed exchanges/ : /Gemini 改写时最多带上最近 2 轮完整问答/);
@@ -184,8 +187,11 @@ test('Normal setup offers a single default skip after model selection and the ma
     interactive: true, check: () => session,
     chooseMode() { order.push('mode'); return 'normal'; },
     saveRewriteMode() { session.rewrite_mode_configured = true; },
-    chooseModel() { order.push('model'); return 'gemini-4-hydrogen'; },
-    saveModel() { session.gemini_model_configured = true; },
+    chooseModel() { order.push('model'); return { model: 'gemini-4-hydrogen', thinkingLevel: 'medium' }; },
+    saveModel(selection) {
+      assert.deepEqual(selection, { model: 'gemini-4-hydrogen', thinkingLevel: 'medium' });
+      session.gemini_model_configured = true;
+    },
     async offerOpenAI(lang) {
       order.push('openai');
       offers.push(await openAIFlow(lang, true, offers.length ? [] : [enter]));
@@ -271,29 +277,87 @@ test('a damaged setup receipt cannot block removing a saved key', async t => {
   assert.match(removal.display, /could not remember/);
 });
 
-test('model picker accepts arrows, looks up only on request and preserves provider IDs', async t => {
-  const enter = '\r', down = '\x1b[B';
-  for (const [keys, lang, expected, calls] of [
-    [[enter], 'en', 'gemini-4-hydrogen', 0],
-    [[down, enter, '2', down, enter], 'zh', 'gemini-4-argon', 1],
-    [[down, enter, '\x03'], 'en', null, 1],
-    [[down, enter], 'en', null, 1]
+test('installer reads a catalog from the Codex agent’s final message and verifies the requested model', async t => {
+  const bin = fs.mkdtempSync(join(tmpdir(), 'polish catalog test '));
+  const oldPath = process.env.PATH;
+  t.after(() => { process.env.PATH = oldPath; fs.rmSync(bin, { recursive: true, force: true }); });
+  const executable = windows ? join(bin, 'node_modules', '@openai', 'codex', 'bin', 'codex.js') : join(bin, 'codex');
+  const reply = join(bin, 'reply.json'), observed = join(bin, 'invocation.json');
+  fs.mkdirSync(dirname(executable), { recursive: true });
+  fs.writeFileSync(executable, [
+    '#!/usr/bin/env node',
+    'const fs = require("node:fs"), args = process.argv.slice(2);',
+    'const out = args.indexOf("--output-last-message");',
+    'if (args[0] !== "exec" || out === -1) process.exit(1);',
+    'fs.writeFileSync(' + JSON.stringify(observed) + ', JSON.stringify({cwd: process.cwd(), args}));',
+    'fs.copyFileSync(' + JSON.stringify(reply) + ', args[out + 1]);'
+  ].join('\n'), { mode: 0o700 });
+  if (windows) fs.writeFileSync(join(bin, 'codex.cmd'), '');
+  process.env.PATH = bin + delimiter + oldPath;
+  const target = 'gemini-4-hydrogen', other = 'gemini-4-neon';
+  const options = [
+    {id: 'model', type: 'select', category: 'model', currentValue: target,
+      options: [{value: target, name: 'Hydrogen'}, {value: other, name: 'Neon'}, {value: 'invalid id'}]},
+    {id: 'thought_level', type: 'select', category: 'thought_level', currentValue: 'high',
+      options: [{value: 'medium', name: 'Medium'}, {value: 'high', name: 'High'}, {value: 'invalid'}]}
+  ];
+  const status = { ...checks, agy_path: join(bin, windows ? 'agy.exe' : 'agy') };
+  function response(id) { return {jsonrpc: '2.0', id, result: {sessionId: 'fixture-session', configOptions: options}}; }
+  async function discover(frame, model) {
+    fs.writeFileSync(reply, JSON.stringify(frame));
+    const value = await discoverSetupModels(status, model);
+    const {cwd, args} = JSON.parse(fs.readFileSync(observed));
+    assert.equal(fs.existsSync(cwd), false, 'cleanup removes the temporary Codex workspace');
+    assert.ok(args.includes('--ephemeral'));
+    return value;
+  }
+  const account = await discover(response(3));
+  assert.deepEqual(account.models.map(item => item.id), [target, other]);
+  const chosen = await discover(response(4), target);
+  assert.deepEqual(chosen.thinking_levels.map(item => item.id), ['medium', 'high']);
+  assert.equal(await discover(response(4), other), null);
+  assert.equal(await discover(response(4)), null);
+  assert.equal(await discover({jsonrpc: '2.0', id: 3, error: {code: 1}}), null);
+  assert.equal(await discover(null), null);
+});
+
+test('model picker selects model and thinking level together, using account metadata for the selected model', async t => {
+  const enter = '\r', down = '\x1b[B', up = '\x1b[A', cancel = '\x03';
+  const hydrogen = 'gemini-4-hydrogen', argon = 'gemini-4-argon', neon = 'gemini-4-neon';
+  const account = {
+    models: [{ id: neon, name: 'Gemini 4 Neon' }, { id: argon, name: 'Gemini 4 Argon / Preview: (Auto)\x1b[9m' }],
+    current_model: neon, current_thinking_level: 'high', thinking_levels: [{ id: 'medium' }, { id: 'high' }]
+  };
+  const argonSteps = [down, enter, down, enter];
+  for (const [keys, lang, accountResult, targetResult, expected, calls] of [
+    [[enter, enter], 'en', null, null, { model: hydrogen, thinkingLevel: 'medium' }, []],
+    [[enter, up, enter], 'zh', null, null, { model: hydrogen, thinkingLevel: 'low' }, []],
+    [[enter, down, down, enter], 'en', null, null, { model: hydrogen, thinkingLevel: 'xhigh' }, []],
+    [[enter, cancel], 'zh', null, null, null, []],
+    [[down, enter, enter, enter], 'en', account, null, { model: neon, thinkingLevel: 'medium' }, [undefined]],
+    [[...argonSteps, enter], 'zh', account, { current_model: argon, current_thinking_level: 'high', thinking_levels: [{ id: 'low' }, { id: 'high' }] }, { model: argon, thinkingLevel: 'high' }, [undefined, argon]],
+    [argonSteps, 'en', account, { current_model: argon, thinking_levels: [] }, { model: argon, thinkingLevel: 'fixed' }, [undefined, argon]],
+    [argonSteps, 'en', account, null, null, [undefined, argon]],
+    [argonSteps, 'en', account, account, null, [undefined, argon]],
+    [[down, enter, cancel], 'en', account, null, null, [undefined]],
+    [[down, enter], 'en', null, null, null, [undefined]]
   ]) {
     const input = new PassThrough(), output = new PassThrough();
     input.setRawMode = enabled => { input.isRaw = enabled; };
-    const discover = t.mock.fn(() => keys.length === 2 ? [] : [
-      { id: 'gemini-4-neon', name: 'Gemini 4 Neon' }, { id: 'gemini-4-argon', name: 'Gemini 4 Argon / Preview: (Auto)\x1b[9m' }
-    ]);
+    const discover = t.mock.fn((_, model) => model ? targetResult : accountResult);
     let display = '';
     output.on('data', bytes => { display += bytes.toString(); });
     const selection = chooseSetupModel(checks, lang, input, output, discover);
     for (const key of keys) { await setImmediate(); input.write(key); }
-    assert.equal(await selection, expected);
-    if (expected === 'gemini-4-argon') {
+    assert.deepEqual(await selection, expected);
+    if (expected?.model === argon) {
       assert.ok(display.includes('Gemini 4 Argon / Preview: (Auto)\\u001b[9m'));
       assert.ok(!display.includes('\x1b[9m'));
     }
-    assert.equal(discover.mock.callCount(), calls);
+    if (expected?.thinkingLevel === 'medium') assert.match(display, /❯ ● Medium \(default\)/);
+    if (expected?.thinkingLevel === 'fixed') assert.match(display, /fixed thinking level/);
+    if (expected?.thinkingLevel === 'high') assert.doesNotMatch(display, /极高|中（默认）/);
+    assert.deepEqual(discover.mock.calls.map(call => call.arguments[1]), calls);
     assert.match(display, /Gemini 4 Hydrogen/);
     assert.equal(!!input.isRaw, false);
     input.destroy(); output.destroy();
@@ -306,10 +370,10 @@ test('account picker shows both IDs when provider labels differ only in surround
   let display = '';
   output.on('data', bytes => { display += bytes.toString(); });
   const choices = [{ value: 'gemini-first', name: 'Gemini Pro' }, { value: 'gemini-second', name: 'Gemini Pro ' }];
-  const discover = () => catalog([{ category: 'model', type: 'select', id: 'model', currentValue: 'gemini-first', options: choices }]).models;
+  const discover = (_, model) => catalog([{ category: 'model', type: 'select', id: 'model', currentValue: model || 'gemini-first', options: choices }]);
   const selection = chooseSetupModel(checks, 'en', input, output, discover);
   for (const key of ['\x1b[B', '\r', '\x1b[B', '\r']) { await setImmediate(); input.write(key); }
-  assert.equal(await selection, 'gemini-second');
+  assert.deepEqual(await selection, { model: 'gemini-second', thinkingLevel: 'fixed' });
   assert.ok(display.includes('Gemini Pro (gemini-first)'));
   assert.ok(display.includes('Gemini Pro (gemini-second)'));
   input.destroy(); output.destroy();
@@ -357,7 +421,7 @@ test('interactive setup saves mode and model once in the Codex profile from any 
       const options = {
         interactive: true,
         chooseMode(lang) { assert.equal(lang, 'en'); choices.push('mode'); return 'turbo'; },
-        chooseModel() { choices.push('model'); return 'gemini-4-argon'; },
+        chooseModel() { choices.push('model'); return { model: 'gemini-4-argon', thinkingLevel: 'high' }; },
         prompt: message => assert.fail('Unexpected question: ' + message)
       };
       assert.equal(await setup(options), true);
@@ -367,7 +431,7 @@ test('interactive setup saves mode and model once in the Codex profile from any 
       assert.equal(log.mock.callCount(), 0);
       const defaults = join(profile, 'codex-polish', 'settings');
       assert.equal(fs.readFileSync(join(defaults, 'codex-polish.rewrite-mode'), 'utf8'), 'turbo\n');
-      assert.equal(fs.readFileSync(join(defaults, 'codex-polish.model'), 'utf8'), 'gemini-4-argon\n');
+      assert.equal(fs.readFileSync(join(defaults, 'codex-polish.model'), 'utf8'), 'gemini-4-argon high\n');
       assert.equal(rewriteModeSettings(newProject).rewrite_mode, 'turbo');
       assert.equal(projectGeminiModel(newProject), 'gemini-4-argon');
       assert.equal(rewriteModeSettings(cwd).rewrite_mode, 'normal');

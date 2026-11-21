@@ -1,114 +1,86 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import fs from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import { answerEvent } from '../plugins/codex-polish/skills/codex-polish/scripts/acp_answer.mjs';
-import { secureDirectory } from '../plugins/codex-polish/skills/codex-polish/scripts/acp_windows_io.mjs';
+import { completedAnswer } from '../plugins/codex-polish/skills/codex-polish/scripts/acp_answer.mjs';
+import { Fixture, SESSION } from './fixture_acp.mjs';
 
-const moduleUrl = new URL('../plugins/codex-polish/skills/codex-polish/scripts/acp_answer.mjs', import.meta.url);
-const windows = process.platform === 'win32';
-const expected = 'a'.repeat(6143) + '🐕' + '\0'.repeat(1050) + '\uD800' + '雪\n"\\🐕🏽'.repeat(900);
+const program = fileURLToPath(new URL('../plugins/codex-polish/skills/codex-polish/scripts/acp_answer.mjs', import.meta.url));
+const model = 'gemini-4-hydrogen';
+const line = fields => JSON.stringify({ jsonrpc: '2.0', ...fields }) + '\n';
+const chunk = (text, sessionId = SESSION, sessionUpdate = 'agent_message_chunk') => line({ method: 'session/update',
+  params: { sessionId, update: { sessionUpdate, content: { type: 'text', text } } } });
+const end = (stopReason = 'end_turn') => line({ id: 6, result: { stopReason } });
 
-async function session(t, { hold = false, expire = false } = {}) {
-  const base = fs.mkdtempSync(join(tmpdir(), 'polish-answer-test-'));
-  const directory = join(fs.realpathSync(base), 'long-private-workspace-'.repeat(5));
-  fs.mkdirSync(directory, { mode: 0o700 });
-  if (windows) secureDirectory(directory);
-  const program = `import { answerEvent } from ${JSON.stringify(moduleUrl.href)};
-    import { mock } from 'node:test';
-    if (process.env.ANSWER_EXPIRY) mock.timers.enable({ apis: ['setTimeout'] });
-    if (process.env.ANSWER_HOLD) process.stdin.resume();
-    const onDrained = () => console.log('drained');
-    console.log(JSON.stringify(await answerEvent(JSON.parse(process.env.ANSWER_TEXT), process.cwd(), { onDrained })));
-    if (process.env.ANSWER_EXPIRY) mock.timers.tick(6 * 60_000);`;
-  const child = spawn(process.execPath, ['--input-type=module', '-e', program], { cwd: directory,
-    env: { ...process.env, ANSWER_TEXT: JSON.stringify(expected), ANSWER_HOLD: hold ? '1' : '', ANSWER_EXPIRY: expire ? '1' : '' } });
+function scope(t) {
+  const cwd = mkdtempSync(join(tmpdir(), 'polish-offline-answer-'));
+  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  return { cwd, sessionId: SESSION, model, thinkingLevel: 'medium' };
+}
+
+test('offline rendering accepts only the completed text for the submitted session and preserves attribution', t => {
+  const options = scope(t);
+  const draft = '原稿。';
+  const candidate = '  新文。\r\n';
+  const input = { draft, output: chunk('other', 'elsewhere') + chunk('private', SESSION, 'agent_thought_chunk') +
+    line({ id: 6, method: 'session/request_permission' }) + chunk(candidate) + end() };
+  assert.equal(completedAnswer(input, options), candidate);
+  assert.equal(completedAnswer({ ...input, display_language: 'zh' }, options),
+    '**Gemini 润色版**\n\n' + candidate + '\n\n<details><summary>查看 GPT 原稿</summary>\n\n原稿。\n\n</details>');
+  assert.match(completedAnswer({ ...input, display_language: 'en' }, { ...options, selection: true }), /View original text/);
+  assert.match(completedAnswer({ ...input, draft: candidate, display_language: 'zh' }, options), /Gemini 返回了原稿/);
+  assert.throws(() => completedAnswer(input, { ...options, turnsBack: 1 }), /invalid_input/);
+  assert.throws(() => completedAnswer(input, { ...options, turnsBack: 1, selection: true }), /invalid_options/);
+});
+
+test('offline renderer reports incomplete, corrupt, or mismatched output without exposing a partial answer', t => {
+  const options = scope(t);
+  const fixture = new Fixture('ok');
+  fixture.model = model;
+  fixture.thinking = 'high';
+  const changed = line({ method: 'session/update', params: { sessionId: SESSION,
+    update: { sessionUpdate: 'config_option_update', configOptions: fixture.options() } } });
+  for (const [output, reason] of [[chunk('partial'), 'acp_incomplete'], [chunk('partial') + end('cancelled'), 'acp_incomplete'],
+    [chunk('partial') + end().trimEnd(), 'acp_incomplete'], [chunk('partial') + 'corrupt\n' + end(), 'acp_protocol_error'],
+    [chunk('partial') + line({ id: 5, result: {} }) + end(), 'acp_protocol_error'],
+    [chunk('partial') + changed + end(), 'acp_thinking_level_unavailable']]) {
+    assert.throws(() => completedAnswer({ draft: 'original', output }, options), { message: reason });
+  }
+});
+
+test('host reads a long completed answer page by page over the offline helper terminal', { timeout: 20000 }, async t => {
+  const { cwd } = scope(t);
+  const args = [program, '--cwd', cwd, '--model', model, '--thinking-level', 'medium', '--session-id', SESSION];
+  const text = 'a'.repeat(6143) + '🐕' + '\0'.repeat(1050) + '雪\n"\\🐕🏽'.repeat(900);
+  const input = JSON.stringify({ draft: 'old', output: chunk(text) + end() });
+  const plain = spawnSync(process.execPath, args, { input, encoding: 'utf8' });
+  assert.equal(plain.status, 0, plain.stderr);
+  assert.equal(plain.stdout, text);
+  const child = spawn(process.execPath, [...args, '--host-input']);
   const done = once(child, 'close');
-  t.after(async () => {
-    if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
-    await done;
-    fs.rmSync(base, { force: true, recursive: true });
-  });
-  const events = createInterface({ input: child.stdout })[Symbol.asyncIterator]();
-  return { directory, child, done, events, start: JSON.parse((await events.next()).value) };
-}
-
-function page(exec) {
-  const args = windows ? ['-NoProfile', '-Command', exec.cmd] : ['-c', exec.cmd];
-  const read = spawnSync(exec.shell, args, { cwd: exec.workdir, encoding: 'utf8', timeout: 10000 });
-  assert.equal(read.status, 0, read.stderr);
-  assert.ok(Buffer.byteLength(read.stdout) < 8192);
-  const output = JSON.parse(read.stdout);
-  assert.equal(output.event, 'answer_page');
-  return output;
-}
-
-test('short completed answers stay inline with exact whitespace', async () => {
-  const text = ' \t雪\r\n🐕 ';
-  assert.deepEqual(await answerEvent(text, process.cwd(), { onDrained: assert.fail }), { event: 'delivery', markdown: text });
-});
-
-test('agent can page an exact answer after provider EOF from a long workspace path', { timeout: 60_000 }, async t => {
-  const { start, done, directory } = await session(t);
-  assert.equal(start.event, 'answer_pages');
-  assert.equal(start.utf8_bytes, Buffer.byteLength(expected));
-  const files = fs.readdirSync(directory);
-  if (windows) assert.deepEqual(files, []);
-  else {
-    assert.equal(files.length, 1);
-    assert.ok(fs.lstatSync(join(directory, files[0])).isSocket());
+  t.after(() => { if (child.exitCode === null) child.kill(); });
+  const lines = createInterface({ input: child.stdout })[Symbol.asyncIterator]();
+  assert.equal((await lines.next()).value, 'input_ready');
+  // Also exercise an input line split across host writes.
+  child.stdin.write(input.slice(0, 100));
+  child.stdin.write(input.slice(100) + '\n');
+  let result = '';
+  for (;;) {
+    const raw = (await lines.next()).value;
+    assert.ok(Buffer.byteLength(raw) <= 6250);
+    const page = JSON.parse(raw);
+    assert.ok(page.text.isWellFormed());
+    if (!result) assert.equal(page.text, 'a'.repeat(6143));
+    result += page.text;
+    if (!page.more) break;
+    assert.equal((await lines.next()).value, 'input_ready');
+    child.stdin.write('\r\n');
   }
-  const first = page(start.exec);
-  assert.deepEqual(page(start.exec), first);
-  assert.equal(first.text, 'a'.repeat(6143));
-  let result = first.text;
-  let next = first.next;
-  while (next) {
-    const item = page(next);
-    result += item.text;
-    next = item.next;
-  }
-  assert.equal(result, expected);
+  assert.equal(result, text);
   assert.deepEqual(await done, [0, null]);
-  assert.deepEqual(fs.readdirSync(directory), []);
-});
-
-test('the final page stays repeatable on a live handle and interrupt preserves a foreign replacement', { timeout: 60_000 }, async t => {
-  const { child, directory, done, start, events } = await session(t, { hold: true });
-  let last = start.exec;
-  let result = page(last);
-  while (result.next) {
-    last = result.next;
-    result = page(last);
-  }
-  assert.deepEqual(page(last), result);
-  if (windows) {
-    child.stdin.end();
-    await done;
-    assert.equal((await events.next()).value, 'drained');
-    assert.equal((await events.next()).done, true);
-    return;
-  }
-  const [name] = fs.readdirSync(directory);
-  const path = join(directory, name);
-  fs.renameSync(path, path + '-moved');
-  fs.writeFileSync(path, 'foreign');
-  child.kill('SIGTERM');
-  assert.deepEqual(await done, [null, 'SIGTERM']);
-  assert.equal((await events.next()).value, 'drained');
-  assert.equal((await events.next()).done, true);
-  assert.equal(fs.readFileSync(path, 'utf8'), 'foreign');
-});
-
-test('an abandoned paged answer notifies the observer on idle expiry', { timeout: 20_000 }, async t => {
-  const { done, events, directory, start } = await session(t, { expire: true });
-  assert.equal(start.event, 'answer_pages');
-  assert.deepEqual(await done, [0, null]);
-  assert.equal((await events.next()).value, 'drained');
-  assert.equal((await events.next()).done, true);
-  assert.deepEqual(fs.readdirSync(directory), []);
 });

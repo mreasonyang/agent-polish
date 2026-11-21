@@ -241,14 +241,13 @@ export function readHistory(file, sessionId, turnId = null, turns = DEFAULT_HIST
 function replyBodies({ exchange, turnIds }, lookupOrigin) {
   const reply = exchange.assistant;
   const receipt = lookupOrigin?.(turnIds, reply);
-  const display = receipt?.literal ? null : readReplyDisplay(reply);
+  const display = receipt?.literal ? null : readReplyDisplay(reply, { formatted: Boolean(receipt) });
   return { receipt, visible: display?.visible ?? reply, draft: receipt?.literal ? reply : display?.original };
 }
 
-function visibleExchange({ exchange, turnIds }, lookupOrigin) {
-  const display = readReplyDisplay(exchange.assistant);
-  if (!display || lookupOrigin?.(turnIds, exchange.assistant)?.literal) return exchange;
-  return { user: exchange.user, assistant: display.visible };
+function visibleExchange(item, lookupOrigin) {
+  if (!item.exchange.assistant.startsWith('**')) return item.exchange;
+  return { user: item.exchange.user, assistant: replyBodies(item, lookupOrigin).visible };
 }
 
 export function isCurrentTurn(file, sessionId, turnId) {

@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import fs from 'node:fs';
-import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { basename, delimiter, dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -146,38 +145,6 @@ function openTurn(t, scenario, { catalog = false } = {}) {
     env, project, workspace, exec, event, handshake, requests, cleaned };
 }
 
-// Exercise the emitted submit command through a real terminal. A redirected pipe
-// cannot detect console echo, canonical input truncation, or ConPTY Unicode loss.
-async function submit(exec, env, material) {
-  if (!windows) return submitWithCodex(exec, env, material);
-  const line = JSON.stringify(material) + '\n';
-  assert.ok(exec.tty);
-  const pty = createRequire(import.meta.url)('node-pty');
-  const terminal = pty.spawn(exec.shell, shellArgs(exec), { cwd: exec.workdir, env,
-    cols: 160, rows: 40, name: 'xterm-256color', useConpty: true });
-  const closed = new Promise(resolve => terminal.onExit(e => resolve(e.exitCode)));
-  let output = '';
-  let sent = false;
-  let code;
-  terminal.onData(data => {
-    output += data;
-    if (!sent && output.includes('input_ready')) {
-      sent = true;
-      terminal.write(line);
-    }
-  });
-  try {
-    code = await byDeadline(closed, () => 'ConPTY submit timed out ' +
-      (sent ? 'after writing the complete JSON record' : 'before input_ready'));
-  } finally {
-    // node-pty releases its Windows output worker on explicit disposal, even after shell exit.
-    terminal.kill();
-  }
-  assert.equal(code, 0, output);
-  assert.ok(sent, 'the terminal must announce input_ready');
-  assert.doesNotMatch(output, /私有原稿|fixture-question|rewrite_request|draft"/);
-}
-
 for (const scenario of ['interleaved', 'unchanged']) {
   test('native ACP delivers exact ' + scenario + ' Markdown through a real terminal', { timeout: 120_000 }, async t => {
     const ctx = openTurn(t, scenario);
@@ -187,7 +154,7 @@ for (const scenario of ['interleaved', 'unchanged']) {
     const draft = scenario === 'unchanged' ? '  私有原稿。\r\n' :
       ('  私有原稿 「雪🐕🏽」 e\u0301 \\ " \t\r\n').repeat(1200) + '末行  ';
     const material = { question: 'fixture-question: $() \u{1f3d4}\ufe0f', draft, rewrite_request: 'Keep the quotes and line endings.' };
-    await submit(step.exec, ctx.env, material);
+    await submitWithCodex(step.exec, ctx.env, material);
 
     const result = await ctx.event();
     const frames = ctx.requests();
@@ -227,7 +194,7 @@ for (const [scenario, reason] of [
     let result = await ctx.handshake();
     if (scenario !== 'no-hydrogen') {
       assert.equal(result.event, 'submit');
-      await submit(result.exec, ctx.env, { question: 'fixture-question', draft });
+      await submitWithCodex(result.exec, ctx.env, { question: 'fixture-question', draft });
       result = await ctx.event();
     }
     assert.deepEqual(result, { event: 'error', stage: scenario === 'no-hydrogen' ? 'session/new' : 'session/prompt', reason });
@@ -245,7 +212,7 @@ test('interrupting the host reaps the stalled native provider and its workspace'
   const ctx = openTurn(t, 'stalled');
   const step = await ctx.handshake();
   assert.equal(step.event, 'submit');
-  await submit(step.exec, ctx.env, { question: 'fixture-question', draft: '私有原稿' });
+  await submitWithCodex(step.exec, ctx.env, { question: 'fixture-question', draft: '私有原稿' });
   await waitFor(() => ctx.requests().some(f => f.method === 'session/prompt'), 'the turn must be in progress');
   assert.ok(ctx.host.kill('SIGTERM'));
   await ctx.finished();
@@ -255,7 +222,7 @@ test('interrupting the host reaps the stalled native provider and its workspace'
 test('a Windows cancellation descriptor stops only the active ACP session', { skip: !windows, timeout: 75_000 }, async t => {
   const ctx = openTurn(t, 'stalled');
   const step = await ctx.handshake();
-  await submit(step.exec, ctx.env, { question: 'fixture-question', draft: '私有原稿' });
+  await submitWithCodex(step.exec, ctx.env, { question: 'fixture-question', draft: '私有原稿' });
   ctx.exec(step.cancel);
   assert.deepEqual(await ctx.event(), { event: 'error', stage: 'session/prompt', reason: 'acp_incomplete' });
   assert.deepEqual(ctx.requests().at(-1), { jsonrpc: '2.0', method: 'session/cancel', params: { sessionId: SESSION } });
@@ -295,6 +262,7 @@ test('native catalog discovery returns the current model and never submits a pro
 });
 
 async function submitWithCodex(exec, fixtureEnv, material) {
+  assert.ok(exec.tty);
   const codex = executable('codex');
   assert.ok(codex, 'install @openai/codex to exercise the actual Codex terminal');
   const project = fixtureEnv.HOME;

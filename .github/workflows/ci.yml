@@ -35,14 +35,6 @@ jobs:
           node-version: '22.16.0'
       - run: npm install --global @openai/codex@0.170.0
       - run: codex --version
-      - name: Set up Windows console tests
-        if: matrix.name == 'Windows ACP'
-        shell: pwsh
-        run: |
-          $prefix = Join-Path $env:RUNNER_TEMP 'polish-test-pty'
-          npm install --prefix "$prefix" --no-save --no-package-lock node-pty@1.1.0
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          "NODE_PATH=$(Join-Path $prefix 'node_modules')" >> $env:GITHUB_ENV
       - if: runner.os != 'Windows'
         run: npm test
       - if: runner.os == 'Windows'

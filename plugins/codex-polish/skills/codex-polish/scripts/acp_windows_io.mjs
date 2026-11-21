@@ -33,10 +33,12 @@ $trusted = @($sid.Value, 'S-1-5-18', 'S-1-5-32-544')
 if ($trusted -notcontains $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value) {throw 'owner'}
 ${restrict ? `$acl.SetAccessRuleProtection($true, $false)
 foreach ($rule in @($acl.Access)) {$acl.RemoveAccessRuleSpecific($rule)}
-$rule = New-Object Security.AccessControl.FileSystemAccessRule($sid,'FullControl','ContainerInherit, ObjectInherit','None','Allow')
+$rule = [Security.AccessControl.FileSystemAccessRule]::new($sid,'FullControl','ContainerInherit, ObjectInherit','None','Allow')
 $acl.AddAccessRule($rule)
 $d.SetAccessControl($acl)
 $acl = $d.GetAccessControl()` : ''}
+$raw = [Security.AccessControl.RawSecurityDescriptor]::new($acl.GetSecurityDescriptorBinaryForm(),0)
+if ($null -eq $raw.DiscretionaryAcl) {throw 'permissions'}
 foreach ($rule in $acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])) {
   if ($rule.AccessControlType -eq 'Allow' -and $trusted -notcontains $rule.IdentityReference.Value) {throw 'permissions'}
 }`;

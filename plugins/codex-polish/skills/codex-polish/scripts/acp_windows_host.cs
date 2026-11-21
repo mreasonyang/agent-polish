@@ -35,29 +35,48 @@ public static class CodexPolishAcpHost {
         public IntPtr ReservedBytes, Input, Output, Error;
     }
     [StructLayout(LayoutKind.Sequential)]
+    struct StartupEx { public Startup Info; public IntPtr Attributes; }
+    [StructLayout(LayoutKind.Sequential)]
     struct Child { public IntPtr Process, Thread; public int Pid, Tid; }
 
     [DllImport("kernel32", SetLastError=true)] static extern SafeFileHandle CreateJobObject(IntPtr security, string name);
     [DllImport("kernel32", SetLastError=true)] static extern bool SetInformationJobObject(SafeFileHandle job, int kind, ref ExtendedLimits limits, int size);
     [DllImport("kernel32", SetLastError=true)] static extern bool AssignProcessToJobObject(SafeFileHandle job, IntPtr child);
+    [DllImport("kernel32", SetLastError=true)] static extern bool InitializeProcThreadAttributeList(IntPtr list, int count, int flags, ref IntPtr size);
+    [DllImport("kernel32", SetLastError=true)] static extern bool UpdateProcThreadAttribute(IntPtr list, uint flags, IntPtr attribute,
+        IntPtr handles, IntPtr size, IntPtr previous, IntPtr returned);
+    [DllImport("kernel32")] static extern void DeleteProcThreadAttributeList(IntPtr list);
     [DllImport("kernel32", SetLastError=true, CharSet=CharSet.Unicode)]
     static extern bool CreateProcess(string exe, StringBuilder argv, IntPtr processSecurity, IntPtr threadSecurity,
-        bool inherit, uint flags, IntPtr environment, string cwd, ref Startup startup, out Child child);
+        bool inherit, uint flags, IntPtr environment, string cwd, ref StartupEx startup, out Child child);
     [DllImport("kernel32", SetLastError=true)] static extern uint ResumeThread(IntPtr thread);
     [DllImport("kernel32")] static extern bool TerminateProcess(IntPtr child, uint status);
     [DllImport("kernel32")] static extern bool CloseHandle(IntPtr handle);
     static void Check(bool success) { if (!success) throw new Win32Exception(); }
 
-    // Only the three pipe client ends are inheritable. The host has not started
-    // the byte-copy tasks yet. The Node relay is outside the provider's job.
+    // Limit handle inheritance to the three native byte pipes, even if the host's
+    // execution tool has left other inheritable handles open in PowerShell.
     static Process StartProvider(string exe, string args, string cwd, SafeFileHandle job,
             AnonymousPipeServerStream input, AnonymousPipeServerStream output, AnonymousPipeServerStream errors) {
-        var startup = new Startup { Size = Marshal.SizeOf(typeof(Startup)), Flags = 0x100,
-            Input = input.ClientSafePipeHandle.DangerousGetHandle(), Output = output.ClientSafePipeHandle.DangerousGetHandle(),
-            Error = errors.ClientSafePipeHandle.DangerousGetHandle() };
+        var handles = new[] { input.ClientSafePipeHandle.DangerousGetHandle(),
+            output.ClientSafePipeHandle.DangerousGetHandle(), errors.ClientSafePipeHandle.DangerousGetHandle() };
+        var startup = new StartupEx { Info = new Startup { Size = Marshal.SizeOf(typeof(StartupEx)), Flags = 0x100,
+            Input = handles[0], Output = handles[1], Error = handles[2] } };
+        IntPtr size = IntPtr.Zero;
+        InitializeProcThreadAttributeList(IntPtr.Zero, 1, 0, ref size);
+        startup.Attributes = Marshal.AllocHGlobal(size);
+        var pointers = Marshal.AllocHGlobal(handles.Length * IntPtr.Size);
         Child child;
-        Check(CreateProcess(exe, new StringBuilder("\"" + exe + "\" " + args), IntPtr.Zero, IntPtr.Zero,
-            true, 0x08000004, IntPtr.Zero, cwd, ref startup, out child)); // CREATE_NO_WINDOW | CREATE_SUSPENDED
+        try {
+            Check(InitializeProcThreadAttributeList(startup.Attributes, 1, 0, ref size));
+            try {
+                Marshal.Copy(handles, 0, pointers, handles.Length);
+                Check(UpdateProcThreadAttribute(startup.Attributes, 0, (IntPtr)0x20002, pointers,
+                    (IntPtr)(handles.Length * IntPtr.Size), IntPtr.Zero, IntPtr.Zero)); // PROC_THREAD_ATTRIBUTE_HANDLE_LIST
+                Check(CreateProcess(exe, new StringBuilder("\"" + exe + "\" " + args), IntPtr.Zero, IntPtr.Zero,
+                    true, 0x08080004, IntPtr.Zero, cwd, ref startup, out child)); // NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT | SUSPENDED
+            } finally { DeleteProcThreadAttributeList(startup.Attributes); }
+        } finally { Marshal.FreeHGlobal(pointers); Marshal.FreeHGlobal(startup.Attributes); }
         try {
             Check(AssignProcessToJobObject(job, child.Process));
             var process = Process.GetProcessById(child.Pid);

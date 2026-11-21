@@ -47,6 +47,15 @@ test('custom prompts keep literal UTF-8 bytes across CLI sessions and apply acro
   assert.equal(readEditorPrompt(project).source, 'default');
 });
 
+test('terminal input preserves the entire multiline custom prompt', t => {
+  const { call } = makeProject(t);
+  const prompt = "  首行\r\n`$HOME` 和 ' 引号\r\n  ";
+  const result = call(['set-prompt', '--host-input'], { input: JSON.stringify(prompt) + '\n' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(result.stdout.startsWith('input_ready\n'));
+  assert.equal(json(call(['prompt'])).text, prompt);
+});
+
 test('a saved custom prompt can be inspected when the automatic rewrite mode is invalid', t => {
   const { project, call } = makeProject(t);
   const text = 'Be concise.\n';

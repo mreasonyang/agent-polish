@@ -14,8 +14,16 @@ export function agyDirectory(env = process.env) {
   return windows ? path.join(localAppData(env), 'agy', 'bin') : path.join(os.homedir(), '.local', 'bin');
 }
 
+function available(file, mode = fs.constants.F_OK) {
+  try {
+    if (!fs.statSync(file).isFile()) return false;
+    fs.accessSync(file, mode);
+    return true;
+  } catch { return false; }
+}
+
 export function executable(name, env = process.env) {
-  const search = (env.PATH ?? env.Path ?? '').split(path.delimiter);
+  const search = (env.PATH ?? env.Path ?? (windows ? '' : '/bin:/usr/bin')).split(path.delimiter);
   if (name === 'agy') search.push(agyDirectory(env));
   if (windows && name === 'codex') {
     if (env.CODEX_INSTALL_DIR) search.push(env.CODEX_INSTALL_DIR);
@@ -23,18 +31,13 @@ export function executable(name, env = process.env) {
   }
   for (let directory of search) {
     if (windows) directory = directory.replace(/^"(.*)"$/, '$1');
-    if (!path.isAbsolute(directory)) continue;
-    const file = path.join(directory, name + (windows ? '.exe' : ''));
-    if (fs.statSync(file, { throwIfNoEntry: false })?.isFile()) {
-      try {
-        fs.accessSync(file, fs.constants.X_OK);
-        return { command: file, args: [] };
-      } catch { /* Search the next PATH entry. */ }
-    }
-    if (windows && name === 'codex' && fs.statSync(path.join(directory, 'codex.cmd'), { throwIfNoEntry: false })?.isFile()) {
+    if (windows && !path.isAbsolute(directory)) continue;
+    const file = path.resolve(directory, name + (windows ? '.exe' : ''));
+    if (available(file, fs.constants.X_OK)) return { command: file, args: [] };
+    if (windows && name === 'codex' && available(path.join(directory, 'codex.cmd'))) {
       for (const prefix of [path.join(directory, 'node_modules'), path.dirname(directory)]) {
         const script = path.join(prefix, '@openai', 'codex', 'bin', 'codex.js');
-        if (fs.statSync(script, { throwIfNoEntry: false })?.isFile()) return { command: process.execPath, args: [script] };
+        if (available(script)) return { command: process.execPath, args: [script] };
       }
     }
   }

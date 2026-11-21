@@ -71,7 +71,12 @@ function openTurn(t, scenario, { catalog = false } = {}) {
   fs.writeFileSync(join(workspace, 'acp'), `
     const fs = require('node:fs');
     fs.unlinkSync(__filename);
-    fs.writeFileSync(${JSON.stringify(pidFile)}, JSON.stringify({pid:process.pid, argv:process.argv.slice(2),
+    let child;
+    if (process.platform === 'win32' && ${JSON.stringify(scenario)} === 'stalled') {
+      child = require('node:child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 60000)'], {stdio:'ignore'});
+      child.unref();
+    }
+    fs.writeFileSync(${JSON.stringify(pidFile)}, JSON.stringify({pid:process.pid, descendant:child?.pid, argv:process.argv.slice(2),
       key:process.env.OPENAI_API_KEY ?? null, cwd:process.cwd()}));
     import(${JSON.stringify(fixtureURL)}).then(({ Fixture, serveFixture }) =>
       serveFixture(new Fixture(${JSON.stringify(scenario)}), frame =>
@@ -85,8 +90,8 @@ function openTurn(t, scenario, { catalog = false } = {}) {
   t.after(async () => {
     if (host.exitCode === null && host.signalCode === null) host.kill();
     if (fs.existsSync(pidFile)) {
-      const { pid } = JSON.parse(fs.readFileSync(pidFile, 'utf8'));
-      if (!gone(pid)) process.kill(pid, 'SIGKILL');
+      const { pid, descendant } = JSON.parse(fs.readFileSync(pidFile, 'utf8'));
+      for (const id of [pid, descendant]) if (id && !gone(id)) process.kill(id, 'SIGKILL');
     }
     await done;
     fs.rmSync(workspace, { recursive: true, force: true, maxRetries: 5 });
@@ -109,7 +114,9 @@ function openTurn(t, scenario, { catalog = false } = {}) {
     assert.deepEqual(info.argv, ['--agent', 'codex-polish-editor', '--sandbox']);
     assert.equal(info.key, null);
     assert.equal(info.cwd, workspace);
-    await waitFor(() => gone(info.pid) && !fs.existsSync(workspace), 'provider and workspace must be reclaimed');
+    if (windows && scenario === 'stalled') assert.ok(info.descendant > 0);
+    await waitFor(() => gone(info.pid) && (!info.descendant || gone(info.descendant)) && !fs.existsSync(workspace),
+      'provider, descendant and workspace must be reclaimed');
   }
   return { host, done, env, project, workspace, exec, event, handshake, requests, cleaned };
 }
@@ -171,12 +178,12 @@ for (const scenario of ['interleaved', 'unchanged']) {
     const material = { question: 'fixture-question: $() \u{1f3d4}\ufe0f', draft, rewrite_request: 'Keep the quotes and line endings.' };
     await submit(t, step.exec, ctx.env, material);
 
+    const result = await ctx.event();
     const frames = ctx.requests();
     assert.deepEqual(frames.map(f => f.method), ['initialize', 'session/new', 'session/set_config_option', 'session/prompt']);
     assert.equal(frames[1].params.cwd, ctx.workspace);
     assert.equal(frames[2].params.value, model);
     assert.deepEqual(JSON.parse(frames[3].params.prompt[0].text), material);
-    const result = await ctx.event();
     if (scenario === 'unchanged') {
       assert.deepEqual(result, { event: 'delivery', markdown: '**Gemini 返回了原稿** <!-- codex-polish -->\n\n' + draft });
     } else {

@@ -230,7 +230,7 @@ export function prepareWorkspace({ agyPath, cwd, trigger, selectionOnly, selecti
         payloadArgs, display, quotedSource });
       const cmd = [
         "$ErrorActionPreference = 'Stop'",
-        'Add-Type -Path ' + psArg(windowsHost),
+        "Add-Type -ReferencedAssemblies 'System.dll','System.Core.dll' -TypeDefinition ([IO.File]::ReadAllText(" + psArg(windowsHost) + '))',
         'exit [CodexPolishAcpHost]::Run(' + [agyPath, 'acp --agent codex-polish-editor --sandbox', process.execPath,
           windowsRelay, settings, workspace].map(psArg).join(', ') + ')',
       ].join('\n');

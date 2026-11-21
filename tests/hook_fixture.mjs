@@ -10,7 +10,12 @@ export const windows = process.platform === 'win32';
 export const agyName = windows ? 'agy.exe' : 'agy';
 export function homeEnv(home) {
   if (!windows) return { HOME: home };
-  return { HOME: home, USERPROFILE: home, LOCALAPPDATA: path.join(home, 'AppData', 'Local'),
+  const runtime = {};
+  for (const key of ['ProgramData', 'ProgramFiles', 'ProgramFiles(x86)', 'ProgramW6432', 'PROCESSOR_ARCHITECTURE',
+    'SystemDrive', 'windir', 'PSModulePath', 'ALLUSERSPROFILE', 'CommonProgramFiles', 'CommonProgramFiles(x86)']) {
+    if (process.env[key]) runtime[key] = process.env[key];
+  }
+  return { ...runtime, HOME: home, USERPROFILE: home, LOCALAPPDATA: path.join(home, 'AppData', 'Local'),
     APPDATA: path.join(home, 'AppData', 'Roaming'), SystemRoot: process.env.SystemRoot, ComSpec: process.env.ComSpec,
     TEMP: os.tmpdir(), TMP: os.tmpdir(), PATHEXT: process.env.PATHEXT };
 }

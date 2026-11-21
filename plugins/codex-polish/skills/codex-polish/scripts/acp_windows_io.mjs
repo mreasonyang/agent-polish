@@ -28,14 +28,14 @@ export function windowsCommand(args, directory, { materialInput = false } = {}) 
 function checkAcl(entries, restrict = false) {
   const script = `$ErrorActionPreference = 'Stop'
 function Test-PrivatePath([string]$FilePath,[bool]$Directory) {
-$d = Get-Item -Force -LiteralPath $FilePath
-if ($d.PSIsContainer -ne $Directory -or ($d.Attributes -band [IO.FileAttributes]::ReparsePoint)) {throw 'directory'}
+$d = if ($Directory) {[IO.DirectoryInfo]::new($FilePath)} else {[IO.FileInfo]::new($FilePath)}
+if (!$d.Exists -or ($d.Attributes -band [IO.FileAttributes]::ReparsePoint)) {throw 'directory'}
 $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User
 $acl = $d.GetAccessControl()
 $trusted = @($sid.Value, 'S-1-5-18', 'S-1-5-32-544')
 if ($trusted -notcontains $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value) {throw 'owner'}
 ${restrict ? `$acl.SetAccessRuleProtection($true, $false)
-foreach ($rule in @($acl.Access)) {$acl.RemoveAccessRuleSpecific($rule)}
+foreach ($rule in $acl.GetAccessRules($true,$false,[Security.Principal.SecurityIdentifier])) {$acl.RemoveAccessRuleSpecific($rule)}
 $rule = [Security.AccessControl.FileSystemAccessRule]::new($sid,'FullControl','ContainerInherit, ObjectInherit','None','Allow')
 $acl.AddAccessRule($rule)
 $d.SetAccessControl($acl)

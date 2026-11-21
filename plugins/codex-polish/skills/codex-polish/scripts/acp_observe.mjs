@@ -99,7 +99,7 @@ export async function observe(input, { auth, model, catalogOnly, log, directory,
     }
     pending = null;
     const args = [...payloadArgs, '--submit', '--session-id', sessionId];
-    if (transport) return emit({ event: 'submit', sessionId, model, exec: transport.submit(args),
+    if (transport) return emit({ event: 'submit', sessionId, model, exec: transport.submit(args, sessionId),
       cancel: write({ method: 'session/cancel', params: { sessionId } }) });
     const producer = command(['prompt', ...args]);
     emit({ event: 'submit', sessionId, model, exec: { ...host, tty: true, yield_time_ms: 250,

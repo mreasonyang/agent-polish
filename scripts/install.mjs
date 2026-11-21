@@ -60,6 +60,10 @@ function canonical(path) {
   return join(canonical(dirname(path)), basename(path));
 }
 function registeredPath(path) {
+  // Rust canonicalize() returns Win32 device paths; the marketplace list
+  // displays the same directory using a DOS or UNC path.
+  if (windows && path.startsWith('\\\\?\\UNC\\')) path = '\\\\' + path.slice(8);
+  else if (windows && path.startsWith('\\\\?\\') && /^[a-z]:/i.test(path.slice(4))) path = path.slice(4);
   return join(canonical(dirname(path)), basename(path));
 }
 export function codexProfile() {
@@ -278,11 +282,22 @@ function lookup(run, field, key, value, ...args) {
     throw fail('Codex 返回了重复的市场或插件记录。', 'Codex returned duplicate marketplace or plugin records.');
   return found[0] ?? null;
 }
-function registration(run) {
+async function registration(run, sourceConfig = nativeConfig) {
   const row = lookup(run, 'marketplaces', 'name', MARKET, 'marketplace', 'list');
   if (!row) return null;
-  const info = row.marketplaceSource,
-    source = info?.source;
+  let info = row.marketplaceSource;
+  // Codex 0.170 on Windows can omit marketplaceSource from this list even
+  // for a registered plugin. Read its configured source and verify the root
+  // independently, including when the plugin itself has not been added yet.
+  if (!info && windows && typeof row.root === 'string' && isAbsolute(row.root)) {
+    const { config } = await sourceConfig('config/read', { includeLayers: false });
+    const saved = config.marketplaces?.[MARKET];
+    if (saved?.source_type === 'local' && typeof saved.source === 'string' && isAbsolute(saved.source) &&
+        registeredPath(saved.source) === registeredPath(row.root)) {
+      info = { sourceType: 'local', source: saved.source };
+    }
+  }
+  const source = info?.source;
   if (info?.sourceType !== 'local' || typeof source !== 'string' || !isAbsolute(source)) {
     throw fail(
       '同名市场用了其他来源。请在 Codex 的插件设置里核对。',
@@ -291,8 +306,8 @@ function registration(run) {
   }
   return registeredPath(source);
 }
-function registeredMarket(run, store) {
-  const path = registration(run);
+async function registeredMarket(run, store) {
+  const path = await registration(run);
   if (path && path !== canonical(store))
     throw fail(`同名市场使用了其他来源。Codex 返回 ${path}，预期 ${store}。请在插件设置中核对。`,
       `A marketplace with the same name uses a different source. Codex returned ${path}. Expected ${store}. Check it in Codex plugin settings.`);
@@ -484,14 +499,14 @@ async function verifyInstalled(run, setEnabled, version, enabled) {
   }
 }
 async function rollback(run, setEnabled, previous, before, target, store) {
-  const market = registeredMarket(run, store);
+  const market = await registeredMarket(run, store);
   if (![null, previous, target].includes(activeSnapshot(store)))
     throw fail('其他进程修改了市场。', 'Another process changed the marketplace.');
   if (!before && installed(run)) run('remove', PLUGIN_ID);
   if (!previous && market) run('marketplace', 'remove', MARKET);
   activateSnapshot(store, previous);
   if (previous && !market) run('marketplace', 'add', store);
-  if (registeredMarket(run, store) !== (previous ? store : null) || activeSnapshot(store) !== previous)
+  if (await registeredMarket(run, store) !== (previous ? store : null) || activeSnapshot(store) !== previous)
     throw fail('Codex 没有恢复更新前的市场来源。', "Codex didn't restore the previous marketplace.");
   if (before) {
     verifyReceipt(run('add', PLUGIN_ID), previous, before.version);
@@ -592,7 +607,7 @@ export function preserveNativeCache(store, previous, state, alternate) {
   }
 }
 async function setup(root, store, run, setEnabled, action) {
-  const market = registeredMarket(run, store);
+  const market = await registeredMarket(run, store);
   const active = activeSnapshot(store);
   if (market && !active)
     throw fail('已注册的市场缺少安装清单，请在 Codex 插件设置中检查。', 'The registered marketplace manifest is missing. Check it in Codex plugin settings.');
@@ -631,7 +646,7 @@ async function setup(root, store, run, setEnabled, action) {
     activateSnapshot(store, target);
     if (!market) run('marketplace', 'add', store);
     verifyReceipt(run('add', PLUGIN_ID), target, version);
-    if (registeredMarket(run, store) !== store || activeSnapshot(store) !== target)
+    if (await registeredMarket(run, store) !== store || activeSnapshot(store) !== target)
       throw fail(
         'Codex 没有确认这次安装的市场来源。',
         "Codex didn't confirm the marketplace source for this installation."
@@ -773,7 +788,7 @@ function cleanUninstallData(store) {
   return message;
 }
 async function uninstall(store, run) {
-  const market = registeredMarket(run, store);
+  const market = await registeredMarket(run, store);
   const active = activeSnapshot(store);
   const previous = market && active;
   requireManagedSource(previous, store);
@@ -816,7 +831,7 @@ async function uninstall(store, run) {
   }
   if (market) {
     run('marketplace', 'remove', MARKET);
-    if (registration(run))
+    if (await registration(run))
       throw fail(
         'Codex 还是显示这个市场已注册，请再试一次卸载。',
         'Codex still lists the marketplace. Run uninstall again.'

@@ -60,7 +60,7 @@ function isolated(t) {
   const cli = (...args) => JSON.parse(invoke('codex', ['plugin', ...args, '--json']));
   const rows = () => cli('list', '--marketplace', MARKET).installed;
   const marketplace = () =>
-    cli('marketplace', 'list').marketplaces.find((row) => row.name === MARKET)?.marketplaceSource.source;
+    cli('marketplace', 'list').marketplaces.find((row) => row.name === MARKET)?.root;
   const snapshot = () => {
     const market = marketplace();
     if (!market) return;

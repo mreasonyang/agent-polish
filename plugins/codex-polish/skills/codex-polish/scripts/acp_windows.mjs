@@ -14,6 +14,7 @@ const payload = fileURLToPath(new URL('acp_payload.mjs', import.meta.url));
 async function relay(settings, parent) {
   const { directory, owners } = settings;
   claimWindowsWorkspace(directory, owners);
+  let selectedSession;
   let submitted;
   let resolveMaterial;
   const material = new Promise(resolve => { resolveMaterial = resolve; });
@@ -25,7 +26,7 @@ async function relay(settings, parent) {
     if (shuttingDown || !frame || frame.jsonrpc !== '2.0') throw Error('invalid_frame');
     if (frame.method === 'session/prompt') {
       if (submitted !== undefined || frame.id !== 6 || !original || typeof original.draft !== 'string' ||
-          typeof frame.params?.sessionId !== 'string') throw Error('invalid_submission');
+          typeof selectedSession !== 'string' || frame.params?.sessionId !== selectedSession) throw Error('invalid_submission');
       submitted = frame.params.sessionId;
       resolveMaterial(original);
     } else if (original !== undefined) throw Error('invalid_frame');
@@ -77,7 +78,10 @@ async function relay(settings, parent) {
   const command = args => windowsCommand([process.execPath, ...args], dirname(directory));
   const transport = { material, submitted: () => submitted,
     write: frame => command([self, '--frame', channel.endpoint, encode(frame)]),
-    submit: args => ({ ...command([payload, '--windows-submit', channel.endpoint, encode(args)]), tty: true, yield_time_ms: 250 }),
+    submit(args, sessionId) {
+      selectedSession = sessionId;
+      return { ...command([payload, '--windows-submit', channel.endpoint, encode(args)]), tty: true, yield_time_ms: 250 };
+    },
   };
   const emit = event => {
     if (event.event === 'send' || event.event === 'submit') event.stop = command([self, '--stop', channel.endpoint]);

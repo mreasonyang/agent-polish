@@ -31,6 +31,15 @@ function run(exe, args, options) {
   return result.stdout;
 }
 
+async function byDeadline(promise, description) {
+  let timer;
+  try {
+    return await Promise.race([promise, new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(description())), 15_000);
+    })]);
+  } finally { clearTimeout(timer); }
+}
+
 async function waitFor(check, description) {
   for (let i = 0; i < 200; i++) {
     if (check()) return;
@@ -89,6 +98,17 @@ function openTurn(t, scenario, { catalog = false } = {}) {
   let diagnostic = '';
   host.stderr.setEncoding('utf8').on('data', data => { diagnostic += data; });
   const lines = createInterface({ input: host.stdout, crlfDelay: Infinity })[Symbol.asyncIterator]();
+  let lastEvent = 'starting the host';
+  function progress() {
+    let methods = 'no requests';
+    if (fs.existsSync(log)) {
+      const records = fs.readFileSync(log, 'utf8').trim().split('\n');
+      methods = records.filter(Boolean).map(line => {
+        try { return JSON.parse(line).method ?? 'response'; } catch { return 'partial frame'; }
+      }).join(', ');
+    }
+    return `last event: ${lastEvent}; provider started: ${fs.existsSync(pidFile)}; requests: ${methods}; stderr: ${diagnostic}`;
+  }
   t.after(async () => {
     if (host.exitCode === null && host.signalCode === null) host.kill();
     if (fs.existsSync(pidFile)) {
@@ -100,9 +120,11 @@ function openTurn(t, scenario, { catalog = false } = {}) {
     fs.rmSync(project, { recursive: true, force: true, maxRetries: 5 });
   });
   const event = async () => {
-    const item = await lines.next();
-    assert.ok(!item.done, 'host exited before its next event: ' + diagnostic);
-    return JSON.parse(item.value);
+    const item = await byDeadline(lines.next(), () => 'timed out waiting for ACP output; ' + progress());
+    assert.ok(!item.done, 'host exited before its next event; ' + progress());
+    const value = JSON.parse(item.value);
+    lastEvent = value.event;
+    return value;
   };
   const exec = descriptor => run(descriptor.shell, shellArgs(descriptor), { cwd: descriptor.workdir, env });
   async function handshake() {
@@ -120,7 +142,8 @@ function openTurn(t, scenario, { catalog = false } = {}) {
     await waitFor(() => gone(info.pid) && (!info.descendant || gone(info.descendant)) && !fs.existsSync(workspace),
       'provider, descendant and workspace must be reclaimed');
   }
-  return { host, done, env, project, workspace, exec, event, handshake, requests, cleaned };
+  return { host, finished: () => byDeadline(done, () => 'host did not exit; ' + progress()),
+    env, project, workspace, exec, event, handshake, requests, cleaned };
 }
 
 // Exercise the emitted submit command through a real terminal. A redirected pipe
@@ -147,7 +170,8 @@ async function submit(t, exec, env, material) {
     t.after(() => { if (code === undefined) terminal.kill(); });
     writer = text => terminal.write(text);
     terminal.onData(onData);
-    code = await closed;
+    code = await byDeadline(closed, () => 'ConPTY submit timed out ' +
+      (sent ? 'after writing the complete JSON record' : 'before input_ready'));
   } else {
     const args = ['-c', `import os, pty, sys
 def read_terminal(fd):
@@ -162,7 +186,7 @@ sys.exit(os.waitstatus_to_exitcode(pty.spawn(sys.argv[1:], read_terminal)))`,
     writer = text => terminal.stdin.write(text);
     terminal.stdout.setEncoding('utf8').on('data', onData);
     terminal.stderr.setEncoding('utf8').on('data', onData);
-    [code] = await closed;
+    [code] = await byDeadline(closed, () => 'PTY submit timed out ' + (sent ? 'after input' : 'before input_ready'));
   }
   assert.equal(code, 0, output);
   assert.ok(sent, 'the terminal must announce input_ready');
@@ -204,7 +228,7 @@ for (const scenario of ['interleaved', 'unchanged']) {
       assert.ok(pages.length > 1);
       assert.equal(pages.join(''), expected);
     }
-    assert.equal((await ctx.done)[0], 0);
+    assert.equal((await ctx.finished())[0], 0);
     await ctx.cleaned();
   });
 }
@@ -227,7 +251,7 @@ for (const [scenario, reason] of [
       env: ctx.env, input: JSON.stringify({ draft, reason: result.reason }),
     });
     assert.equal(rendered, draft);
-    await ctx.done;
+    await ctx.finished();
     await ctx.cleaned();
   });
 }
@@ -239,7 +263,7 @@ test('interrupting the host reaps the stalled native provider and its workspace'
   await submit(t, step.exec, ctx.env, { question: 'fixture-question', draft: '私有原稿' });
   await waitFor(() => ctx.requests().some(f => f.method === 'session/prompt'), 'the turn must be in progress');
   assert.ok(ctx.host.kill('SIGTERM'));
-  await ctx.done;
+  await ctx.finished();
   await ctx.cleaned();
 });
 
@@ -250,7 +274,7 @@ test('a Windows cancellation descriptor stops only the active ACP session', { sk
   ctx.exec(step.cancel);
   assert.deepEqual(await ctx.event(), { event: 'error', stage: 'session/prompt', reason: 'acp_incomplete' });
   assert.deepEqual(ctx.requests().at(-1), { jsonrpc: '2.0', method: 'session/cancel', params: { sessionId: SESSION } });
-  await ctx.done;
+  await ctx.finished();
   await ctx.cleaned();
 });
 
@@ -262,8 +286,14 @@ test('the agent can stop a Windows host before submitting any draft', { skip: !w
   const step = await ctx.handshake();
   assert.equal(step.event, 'submit');
   assert.deepEqual(step.stop, initialize.stop);
+  const wrongKey = { ...step.stop, cmd: step.stop.cmd.replace(/\.[0-9a-f]{64}\b/, '.' + '0'.repeat(64)) };
+  assert.notEqual(wrongKey.cmd, step.stop.cmd);
+  const rejected = spawnSync(wrongKey.shell, shellArgs(wrongKey), { cwd: wrongKey.workdir, env: ctx.env, timeout: 10_000 });
+  assert.ifError(rejected.error);
+  assert.equal(rejected.status, 1);
+  assert.equal(ctx.host.exitCode, null);
   ctx.exec(step.stop);
-  assert.equal((await ctx.done)[0], 0);
+  assert.equal((await ctx.finished())[0], 0);
   assert.deepEqual(ctx.requests().map(frame => frame.method), ['initialize', 'session/new', 'session/set_config_option']);
   await ctx.cleaned();
 });
@@ -275,7 +305,7 @@ test('native catalog discovery returns the current model and never submits a pro
   assert.equal(result.current_model, 'gemini-3.8-flash');
   assert.ok(result.models.some(m => m.id === model));
   assert.deepEqual(ctx.requests().map(frame => frame.method), ['initialize', 'session/new']);
-  await ctx.done;
+  await ctx.finished();
   await ctx.cleaned();
 });
 
@@ -301,11 +331,16 @@ test('Codex app-server writes exact UTF-8 to the ACP submit terminal without ech
   let exitCode;
   try {
     rpc(1, 'initialize', { clientInfo: { name: 'codex-polish-tests', version: '1' }, capabilities: { experimentalApi: true } });
-    for await (const line of messages) {
-      const message = JSON.parse(line);
+    const incoming = messages[Symbol.asyncIterator]();
+    let waiting = 'initialize';
+    for (;;) {
+      const item = await byDeadline(incoming.next(), () => 'Codex app-server timed out waiting for ' + waiting);
+      if (item.done) break;
+      const message = JSON.parse(item.value);
       assert.ok(!message.error, JSON.stringify(message.error));
       if (message.id === 1) {
         server.stdin.write('{"method":"initialized"}\n');
+        waiting = 'input_ready on the ACP submit terminal';
         rpc(2, 'command/exec', { command: [exec.shell, ...shellArgs(exec)], cwd: exec.workdir, env, processId,
           tty: true, timeoutMs: 30_000, sandboxPolicy: { type: 'dangerFullAccess' } });
       } else if (message.method === 'command/exec/outputDelta' && message.params.processId === processId) {
@@ -313,9 +348,10 @@ test('Codex app-server writes exact UTF-8 to the ACP submit terminal without ech
         output.push(Buffer.from(message.params.deltaBase64, 'base64'));
         if (!sent && Buffer.concat(output).includes(Buffer.from('input_ready'))) {
           sent = true;
+          waiting = 'command/exec/write acknowledgement or command exit';
           rpc(3, 'command/exec/write', { processId, deltaBase64: Buffer.from(JSON.stringify(material) + '\n').toString('base64') });
         }
-      } else if (message.id === 3) writeAcknowledged = true;
+      } else if (message.id === 3) { writeAcknowledged = true; waiting = 'command exit after material submission'; }
       else if (message.id === 2) exitCode = message.result.exitCode;
       if (exitCode !== undefined && (!sent || writeAcknowledged)) break;
     }
@@ -329,6 +365,6 @@ test('Codex app-server writes exact UTF-8 to the ACP submit terminal without ech
   assert.deepEqual(await ctx.event(), { event: 'delivery', markdown: '**Gemini 返回了原稿** <!-- codex-polish -->\n\n' + material.draft });
   const prompt = ctx.requests().find(frame => frame.method === 'session/prompt');
   assert.deepEqual(JSON.parse(prompt.params.prompt[0].text), material);
-  await ctx.done;
+  await ctx.finished();
   await ctx.cleaned();
 });

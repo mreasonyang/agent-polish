@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { devNull } from 'node:os';
 import path from 'node:path';
 import { execFile, execFileSync, spawnSync } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -141,7 +140,7 @@ test('tracked project links work directly; other prompt targets must be chosen e
   if (process.platform === 'win32') {
     const args = ['--literal-pathspecs', '-c', 'core.fsmonitor=false', '-C', project, 'ls-files', '--stage', '-z', '--', 'editing.md'];
     const opts = { encoding: 'utf8', env: { SystemRoot: process.env.SystemRoot, PATH: process.env.PATH,
-      GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: devNull, GIT_OPTIONAL_LOCKS: '0' } };
+      GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_OPTIONAL_LOCKS: '0' } };
     const check = spawnSync('git', args, opts);
     assert.equal(check.status, 0, check.stderr || check.error?.message);
     assert.match(check.stdout, /^100644 [a-f0-9]+ 0\tediting\.md\0$/);

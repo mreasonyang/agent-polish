@@ -10,7 +10,6 @@ import { setTimeout as delay } from 'node:timers/promises';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { executable } from '../plugins/codex-polish/hooks/platform.mjs';
-import { psArg } from '../plugins/codex-polish/skills/codex-polish/scripts/acp_windows_io.mjs';
 import { REPLY, SESSION } from './fixture_acp.mjs';
 
 const windows = process.platform === 'win32';
@@ -308,17 +307,6 @@ async function submitWithCodex(exec, fixtureEnv, material) {
   const rpc = (id, method, params) => server.stdin.write(JSON.stringify({ id, method, params }) + '\n');
   const processId = 'acp-submit';
   const output = [];
-  const probePath = join(project, 'console-probe.cjs');
-  const marker = join(project, 'console-startup.jsonl');
-  let probeOutput = '';
-  let probeStatus;
-  if (windows) fs.writeFileSync(probePath, `require('node:fs').appendFileSync(${JSON.stringify(marker)},
-    JSON.stringify({ node: true, stdin: !!process.stdin.isTTY, stdout: !!process.stdout.isTTY }) + '\\n');
-    console.log('node-ready');`);
-  const probe = () => windows ? ' Windows console probe: ' + JSON.stringify({
-    status: probeStatus, powershellOutput: probeOutput.includes('ps-ready'), nodeOutput: probeOutput.includes('node-ready'),
-    stages: fs.existsSync(marker) && fs.readFileSync(marker, 'utf8').trim(),
-  }) : '';
   let sent = false;
   let writeAcknowledged = false;
   let exitCode;
@@ -327,25 +315,16 @@ async function submitWithCodex(exec, fixtureEnv, material) {
     const incoming = messages[Symbol.asyncIterator]();
     let waiting = 'initialize';
     for (;;) {
-      const item = await byDeadline(incoming.next(), () => 'Codex app-server timed out waiting for ' + waiting + probe());
+      const item = await byDeadline(incoming.next(), () => 'Codex app-server timed out waiting for ' + waiting);
       if (item.done) break;
       const message = JSON.parse(item.value);
       assert.ok(!message.error, JSON.stringify(message.error));
       if (message.id === 1) {
         server.stdin.write('{"method":"initialized"}\n');
         waiting = 'input_ready on the ACP submit terminal';
-        if (windows) {
-          const cmd = '[IO.File]::WriteAllText(' + psArg(marker) + ", 'PowerShell started')\n" +
-            "Write-Output 'ps-ready'\n& " + psArg(process.execPath) + ' ' + psArg(probePath);
-          rpc(4, 'command/exec', { command: [exec.shell, ...shellArgs({ ...exec, cmd })], cwd: exec.workdir, env,
-            processId: 'stdio-probe', tty: true, timeoutMs: 10_000, sandboxPolicy: { type: 'dangerFullAccess' } });
-        }
         rpc(2, 'command/exec', { command: [exec.shell, ...shellArgs(exec)], cwd: exec.workdir, env, processId,
           tty: true, timeoutMs: 30_000, size: { rows: 40, cols: 160 }, sandboxPolicy: { type: 'dangerFullAccess' } });
-      } else if (message.id === 4) probeStatus = message.result.exitCode;
-      else if (message.method === 'command/exec/outputDelta' && message.params.processId === 'stdio-probe')
-        probeOutput += Buffer.from(message.params.deltaBase64, 'base64').toString();
-      else if (message.method === 'command/exec/outputDelta' && message.params.processId === processId) {
+      } else if (message.method === 'command/exec/outputDelta' && message.params.processId === processId) {
         assert.ok(!message.params.capReached);
         output.push(Buffer.from(message.params.deltaBase64, 'base64'));
         if (!sent && Buffer.concat(output).includes(Buffer.from('input_ready'))) {
@@ -357,7 +336,7 @@ async function submitWithCodex(exec, fixtureEnv, material) {
       else if (message.id === 2) exitCode = message.result.exitCode;
       if (exitCode !== undefined && (!sent || writeAcknowledged)) break;
     }
-    assert.equal(exitCode, 0, (diagnostic || Buffer.concat(output).toString()) + probe());
+    assert.equal(exitCode, 0, diagnostic || Buffer.concat(output).toString());
     assert.ok(sent && writeAcknowledged, 'Codex must confirm the terminal write');
     assert.doesNotMatch(Buffer.concat(output).toString(), /fixture-question|私有原稿|draft"/);
   } finally {

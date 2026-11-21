@@ -1,6 +1,5 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { devNull } from 'node:os';
 import { windows, sameEntry } from './platform.mjs';
 import { createHash, randomBytes } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
@@ -13,7 +12,8 @@ function git(project, args) {
   return execFileSync('git', ['--literal-pathspecs', '-c', 'core.fsmonitor=false', '-C', project, ...args], {
     stdio: ['ignore', 'pipe', 'ignore'], timeout: 1000,
     env: { ...(windows && { SystemRoot: process.env.SystemRoot }), PATH: process.env.PATH,
-      GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: devNull, GIT_OPTIONAL_LOCKS: '0' },
+      // Git for Windows maps /dev/null to NUL in its own path layer.
+      GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_OPTIONAL_LOCKS: '0' },
   });
 }
 

@@ -294,8 +294,8 @@ function registration(run) {
 function registeredMarket(run, store) {
   const path = registration(run);
   if (path && path !== canonical(store))
-    throw fail('同名市场使用了其他来源，请在 Codex 插件设置中检查。',
-      'A marketplace with the same name uses a different source. Check it in Codex plugin settings.');
+    throw fail(`同名市场使用了其他来源。Codex 返回 ${path}，预期 ${store}。请在插件设置中核对。`,
+      `A marketplace with the same name uses a different source. Codex returned ${path}. Expected ${store}. Check it in Codex plugin settings.`);
   return path ? store : null;
 }
 function marketIndex(snapshot) {
@@ -640,10 +640,11 @@ async function setup(root, store, run, setEnabled, action) {
   } catch (error) {
     try {
       await rollback(run, setEnabled, previous, before, target, store);
-    } catch {
+    } catch (rollbackError) {
+      const describe = err => err instanceof SetupError ? err.message : [err.code, err.syscall, err.path].filter(Boolean).join(' ') || err.message;
       throw fail(
-        '安装失败，Codex 没能恢复。本地快照已保留，请重新运行 setup。',
-        "Codex couldn't restore the previous installation. The local copy is still there. Run setup again."
+        `安装失败：${describe(error)}\n恢复失败：${describe(rollbackError)}\n本地快照已保留，请重新运行 setup。`,
+        `Installation failed: ${describe(error)}\nCodex couldn't restore the previous installation: ${describe(rollbackError)}\nThe local copy is still there. Run setup again.`
       );
     }
     if (before) finishPending(store);

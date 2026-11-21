@@ -15,7 +15,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - { os: ubuntu-latest, name: Linux }
+          - { os: macos-latest, name: macOS }
+          - { os: windows-latest, name: Windows ACP, pattern: '^acp' }
+          - { os: windows-latest, name: Windows installer, pattern: '^install' }
+          - { os: windows-latest, name: Windows core, pattern: '^(?!acp|install)' }
+    name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
@@ -29,14 +35,23 @@ jobs:
       - run: npm install --global @openai/codex@0.170.0
       - run: codex --version
       - name: Set up Windows console tests
-        if: runner.os == 'Windows'
+        if: matrix.name == 'Windows ACP'
         shell: pwsh
         run: |
           $prefix = Join-Path $env:RUNNER_TEMP 'polish-test-pty'
           npm install --prefix "$prefix" --no-save --no-package-lock node-pty@1.1.0
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           "NODE_PATH=$(Join-Path $prefix 'node_modules')" >> $env:GITHUB_ENV
-      - run: npm test
+      - if: runner.os != 'Windows'
+        run: npm test
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          TEST_PATTERN: ${{ matrix.pattern }}
+        run: |
+          $files = @(Get-ChildItem tests -Filter '*.test.mjs' | Where-Object { $_.Name -match $env:TEST_PATTERN })
+          if (!$files.Count) { throw 'No tests matched' }
+          node --test $files.FullName
       - run: npm pack --ignore-scripts --dry-run
   windows-package:
     runs-on: windows-latest

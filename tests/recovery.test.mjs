@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { secureDirectory } from '../plugins/codex-polish/skills/codex-polish/scripts/acp_windows_io.mjs';
 import { temporary } from './hook_fixture.mjs';
 import * as recovery from '../plugins/codex-polish/hooks/recovery.mjs';
 
@@ -46,6 +47,7 @@ test('broken or unwritable cache leaves unrelated files intact', t => {
   const { root, cache } = fixture(t);
   const file = databasePath();
   fs.mkdirSync(path.dirname(file), { recursive: true });
+  if (process.platform === 'win32') secureDirectory(path.dirname(file));
   for (const damaged of ['unrelated private content', 'SQLite format 3\0' + 'x'.repeat(300)]) {
     fs.writeFileSync(file, damaged, { mode: 0o600 });
     assert.throws(() => withCache('create', () => {}));
@@ -66,6 +68,7 @@ test('cleanup retains unrecognized files, reports busy database, and removes own
   fixture(t);
   const file = databasePath();
   fs.mkdirSync(path.dirname(file), { recursive: true });
+  if (process.platform === 'win32') secureDirectory(path.dirname(file));
   fs.writeFileSync(file, 'unrelated user content', { mode: 0o600 });
   assert.equal(removeProfileCache(), file);
   assert.equal(fs.readFileSync(file, 'utf8'), 'unrelated user content');

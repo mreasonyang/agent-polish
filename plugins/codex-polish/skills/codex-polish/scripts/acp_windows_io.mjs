@@ -23,10 +23,11 @@ export function windowsCommand(args, directory) {
       args.map(psArg).join(' ') + '\nexit $LASTEXITCODE' };
 }
 
-function checkAcl(path, directory, restrict) {
+function checkAcl(entries, restrict = false) {
   const script = `$ErrorActionPreference = 'Stop'
-$d = Get-Item -Force -LiteralPath ${psArg(path)}
-if ($d.PSIsContainer -ne ${directory ? '$true' : '$false'} -or ($d.Attributes -band [IO.FileAttributes]::ReparsePoint)) {throw 'directory'}
+function Test-PrivatePath([string]$FilePath,[bool]$Directory) {
+$d = Get-Item -Force -LiteralPath $FilePath
+if ($d.PSIsContainer -ne $Directory -or ($d.Attributes -band [IO.FileAttributes]::ReparsePoint)) {throw 'directory'}
 $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User
 $acl = $d.GetAccessControl()
 $trusted = @($sid.Value, 'S-1-5-18', 'S-1-5-32-544')
@@ -41,11 +42,14 @@ $raw = [Security.AccessControl.RawSecurityDescriptor]::new($acl.GetSecurityDescr
 if ($null -eq $raw.DiscretionaryAcl) {throw 'permissions'}
 foreach ($rule in $acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])) {
   if ($rule.AccessControlType -eq 'Allow' -and $trusted -notcontains $rule.IdentityReference.Value) {throw 'permissions'}
-}`;
+}
+}
+${entries.map(({ path, directory }) => 'Test-PrivatePath ' + psArg(path) + (directory ? ' $true' : ' $false')).join('\n')}`;
   execFileSync(powershell, ['-NoProfile', '-NonInteractive', '-Command', script], { stdio: 'ignore', windowsHide: true });
 }
-export const secureDirectory = path => checkAcl(path, true, true);
-export const checkPrivatePath = (path, directory = true) => checkAcl(path, directory, false);
+export const secureDirectory = path => checkAcl([{ path, directory: true }], true);
+export const checkPrivatePaths = entries => checkAcl(entries);
+export const checkPrivatePath = (path, directory = true) => checkPrivatePaths([{ path, directory }]);
 
 const tlsOptions = { minVersion: 'TLSv1.2', maxVersion: 'TLSv1.2', ciphers: 'PSK-AES128-GCM-SHA256', allowHalfOpen: true };
 

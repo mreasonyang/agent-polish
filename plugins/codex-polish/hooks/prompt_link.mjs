@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { devNull } from 'node:os';
-import { windows } from './platform.mjs';
+import { windows, sameEntry } from './platform.mjs';
 import { createHash, randomBytes } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { cacheScope, withCache } from './recovery.mjs';
@@ -49,7 +49,7 @@ function readTarget(target) {
   const fd = fs.openSync(target, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
   try {
     const stat = fs.fstatSync(fd, { bigint: true });
-    if (!stat.isFile() || stat.nlink !== 1n || stat.ino !== named.ino || stat.dev !== named.dev || fs.realpathSync(target) !== target)
+    if (!stat.isFile() || stat.nlink !== 1n || !sameEntry(stat, named) || fs.realpathSync(target) !== target)
       throw new Error('invalid_prompt_target');
     return fs.readFileSync(fd);
   } finally { fs.closeSync(fd); }

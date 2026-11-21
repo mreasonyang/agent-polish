@@ -22,6 +22,7 @@ import {
   withLock
 } from '../scripts/install.mjs';
 import { windows, homeEnv, supportsFileSymlink } from './hook_fixture.mjs';
+import { executable } from '../plugins/codex-polish/hooks/platform.mjs';
 import { preserve } from '../scripts/native_cache.mjs';
 
 function temp(t) {
@@ -381,4 +382,19 @@ test('missing Codex returns localized actionable errors; invalid CLI flags exit 
     const flag = '--install-agy';
     assert.equal(spawnSync(process.execPath, [script, action, flag]).status, 2);
   }
+});
+
+test('Windows resolves the official npm Codex entry without passing arguments through cmd', { skip: !windows }, t => {
+  const prefix = join(temp(t), 'npm & tools');
+  const env = { ...homeEnv(prefix), PATH: '"' + prefix + '"' };
+  write(join(prefix, 'codex.cmd'), '@exit /b 91');
+  assert.equal(executable('codex', env), null);
+  const js = join(prefix, 'node_modules/@openai/codex/bin/codex.js');
+  write(js, 'console.log(JSON.stringify(process.argv.slice(2)))');
+  const shim = executable('codex', env);
+  assert.deepEqual(shim, { command: process.execPath, args: [js] });
+  const args = ['A & B', '%TEMP%', '中文 (example)'];
+  assert.deepEqual(JSON.parse(spawnSync(shim.command, [...shim.args, ...args], { encoding: 'utf8' }).stdout), args);
+  write(join(prefix, 'codex.exe'), '');
+  assert.deepEqual(executable('codex', env), { command: join(prefix, 'codex.exe'), args: [] });
 });

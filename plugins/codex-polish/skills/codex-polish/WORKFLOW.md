@@ -29,7 +29,7 @@
 
 ## 判定与改写
 
-脚本从标准输入读取 UTF-8 JSON，输出 JSON。使用宿主的安全 stdin。只有宿主终端可用时，给 `decision judge` 和 `format_reply.mjs` 加 `--host-input`，使用 `tty: true` 启动。等 `input_ready` 后，用 `write_stdin` 发送 `JSON.stringify(材料) + "\n"`。若命令直接返回判定结果，按该结果继续。不要把正文当作 shell 代码执行，不写草稿到项目文件。检查退出状态、完整结果和返回字段，失败时保留原稿。
+脚本从标准输入读取 UTF-8 JSON，输出 JSON。使用宿主的安全 stdin。只有宿主终端可用时，给 `decision judge` 和 `format_reply.mjs` 加 `--host-input`，使用 `tty: true` 启动。等 `input_ready` 后，用 `write_stdin` 发送 `JSON.stringify(材料) + "\n"`。后续只交付排版结果。`input_ready` 是工具状态。若命令直接返回判定结果，按该结果继续。不要把正文当作 shell 代码执行，不写草稿到项目文件。检查退出状态、完整结果和返回字段，失败时保留原稿。
 
 1. 选好原稿后，按本轮的 `check.decisions_enabled` 选择路由。问题、草稿、选区和本次编辑要求均使用原文。
    - 为假时使用 `route=acp`，直接进入第 2 步。所有主动请求都走这条路径，不调用 `decision judge`。

@@ -9,6 +9,7 @@ import { createInterface } from 'node:readline';
 import { setTimeout as delay } from 'node:timers/promises';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { executable } from '../plugins/codex-polish/hooks/platform.mjs';
 import { REPLY, SESSION } from './fixture_acp.mjs';
 
 const windows = process.platform === 'win32';
@@ -63,7 +64,7 @@ function openTurn(t, scenario, { catalog = false } = {}) {
   const { workspace, editor_role_file, start } = JSON.parse(run(process.execPath,
     [workspaceTool, '--agy-path', agy, '--auth', 'existing-session', ...options], { env }));
   assert.equal(start.workdir, windows ? dirname(workspace) : workspace);
-  assert.ok(start.tty);
+  assert.equal(start.tty, !windows);
   assert.match(fs.readFileSync(editor_role_file, 'utf8'), /codex-polish-editor/);
 
   // agy is a real Node executable. Its first production argument "acp" selects this
@@ -252,6 +253,20 @@ test('a Windows cancellation descriptor stops only the active ACP session', { sk
   await ctx.cleaned();
 });
 
+test('the agent can stop a Windows host before submitting any draft', { skip: !windows, timeout: 75_000 }, async t => {
+  const ctx = openTurn(t, 'stalled');
+  const initialize = await ctx.event();
+  assert.equal(initialize.event, 'send');
+  ctx.exec(initialize.exec);
+  const step = await ctx.handshake();
+  assert.equal(step.event, 'submit');
+  assert.deepEqual(step.stop, initialize.stop);
+  ctx.exec(step.stop);
+  assert.equal((await ctx.done)[0], 0);
+  assert.deepEqual(ctx.requests().map(frame => frame.method), ['initialize', 'session/new', 'session/set_config_option']);
+  await ctx.cleaned();
+});
+
 test('native catalog discovery returns the current model and never submits a prompt', { timeout: 45_000 }, async t => {
   const ctx = openTurn(t, 'ok', { catalog: true });
   const result = await ctx.handshake();
@@ -259,6 +274,62 @@ test('native catalog discovery returns the current model and never submits a pro
   assert.equal(result.current_model, 'gemini-3.8-flash');
   assert.ok(result.models.some(m => m.id === model));
   assert.deepEqual(ctx.requests().map(frame => frame.method), ['initialize', 'session/new']);
+  await ctx.done;
+  await ctx.cleaned();
+});
+
+test('Codex app-server writes exact UTF-8 to the ACP submit terminal without echo', { timeout: 90_000 }, async t => {
+  const ctx = openTurn(t, 'unchanged');
+  const { exec } = await ctx.handshake();
+  const codex = executable('codex');
+  assert.ok(codex, 'install @openai/codex to exercise the actual Codex terminal');
+  fs.mkdirSync(ctx.env.CODEX_HOME, { recursive: true });
+  const env = Object.fromEntries(['PATH', 'HOME', 'USERPROFILE', 'SystemRoot', 'TEMP', 'TMP', 'LOCALAPPDATA', 'APPDATA',
+    'CODEX_HOME', 'XDG_CACHE_HOME'].filter(key => ctx.env[key]).map(key => [key, ctx.env[key]]));
+  const server = spawn(codex.command, [...codex.args, 'app-server', '--stdio'], { cwd: ctx.project, env });
+  const closed = once(server, 'close');
+  let diagnostic = '';
+  server.stderr.setEncoding('utf8').on('data', data => { diagnostic += data; });
+  const messages = createInterface({ input: server.stdout, crlfDelay: Infinity });
+  const rpc = (id, method, params) => server.stdin.write(JSON.stringify({ id, method, params }) + '\n');
+  const processId = 'acp-submit';
+  const material = { draft: '  私有原稿 "🐕🏽"\r\n', question: 'fixture-question 共享组合字 e\u0301 和\t雪。\r\n'.repeat(650) };
+  const output = [];
+  let sent = false;
+  let writeAcknowledged = false;
+  let exitCode;
+  try {
+    rpc(1, 'initialize', { clientInfo: { name: 'codex-polish-tests', version: '1' }, capabilities: { experimentalApi: true } });
+    for await (const line of messages) {
+      const message = JSON.parse(line);
+      assert.ok(!message.error, JSON.stringify(message.error));
+      if (message.id === 1) {
+        server.stdin.write('{"method":"initialized"}\n');
+        rpc(2, 'command/exec', { command: [exec.shell, ...shellArgs(exec)], cwd: exec.workdir, env, processId,
+          tty: true, timeoutMs: 30_000, sandboxPolicy: { type: 'dangerFullAccess' } });
+      } else if (message.method === 'command/exec/outputDelta' && message.params.processId === processId) {
+        assert.ok(!message.params.capReached);
+        output.push(Buffer.from(message.params.deltaBase64, 'base64'));
+        if (!sent && Buffer.concat(output).includes(Buffer.from('input_ready'))) {
+          sent = true;
+          rpc(3, 'command/exec/write', { processId, deltaBase64: Buffer.from(JSON.stringify(material) + '\n').toString('base64') });
+        }
+      } else if (message.id === 3) writeAcknowledged = true;
+      else if (message.id === 2) {
+        exitCode = message.result.exitCode;
+        break;
+      }
+    }
+    assert.equal(exitCode, 0, diagnostic || Buffer.concat(output).toString());
+    assert.ok(sent && writeAcknowledged, 'Codex must confirm the terminal write');
+    assert.doesNotMatch(Buffer.concat(output).toString(), /fixture-question|私有原稿|draft"/);
+  } finally {
+    server.stdin.end();
+    await closed;
+  }
+  assert.deepEqual(await ctx.event(), { event: 'delivery', markdown: '**Gemini 返回了原稿** <!-- codex-polish -->\n\n' + material.draft });
+  const prompt = ctx.requests().find(frame => frame.method === 'session/prompt');
+  assert.deepEqual(JSON.parse(prompt.params.prompt[0].text), material);
   await ctx.done;
   await ctx.cleaned();
 });

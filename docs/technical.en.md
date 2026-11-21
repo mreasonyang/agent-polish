@@ -36,7 +36,7 @@ node plugins/codex-polish/hooks/preferences.mjs set-prompt --cwd /path/to/projec
 node plugins/codex-polish/hooks/preferences.mjs set-prompt --reset --cwd /path/to/project
 ```
 
-You can edit the project prompt file directly or link it to a prompt tracked by Git in the same project. The setup command creates a relative link for a tracked project file. Commit the link to share it across clones. To use a shared prompt elsewhere or an untracked file, name the file in chat or run `node plugins/codex-polish/hooks/preferences.mjs set-prompt --link /path/to/prompt.md --cwd /path/to/project`. The file must contain valid UTF-8 and at least one non-whitespace character. Replacing the prompt or restoring the default changes only the project link.
+You can edit the project prompt file directly or link it to a prompt tracked by Git in the same project. The setup command stores a relative reference for a tracked project file. On Windows this is a regular file, so the command works without permission to create symbolic links. Commit the link to share it across clones. To use a shared prompt elsewhere or an untracked file, name the file in chat or run `node plugins/codex-polish/hooks/preferences.mjs set-prompt --link /path/to/prompt.md --cwd /path/to/project`. The file must contain valid UTF-8 and at least one non-whitespace character. Replacing the prompt or restoring the default changes only the project link.
 
 ## Rewrite Routes, Stages, and Thresholds
 
@@ -49,6 +49,8 @@ You can edit the project prompt file directly or link it to a prompt tracked by 
 | 2. Style check | Direct ACP sends the selected text to Gemini. With Decisions enabled, OpenAI considers only the current question, draft, and any custom polishing prompt. Gemini rewrites when `P(needs rewrite) > 0.50`. |
 | 3. ACP rewrite | Gemini loads the polishing prompt for this request from the body of the editor role. The agent launches `agy acp` in a temporary workspace under a dedicated editor role, opens a session with the configured Antigravity identity, reads the live model list, and checks the project settings and selected model before sending. It rejects tool permission requests and collects only reply text from this session. The reply is ready to display once the agent has nonempty text and an `end_turn` matching the request ID. |
 | 4. Display | Identical replies appear once. The comparison keeps both versions if their indentation, whitespace, or line endings differ. |
+
+On Windows, the host uses Windows PowerShell and its built-in .NET runtime to start `agy.exe`. A Windows job object ties the provider and its child processes to the rewrite. The agent submits each protocol message itself. Draft input goes through a separate console handle, which accepts long UTF-8 text.
 
 During a rewrite, `agy` connects to Google. The plugin's Node.js scripts contact a provider only for the optional OpenAI style check. The current Codex agent starts and cleans up the ACP process, selects the model, and exchanges protocol messages. [ACP operating instructions](../plugins/codex-polish/skills/codex-polish/references/acp.md)
 

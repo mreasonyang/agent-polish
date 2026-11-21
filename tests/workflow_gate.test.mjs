@@ -36,6 +36,19 @@ export async function decide(args, stream) {
   return { ...f, installed, bin, agy, env, calls, script, invoke, judge, check, helper, logged };
 }
 
+test('the interactive style check consumes one host record and keeps its contents private in stdout', t => {
+  const f = fixture(t);
+  const args = ['decision', 'judge', '--trigger', 'auto', '--route', 'decisions', '--host-input', '--cwd', f.cwd];
+  const { stdout, stderr, status } = run(path.join(f.installed, 'hooks/preferences.mjs'), args, {
+    env: f.env, input: JSON.stringify({ question: 'q', draft: 'private example' }) + '\n',
+  });
+  assert.equal(status, 0, stderr);
+  const [ready, result] = stdout.trimEnd().split('\n');
+  assert.equal(ready, 'input_ready');
+  assert.deepEqual(JSON.parse(result), { action: 'rewrite', reason: 'needs_rewrite', probability: 0.96, route: 'decisions' });
+  assert.deepEqual(f.logged(), ['judge']);
+});
+
 test('the workflow maps ordinary requests for a polish and earlier-answer rewrites to the correct trigger and draft', () => {
   const workflow = fs.readFileSync(path.join(plugin, 'skills/codex-polish/WORKFLOW.md'), 'utf8');
   const lines = workflow.split('\n');

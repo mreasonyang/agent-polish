@@ -403,7 +403,7 @@ test('bootstrap uses the official HTTPS endpoint, removes credentials, verifies 
     release = join(base, 'release');
   const installer = windows ? [
     'if ($env:OPENAI_API_KEY -or $env:GEMINI_API_KEY -or $env:BASH_ENV -or $env:ENV) { exit 3 }',
-    "if ($args[0] -ne '--dir' -or $args[1] -ne (Join-Path $env:LOCALAPPDATA 'agy/bin')) { exit 2 }",
+    "if ($args[0] -ne '--dir' -or $args[1] -ne (Join-Path (Join-Path $env:LOCALAPPDATA 'agy') 'bin')) { exit 2 }",
     "Copy-Item -LiteralPath (Join-Path $env:USERPROFILE 'release') -Destination (Join-Path $args[1] 'agy.exe')"
   ].join('\n') : [
     '[[ -z "$OPENAI_API_KEY$GEMINI_API_KEY$ENV$BASH_ENV" ]] || exit 3',

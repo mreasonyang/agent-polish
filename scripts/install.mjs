@@ -293,10 +293,10 @@ function registration(run) {
 }
 function registeredMarket(run, store) {
   const path = registration(run);
-  if (path && path !== store)
+  if (path && path !== canonical(store))
     throw fail('同名市场使用了其他来源，请在 Codex 插件设置中检查。',
       'A marketplace with the same name uses a different source. Check it in Codex plugin settings.');
-  return path;
+  return path ? store : null;
 }
 function marketIndex(snapshot) {
   bundleVersion(snapshot);
@@ -853,7 +853,12 @@ export async function withLock(file, action) {
 }
 export async function manage(action, root, store, run = codex, setEnabled = writeEnabled) {
   fs.mkdirSync(store, { recursive: true, mode: 0o700 });
-  if (!fs.lstatSync(store).isDirectory() || fs.realpathSync.native(store) !== store) {
+  // Windows can expand 8.3 names and casing in a realpath. Inspect each
+  // named directory so those aliases work and junctions stay excluded.
+  let ordinary = isAbsolute(store);
+  for (let dir = store; ordinary && dir !== dirname(dir); dir = dirname(dir))
+    ordinary = fs.lstatSync(dir).isDirectory();
+  if (!ordinary) {
     throw fail(
       '快照目录路径异常，请检查后再试。',
       'Unexpected snapshot directory. Check this path before trying again.'

@@ -36,7 +36,7 @@ node plugins/codex-polish/hooks/preferences.mjs set-prompt --cwd /path/to/projec
 node plugins/codex-polish/hooks/preferences.mjs set-prompt --reset --cwd /path/to/project
 ```
 
-可以直接编辑项目提示词文件，也可以链接到同项目 Git 跟踪的提示词。设置命令为仓库内已跟踪的文件创建相对链接，提交后在其他克隆中也能使用。若要共用项目外的提示词，或使用未跟踪的文件，在聊天里指定那个文件，或运行 `node plugins/codex-polish/hooks/preferences.mjs set-prompt --link /path/to/prompt.md --cwd /path/to/project`。文件需为非空白 UTF-8 文本。改用文字或恢复默认只会替换或移除项目里的链接。
+可以直接编辑项目提示词文件，也可以链接到同项目 Git 跟踪的提示词。设置命令为仓库内已跟踪的文件保存相对路径；Windows 使用普通文件记录该路径，无需创建符号链接的权限。提交后在其他克隆中也能使用。若要共用项目外的提示词，或使用未跟踪的文件，在聊天里指定那个文件，或运行 `node plugins/codex-polish/hooks/preferences.mjs set-prompt --link /path/to/prompt.md --cwd /path/to/project`。文件需为非空白 UTF-8 文本。改用文字或恢复默认只会替换或移除项目里的链接。
 
 ## 改写流程与判定阈值
 
@@ -80,6 +80,8 @@ Google 为默认模型 `gemini-4-hydrogen` 的 Gemini API 公布了 1,048,576 to
 插件自身不写草稿日志。Codex 宿主日志、服务商侧日志以及机器上全局配置的 Antigravity hooks 仍按各自的环境配置运行。服务商的数据处理遵循各自条款，与本项目的 Apache License 2.0 代码许可无关，可参阅 [Google 使用说明](https://antigravity.google/docs/faq)。
 
 ## 认证与故障处理
+
+Windows 上，宿主通过系统自带的 Windows PowerShell 和 .NET 启动 `agy.exe`。Codex agent 逐条提交协议消息，通过单独的控制台句柄传入长文本。本轮结束或取消时，Windows Job Object 一并回收 `agy.exe` 和它的子进程。
 
 插件要求官方 Antigravity CLI（`agy`）1.2.1 或更高版本，先在 Codex 的 `PATH` 中查找 `agy`，再查 Google 的默认安装目录，Windows 上是 `%LOCALAPPDATA%\agy\bin`，macOS 和 Linux 上是 `~/.local/bin`。默认通过 `agy acp` 复用本机已有登录，无需配置 Gemini API 密钥，也从不调用 `agy -p`。旧配置如需沿用 AI Studio 密钥可设 `CODEX_POLISH_AGY_AUTH=gemini-api-key`，企业环境可设 `agent-platform`。凭据必须配置在运行 Codex 的机器和对应系统用户下，详见 [首次配置指南](../plugins/codex-polish/skills/codex-polish-setup/references/credentials.md)。
 

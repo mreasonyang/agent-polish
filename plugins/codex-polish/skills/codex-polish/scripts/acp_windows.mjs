@@ -20,7 +20,8 @@ async function relay(settings, parent) {
   let shuttingDown = false;
   let shutdownTimer;
   let active = 0;
-  const channel = await listenPrivate(async ({ frame, original }, afterFlush) => {
+  async function forward({ operation, frame, original }, afterFlush) {
+    if (operation === 'stop') { afterFlush(() => stop()); return true; }
     if (shuttingDown || !frame || frame.jsonrpc !== '2.0') throw Error('invalid_frame');
     if (frame.method === 'session/prompt') {
       if (submitted !== undefined || frame.id !== 6 || !original || typeof original.draft !== 'string' ||
@@ -41,6 +42,10 @@ async function relay(settings, parent) {
       afterFlush(release);
       return true;
     } catch (e) { release(); throw e; }
+  }
+  const channel = await listenPrivate(forward).catch(error => {
+    dispose(directory, owners);
+    throw error;
   });
 
   function stop(grace = 0) {
@@ -75,6 +80,7 @@ async function relay(settings, parent) {
     submit: args => ({ ...command([payload, '--windows-submit', channel.endpoint, encode(args)]), tty: true, yield_time_ms: 250 }),
   };
   const emit = event => {
+    if (event.event === 'send' || event.event === 'submit') event.stop = command([self, '--stop', channel.endpoint]);
     process.stderr.write(JSON.stringify(event) + '\n', () => {
       if (!hostAlive()) { void parentLost(); return; }
       if (['delivery', 'catalog', 'error', 'closed'].includes(event.event)) stop(event.finish ? 3000 : 0);
@@ -94,8 +100,11 @@ if (isMain(import.meta.url)) {
       await relay(decode(first), parent);
     } else if (operation === '--frame') {
       if (await exchange(first, { frame: decode(second) }, 32) !== true) throw Error('acp_write_failed');
-    } else if (operation === '--dispose') {
+    } else if (operation === '--stop') {
+      if (await exchange(first, { operation: 'stop' }, 32) !== true) throw Error('acp_stop_failed');
+    } else if (operation === '--dispose' || operation === '--dispose-unclaimed') {
       const { directory, owners } = decode(first);
+      if (operation === '--dispose-unclaimed') claimWindowsWorkspace(directory, owners);
       dispose(directory, owners);
     } else throw Error('invalid_operation');
   } catch { process.exitCode = 1; }

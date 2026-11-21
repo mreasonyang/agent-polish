@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { windows, openRegular } from './platform.mjs';
-import { secureDirectory, checkPrivatePath } from '../skills/codex-polish/scripts/acp_windows_io.mjs';
+import { secureDirectory, checkPrivatePath, checkPrivatePaths } from '../skills/codex-polish/scripts/acp_windows_io.mjs';
 import { createHash, randomBytes } from 'node:crypto';
 
 export const APPLICATION_ID = 0x43504f4c;
@@ -76,17 +76,18 @@ function initializeDatabase(file, DatabaseSync) {
   }
 }
 
-function privateDirectory(dir) {
+function privateDirectory(dir, checkAcl = true) {
   const entry = fs.lstatSync(dir);
   if (!entry.isDirectory()) throw new Error('invalid cache directory');
-  if (windows) checkPrivatePath(dir);
-  else if (entry.uid !== process.getuid() || entry.mode & 0o022) throw new Error('invalid cache directory');
+  if (windows) {
+    if (checkAcl) checkPrivatePath(dir);
+  } else if (entry.uid !== process.getuid() || entry.mode & 0o022) throw new Error('invalid cache directory');
 }
 
-function privateFile(file, entry) {
+function privateFile(file, entry, checkAcl = true) {
   if (!entry.isFile() || entry.nlink !== 1) return false;
   if (windows) {
-    checkPrivatePath(file, false);
+    if (checkAcl) checkPrivatePath(file, false);
     return true;
   }
   return entry.uid === process.getuid() && !(entry.mode & 0o077);
@@ -99,15 +100,20 @@ export function withCache(mode, use) {
     const created = fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
     if (windows && created) secureDirectory(path.dirname(file));
   }
-  privateDirectory(path.dirname(file));
-  if (mode === 'create' && !fs.lstatSync(file, { throwIfNoEntry: false })) initializeDatabase(file, DatabaseSync);
+  const directory = path.dirname(file);
+  privateDirectory(directory, false);
+  if (mode === 'create' && !fs.lstatSync(file, { throwIfNoEntry: false })) {
+    if (windows) checkPrivatePath(directory);
+    initializeDatabase(file, DatabaseSync);
+  }
   let entry = fs.lstatSync(file);
   if (entry.isFile() && entry.nlink === 2 && mode === 'create') {
     // A competing initializer just linked its private database into place.
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
     entry = fs.lstatSync(file);
   }
-  if (!privateFile(file, entry)) throw new Error('invalid cache file');
+  if (!privateFile(file, entry, false)) throw new Error('invalid cache file');
+  if (windows) checkPrivatePaths([{ path: directory, directory: true }, { path: file, directory: false }]);
   const url = pathToFileURL(file);
   url.searchParams.set('mode', mode === 'read' ? 'ro' : 'rw');
   const db = new DatabaseSync(url.href, { readOnly: mode === 'read' });

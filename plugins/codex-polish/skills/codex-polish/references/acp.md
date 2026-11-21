@@ -40,7 +40,7 @@ node "<本技能>/scripts/acp_workspace.mjs" --cwd "<原项目>" --trigger "<aut
 
 读完最终 Markdown（含长回复的最后一页）就直接交付。宿主命令会自行回收子进程和本轮目录。**正常结束无需再调工具**。宿主报告句柄已经退出时，已收到的结果仍然有效。
 
-若用户在生成时取消，Windows 上执行本次返回的 `submit.cancel`，然后结束宿主进程。macOS 或 Linux 上有可用会话时先向 FIFO 发送一次 `{"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"<本轮 ACP sessionId>"}}`，随后结束进程。连接中断时只处理已确认的结果。
+若用户在生成时取消，Windows 上原样执行 `submit.cancel`。若进程仍在运行，再执行 `submit.stop`；等待建立会话期间可用最近的 `send.stop` 结束本轮。macOS 或 Linux 上有可用会话时先向 FIFO 发送一次 `{"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"<本轮 ACP sessionId>"}}`，随后结束进程。连接中断时只处理已确认的结果。
 
 ## 只看模型或检查连接
 

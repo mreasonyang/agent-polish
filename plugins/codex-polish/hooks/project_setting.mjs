@@ -4,16 +4,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { windows, openRegular } from './platform.mjs';
+import { windows, openRegular, sameEntry } from './platform.mjs';
 import { readPromptLink, savePromptLink, resolvePromptBytes } from './prompt_link.mjs';
 
 export const PROMPT_FILE = 'codex-polish.prompt.md';
 
 const { O_RDONLY, O_DIRECTORY, O_NOFOLLOW } = fs.constants;
-
-function sameDirectory(a, b) {
-  return a.dev === b.dev && a.ino === b.ino;
-}
 
 function accessSetting(project, operation, filename, value) {
   const target = filename;
@@ -77,7 +73,7 @@ export function accessProjectSetting(directory, operation, filename, value) {
     // anchored to the kernel's working directory even if its name is replaced.
     process.chdir(directory);
     try {
-      if (!sameDirectory(fd === null ? expected : fs.fstatSync(fd, { bigint: true }), fs.statSync('.', { bigint: true }))) {
+      if (!sameEntry(fd === null ? expected : fs.fstatSync(fd, { bigint: true }), fs.statSync('.', { bigint: true }))) {
         throw new Error('project settings directory changed');
       }
       return accessSetting(path.dirname(directory), operation, filename, value);

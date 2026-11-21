@@ -230,12 +230,18 @@ export function prepareWorkspace({ agyPath, cwd, trigger, selectionOnly, selecti
         payloadArgs, display, quotedSource });
       const cmd = [
         "$ErrorActionPreference = 'Stop'",
+        'try {',
         "Add-Type -ReferencedAssemblies 'System.dll','System.Core.dll' -TypeDefinition ([IO.File]::ReadAllText(" + psArg(windowsHost) + '))',
         'exit [CodexPolishAcpHost]::Run(' + [agyPath, 'acp --agent codex-polish-editor --sandbox', process.execPath,
           windowsRelay, settings, workspace].map(psArg).join(', ') + ')',
+        '} catch {',
+        '& ' + [process.execPath, windowsRelay, '--dispose-unclaimed', settings].map(psArg).join(' '),
+        "[Console]::Error.WriteLine('acp_start_failed')",
+        'exit 1',
+        '}',
       ].join('\n');
       return { workspace, editor_role_file: join(workspace, roleFile),
-        start: { cmd, workdir: dirname(workspace), shell: powershell, login: false, tty: true,
+        start: { cmd, workdir: dirname(workspace), shell: powershell, login: false, tty: false,
           yield_time_ms: 250, max_output_tokens: 32768 } };
     }
     const cmd = [

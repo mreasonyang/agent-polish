@@ -48,6 +48,14 @@ export function windowsSystemTool(relative) {
   return path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', relative);
 }
 
+// libuv's Windows path and handle stat calls can report different volume
+// serials (or zero). The NTFS file index and creation time are shared by both.
+export function sameEntry(a, b) {
+  if (a.ino !== b.ino) return false;
+  if (!windows) return a.dev === b.dev;
+  return a.ino !== 0n && a.birthtimeNs === b.birthtimeNs;
+}
+
 // Windows lacks O_NOFOLLOW. Compare the named entry with the opened file on
 // both systems before returning its handle.
 export function openRegular(file) {
@@ -56,7 +64,7 @@ export function openRegular(file) {
   const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK | fs.constants.O_NOFOLLOW);
   try {
     const actual = fs.fstatSync(fd, { bigint: true });
-    if (!actual.isFile() || actual.dev !== expected.dev || actual.ino !== expected.ino)
+    if (!actual.isFile() || !sameEntry(actual, expected))
       throw new Error('File changed while opening');
     return fd;
   } catch (error) {

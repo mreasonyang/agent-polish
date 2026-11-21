@@ -2,7 +2,7 @@
 
 [简体中文](credentials.md)
 
-Run interactive `setup` from any folder on the machine running Codex, or double-click the macOS Finder launcher. On first setup, use **↑ / ↓** and **Enter** to choose the automatic rewrite mode. With the built-in prompt, **Normal** can keep a clear draft and supports the optional OpenAI check. **Turbo** skips the check and asks Gemini to rewrite the draft.
+Run interactive `setup` from any folder on the machine running Codex, or double-click the macOS Finder launcher. On first setup, use **↑ / ↓** and **Enter** to choose the automatic rewrite mode. With the built-in prompt, **Normal** can keep a clear draft and supports the optional OpenAI Decisions API check. **Turbo** skips the check and asks Gemini to rewrite the draft.
 
 Once `agy` is available, you can keep **Gemini 4 Hydrogen** or choose from your Antigravity account. Only the live model lookup opens a temporary `codex exec` session and calls `agy acp`. Your choices apply across projects in this Codex profile. To override one in a single project, ask to change its mode or model in that project’s chat.
 
@@ -18,12 +18,12 @@ Say **“Check Codex Polish setup”** to inspect the local configuration and **
 
 If `agy` works in your terminal but the chat reports a failure at `session/new`, try **“Choose a rewrite model”** in that same chat. If the host reports blocked network access or a denied write to the Antigravity sign-in file, check the permissions for that session. Trusting the hook enables the automatic trigger.
 
-## Optional OpenAI style check
+## Optional OpenAI Decisions API
 
-In the unreleased source version, the first interactive setup in Normal mode offers this check once. Press **Enter** to skip it and use Gemini alone. If enabled, OpenAI receives the current question, draft and any custom polishing prompt to decide whether the draft needs editing. The OpenAI project that owns the key pays for the API usage. History goes only to Gemini. Turbo and explicit rewrites skip OpenAI.
+In the unreleased source version, the first interactive setup in Normal mode offers this check once. Press **Enter** to skip it and use Gemini alone. If enabled, OpenAI receives the current question, draft and any custom polishing prompt to decide whether Gemini should rewrite the draft. The OpenAI project that owns the key pays for the API usage. History goes only to Gemini. Turbo and explicit rewrites skip OpenAI.
 
-1. Create a key in the OpenAI project you want to use. Restricted keys need access to `POST /v1/decisions` and the project needs access to `gpt-6-luna`. [OpenAI API keys](https://platform.openai.com/api-keys) · [API billing](https://platform.openai.com/account/billing/overview)
-2. Choose to configure OpenAI during setup, or run `node scripts/install.mjs openai` from the checkout on the machine and Codex profile that run the plugin. Paste the key only at the terminal’s hidden prompt. The plugin stores it in `$CODEX_HOME/codex-polish/credentials/openai.key`.
+1. Create an OpenAI API key in the project you want to use. Restricted keys need access to `POST /v1/decisions` and the project needs access to `gpt-6-luna`. [OpenAI API keys](https://platform.openai.com/api-keys) · [API billing](https://platform.openai.com/account/billing/overview)
+2. Choose to configure the OpenAI Decisions API during setup, or run `node scripts/install.mjs openai` from the checkout on the machine and Codex profile that run the plugin. Paste the key only at the terminal’s hidden prompt. The plugin stores it in `$CODEX_HOME/codex-polish/credentials/openai.key`.
 3. Open the same menu to replace or remove the saved key. Uninstall also deletes the local copy. To skip the check in a single project, say **“Use only Gemini for rewrites in this project.”**
 
 Published `0.0.1-beta.8` still reads `OPENAI_API_KEY` from the Codex environment and has no `openai` command. The source version ignores that variable. Once this change reaches the npm beta, the menu will also be available as `npx @kyun.si/codex-polish@beta openai` (use `npx.cmd @kyun.si/codex-polish@beta openai` in Windows PowerShell).

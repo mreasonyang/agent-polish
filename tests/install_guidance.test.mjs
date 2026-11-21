@@ -43,7 +43,7 @@ test('doctor explains modes, decisions, history, model and Google authentication
     const withOpenAI = report({ decisions_enabled: true });
     assert.match(
       withOpenAI,
-      lang === 'en' ? /OpenAI uses the current question, draft, and any custom polishing prompt/ : /OpenAI 会根据本轮问题、草稿和已设置的自定义润色提示词/
+      lang === 'en' ? /OpenAI Decisions API[^\n]*current question, draft, and any custom polishing prompt/ : /OpenAI Decisions API[^\n]*本轮问题、草稿和已设置的自定义润色提示词/
     );
     assert.match(withOpenAI, lang === 'en' ? /pays for the API calls/ : /API 费用/);
     assert.doesNotMatch(withOpenAI, /meaning|原意/);
@@ -54,7 +54,7 @@ test('doctor explains modes, decisions, history, model and Google authentication
     assert.match(manualDoctor, lang === 'en' ? /Automatic rewrite mode: turbo/ : /自动润色的改写模式：turbo/);
     for (const mode of ['manual', 'off']) {
       const saved = report({ mode, openai_key_configured: true, decisions_enabled: false });
-      assert.match(saved, lang === 'en' ? /OpenAI style check you enabled/ : /已开启的 OpenAI 风格检查/);
+      assert.match(saved, lang === 'en' ? /OpenAI Decisions API check you enabled/ : /已开启的 OpenAI Decisions API 检查/);
       assert.doesNotMatch(saved, /Set up OpenAI Decisions|「配置 OpenAI Decisions」/);
     }
     const invalidMode = report({ rewrite_mode: null, blockers: ['rewrite_mode_invalid'] });
@@ -194,7 +194,7 @@ test('Normal setup offers a single default skip after model selection and the ma
   assert.equal(await showSetupGuidance(options), true);
   assert.deepEqual(order, ['mode', 'model', 'openai']);
   assert.match(offers[0].display, /❯ ● Skip and use Gemini only \(default\)/);
-  assert.match(offers[0].display, /billed by API usage/);
+  assert.match(offers[0].display, /OpenAI Decisions API[^\n]+Gemini[^\n]+billed by API usage/);
   assert.doesNotMatch(offers[0].display, /platform\.openai\.com|custom polishing prompt|@kyun/);
   assert.equal(readOpenAIKey(), null);
   assert.equal(await showSetupGuidance(options), true);
@@ -213,6 +213,7 @@ test('private key entry supports enrollment, replacement, cancellation, failed v
     const enter = '\r', down = '\x1b[B';
     const enroll = await openAIFlow(lang, true, [down, enter, first, enter]);
     assert.equal(enroll.ok, true);
+    assert.match(enroll.display.split('\n')[0], /OpenAI Decisions API.*Gemini/);
     assert.doesNotMatch(enroll.display, /test-only/);
     assert.match(enroll.display, /https:\/\/platform\.openai\.com\/api-keys/);
     assert.match(enroll.display, lang === 'en' ? /current question, draft, and any custom polishing prompt/ : /本轮问题、草稿和你设置的自定义润色提示词/);

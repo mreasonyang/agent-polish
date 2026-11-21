@@ -2,7 +2,7 @@
 
 [English](credentials.en.md)
 
-在运行 Codex 的机器上，从任意目录交互运行 `setup`，或在 macOS 的 Finder 里双击安装脚本。首次安装时，用 **↑ / ↓** 选择自动润色的改写模式，按 **回车** 确认。使用内置提示词时，**普通（Normal）** 可以保留清晰原稿，也支持可选的 OpenAI 检查。**Turbo** 跳过这项检查，请 Gemini 改写草稿。
+在运行 Codex 的机器上，从任意目录交互运行 `setup`，或在 macOS 的 Finder 里双击安装脚本。首次安装时，用 **↑ / ↓** 选择自动润色的改写模式，按 **回车** 确认。使用内置提示词时，**普通（Normal）** 可以保留清晰原稿，也支持可选的 OpenAI Decisions API。**Turbo** 跳过这项检查，请 Gemini 改写草稿。
 
 `agy` 可用后，可以沿用 **Gemini 4 Hydrogen**，也可以从 Antigravity 账号的模型中选择。只有查询账号模型时，安装器才会通过临时 `codex exec` 会话调用 `agy acp`。这些选择对使用同一份 Codex 配置的项目生效。如需单独指定某个项目的模式或模型，在该项目的聊天里提出即可。
 
@@ -14,19 +14,19 @@
 
 项目默认自动润色。改写整条答复时，Google 收到的是那条答复、它所回答的问题，以及你这次提出的改写要求。改写材料按原文发送，包括其中的代码、命令、路径或密钥。在当前 Codex 配置中保存过自定义润色提示词时，这份提示词也会发给 Google。默认还会附上原答复之前最多 2 轮问答。润色选段时省略原问题和历史。要求“只把这段原文发给 Gemini”时，只发送选段，使用内置 Turbo 提示词。在 Codex 的 **设置 → Hooks**（CLI 输入 `/hooks`）里信任插件的 `UserPromptSubmit`，再开一个项目聊天，问 **“用一句话解释 DNS。”** 如果想自己决定何时润色，可以说 **“只在我要求时润色”**。说“返回结果 polish”就会用 Turbo，直接把草稿交给 Gemini。信任 hook 前，这次请求不附带以前的问答。想停用就说 **“关闭回复润色”**。
 
-## 选配 OpenAI 风格检查
+## 选配 OpenAI Decisions API
 
-在尚未发布的源码版中，首次交互安装并选用普通模式时，安装器会询问一次是否启用这项检查。直接按**回车**即可跳过，只用 Gemini。启用后，OpenAI 只收到本轮问题、草稿和已设置的自定义润色提示词，据此判断是否需要改写。API 用量计入密钥所属的 OpenAI 项目。历史问答只发给 Gemini。Turbo 和点名润色始终跳过 OpenAI。
+在尚未发布的源码版中，首次交互安装并选用普通模式时，安装器会询问一次是否启用这项检查。直接按**回车**即可跳过，只用 Gemini。启用后，OpenAI 只收到本轮问题、草稿和已设置的自定义润色提示词，据此判断是否需要 Gemini 改写草稿。API 用量计入密钥所属的 OpenAI 项目。历史问答只发给 Gemini。Turbo 和点名润色始终跳过 OpenAI。
 
 1. 在承担费用的 OpenAI 项目中创建 API 密钥。若使用受限密钥，请允许调用 `POST /v1/decisions`，并确认项目可以使用 `gpt-6-luna`。[OpenAI API 密钥](https://platform.openai.com/api-keys) · [API 账单](https://platform.openai.com/account/billing/overview)
-2. 在安装时选择配置 OpenAI，或在运行插件的机器上使用同一份 Codex 配置，从源码仓库根目录运行 `node scripts/install.mjs openai`。只在终端提示隐藏输入时粘贴密钥。插件将其保存在 `$CODEX_HOME/codex-polish/credentials/openai.key`。
+2. 在安装时选择配置 OpenAI Decisions API，或在运行插件的机器上使用同一份 Codex 配置，从源码仓库根目录运行 `node scripts/install.mjs openai`。只在终端提示隐藏输入时粘贴密钥。插件将其保存在 `$CODEX_HOME/codex-polish/credentials/openai.key`。
 3. 以后可在同一菜单里更换或移除密钥，卸载也会删除本地副本。若只想关闭本项目的检查，可说**“这个项目只用 Gemini 改写”**。
 
 已发布的 `0.0.1-beta.8` 仍从 Codex 进程环境读取 `OPENAI_API_KEY`，尚无 `openai` 命令。源码版忽略这个变量。等此改动发布到 npm beta 后，也可运行 `npx @kyun.si/codex-polish@beta openai` 打开菜单，Windows PowerShell 使用 `npx.cmd @kyun.si/codex-polish@beta openai`。
 
 ## 确认配置
 
-说 **“检查回复润色环境”**，可以看到自动润色时是直接通过 ACP 改写还是选用了 Decisions，以及当前用的 Google 认证方式和 `agy` 是否可用。想单独测试 ACP 进程能不能连通，可以说 **“检测 ACP 连接”**。说 **“选择改写模型”** 会列出当前账号实际可选的 Gemini 模型。配好的 key 能不能调用 Decisions，以实际调用结果为准。
+说 **“检查回复润色环境”**，可以看到自动润色时是直接通过 ACP 改写还是启用了 OpenAI Decisions API，以及当前用的 Google 认证方式和 `agy` 是否可用。想单独测试 ACP 进程能不能连通，可以说 **“检测 ACP 连接”**。说 **“选择改写模型”** 会列出当前账号实际可选的 Gemini 模型。配置的 OpenAI API 密钥能否调用该接口，以实际调用结果为准。
 
 如果终端里的 `agy` 能用，聊天里却提示在 `session/new` 创建会话失败，可在同一聊天里试一次 **“选择改写模型”**。这一步不发草稿。如果宿主报告禁止联网或禁止写入 Antigravity 的登录文件，请检查这个会话的执行权限。信任 hook 只负责触发自动润色。
 

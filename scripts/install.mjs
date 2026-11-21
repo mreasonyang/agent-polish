@@ -1028,20 +1028,20 @@ function decisionsSummary(checks, lang) {
       ? tr('点名润色会用 Turbo，直接交给 Gemini。', 'Requested rewrites use Turbo and go straight to Gemini.', lang)
       : tr('项目已关闭润色。', 'Polishing is off for this project.', lang);
     if (checks.rewrite_mode === 'normal' && checks.decisions_mode === 'auto' && checks.openai_key_configured && !checks.openai_key_malformed)
-      return current + tr('切回自动润色后，Normal 会使用你已开启的 OpenAI 风格检查。',
-        ' Switching to automatic polishing will use the OpenAI style check you enabled for Normal mode.', lang);
+      return current + tr('切回自动润色后，Normal 会使用你已开启的 OpenAI Decisions API 检查。',
+        ' Switching to automatic polishing will use the OpenAI Decisions API check you enabled for Normal mode.', lang);
     return current;
   }
   if (checks.rewrite_mode === 'turbo')
     return tr(
-      '自动润色时，Turbo 会跳过 OpenAI 检查，把草稿直接交给 Gemini。可在项目里说「恢复普通模式」。',
-      'For automatic polishing, Turbo skips the OpenAI check and sends each draft directly to Gemini. Say “Switch back to normal mode” to restore Normal for automatic polishing.',
+      '自动润色时，Turbo 会跳过 OpenAI Decisions API 检查，把草稿直接交给 Gemini。可在项目里说「恢复普通模式」。',
+      'For automatic polishing, Turbo skips the OpenAI Decisions API check and sends each draft directly to Gemini. Say “Switch back to normal mode” to restore Normal for automatic polishing.',
       lang
     );
   if (checks.decisions_mode === 'off')
     return tr(
-      '自动润色的 OpenAI 风格检查已关闭，草稿会直接交给 Gemini 润色。',
-      'The OpenAI style check for automatic polishing is off. Drafts go straight to Gemini.',
+      '自动润色的 OpenAI Decisions API 检查已关闭，草稿会直接交给 Gemini 润色。',
+      'The OpenAI Decisions API check for automatic polishing is off. Drafts go straight to Gemini.',
       lang
     );
   if (checks.openai_key_malformed)
@@ -1049,13 +1049,13 @@ function decisionsSummary(checks, lang) {
       `The saved OpenAI key is unusable. Drafts go straight to Gemini. Run ${openAICommand} in your terminal to replace or remove the key.`, lang);
   if (checks.decisions_enabled)
     return tr(
-      `你已开启 OpenAI 风格检查。OpenAI 会根据本轮问题、草稿和已设置的自定义润色提示词判断是否需要改写，API 费用由你的 OpenAI 账号承担。可在终端运行 ${openAICommand} 更换或移除密钥。`,
-      `You enabled the OpenAI style check. OpenAI uses the current question, draft, and any custom polishing prompt to decide whether to rewrite. Your OpenAI account pays for the API calls. Run ${openAICommand} in your terminal to replace or remove the key.`,
+      `OpenAI Decisions API 检查已开启。插件会提交本轮问题、草稿和已设置的自定义润色提示词，检查是否需要 Gemini 改写，API 费用由你的 OpenAI 账号承担。可在终端运行 ${openAICommand} 更换或移除密钥。`,
+      `The OpenAI Decisions API check is on. It uses the current question, draft, and any custom polishing prompt to check whether Gemini should rewrite the draft. Your OpenAI account pays for the API calls. Run ${openAICommand} in your terminal to replace or remove the key.`,
       lang
     );
   return tr(
-    `自动润色时，草稿会直接交给 Gemini。想先让 OpenAI 判断是否需要改写，可在终端运行 ${openAICommand} 添加自己的 API 密钥。`,
-    `Drafts go straight to Gemini during automatic polishing. To enable an optional OpenAI style check with your own API key, run ${openAICommand} in your terminal.`,
+    `自动润色时，草稿会直接交给 Gemini。想用 OpenAI Decisions API 检查是否需要 Gemini 改写，可在终端运行 ${openAICommand} 添加自己的 API 密钥。`,
+    `Drafts go straight to Gemini during automatic polishing. To enable an optional OpenAI Decisions API check with your own API key, run ${openAICommand} in your terminal.`,
     lang
   );
 }
@@ -1069,8 +1069,8 @@ const issues = {
     'Invalid codex-polish.history-turns. Choose a whole number from 0 to 10.'
   ],
   decisions_mode_invalid: [
-    '项目的 codex-polish.decisions 无效。请设为 auto（使用已为插件开启的 OpenAI 检查）或 off。',
-    'Invalid codex-polish.decisions. Choose auto (use the OpenAI check if enabled for this plugin) or off.'
+    '项目的 codex-polish.decisions 无效。请设为 auto（使用已为插件开启的 OpenAI Decisions API 检查）或 off。',
+    'Invalid codex-polish.decisions. Choose auto (use the OpenAI Decisions API check if enabled for this plugin) or off.'
   ],
   gemini_key_missing: [
     '你选了用 API 密钥登录 Google。去 Google AI Studio 点 Create API key，然后把密钥设为 GEMINI_API_KEY。',
@@ -1224,11 +1224,11 @@ export async function manageOpenAI(lang, { onboarding = false, input = process.s
   const existing = readOpenAIKey();
   if (onboarding && existing !== null) return true;
   const title = onboarding
-    ? t('要先让 OpenAI 判断是否需要润色吗？（可选，按 API 用量计费）',
-      'Ask OpenAI whether a draft needs polishing first? (Optional, billed by API usage)')
-    : t('可选的 OpenAI 风格检查', 'Optional OpenAI style check');
-  const details = t('在 Normal 自动润色时，OpenAI 会收到本轮问题、草稿和你设置的自定义润色提示词，判断是否需要 Gemini 改写。API 调用由你的 OpenAI 账号付费。',
-    'In Normal mode, automatic polishing sends the current question, draft, and any custom polishing prompt to OpenAI to decide whether Gemini should rewrite. Your OpenAI account pays for these API calls.');
+    ? t('使用 OpenAI Decisions API 判断是否需要 Gemini 改写？（可选，按用量计费）',
+      'Use the OpenAI Decisions API to check whether Gemini should rewrite the draft? (Optional, billed by API usage)')
+    : t('可选的 OpenAI Decisions API 检查', 'Optional OpenAI Decisions API check');
+  const details = t('在 Normal 自动润色时，插件会把本轮问题、草稿和你设置的自定义润色提示词发给 OpenAI Decisions API，检查是否需要 Gemini 改写。API 调用由你的 OpenAI 账号付费。',
+    'In Normal mode, automatic polishing sends the current question, draft, and any custom polishing prompt to the OpenAI Decisions API to check whether Gemini should rewrite the draft. Your OpenAI account pays for these API calls.');
   const enable = { id: 'enable', name: t('用自己的 OpenAI API 密钥开启检查', 'Enable with my own OpenAI API key') };
   const back = { id: 'back', name: t('返回', 'Back') };
   let choices;
@@ -1248,7 +1248,7 @@ export async function manageOpenAI(lang, { onboarding = false, input = process.s
     if (action === 'skip' || action === 'remove') {
       if (action === 'remove') {
         clearOpenAIKey();
-        output.write(t('已移除密钥，OpenAI 检查已关闭。\n', 'Key removed. The OpenAI check is off.\n'));
+        output.write(t('已移除密钥，OpenAI Decisions API 检查已关闭。\n', 'Key removed. The OpenAI Decisions API check is off.\n'));
       }
       try { writeProfileDefault(OPENAI_OFFER_FILE, 'seen'); }
       catch {
@@ -1263,8 +1263,8 @@ export async function manageOpenAI(lang, { onboarding = false, input = process.s
     const value = await readHiddenKey(lang, input, output);
     if (value === null) return true;
     saveOpenAIKey(value);
-    output.write(t('已保存密钥。Normal 模式自动润色时可使用 OpenAI 风格检查。\n',
-      'Key saved. The OpenAI style check is available for automatic polishing in Normal mode.\n'));
+    output.write(t('已保存密钥。Normal 模式自动润色时可使用 OpenAI Decisions API 检查。\n',
+      'Key saved. The OpenAI Decisions API check is available for automatic polishing in Normal mode.\n'));
     return true;
   } catch (error) {
     if (error instanceof RangeError)
@@ -1518,8 +1518,8 @@ export function doctor(checks = readChecks()) {
 }
 function usage(lang) {
   return tr(
-    '用法：node scripts/install.mjs [setup|update|doctor|openai|uninstall] [--install-agy]\nsetup 安装（默认），update 更新，doctor 检查当前项目，openai 管理可选的 OpenAI 风格检查和密钥，uninstall 卸载。\n--install-agy 在缺少 agy 时安装，仅限 setup 和 update。\n-h, --help 显示帮助并退出。',
-    'Usage: node scripts/install.mjs [setup|update|doctor|openai|uninstall] [--install-agy]\nsetup installs the plugin (default), update upgrades it, doctor checks this project, openai manages the optional OpenAI style check and its key, and uninstall removes the plugin.\n--install-agy installs Google’s Antigravity CLI if missing during setup or update.\n-h, --help shows this help.',
+    '用法：node scripts/install.mjs [setup|update|doctor|openai|uninstall] [--install-agy]\nsetup 安装（默认），update 更新，doctor 检查当前项目，openai 管理可选的 OpenAI Decisions API 检查和密钥，uninstall 卸载。\n--install-agy 在缺少 agy 时安装，仅限 setup 和 update。\n-h, --help 显示帮助并退出。',
+    'Usage: node scripts/install.mjs [setup|update|doctor|openai|uninstall] [--install-agy]\nsetup installs the plugin (default), update upgrades it, doctor checks this project, openai manages the optional OpenAI Decisions API check and its key, and uninstall removes the plugin.\n--install-agy installs Google’s Antigravity CLI if missing during setup or update.\n-h, --help shows this help.',
     lang
   );
 }

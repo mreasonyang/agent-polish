@@ -112,7 +112,7 @@ macOS 用户也可以解压仓库，在 Finder 中双击安装脚本。`0.0.1-be
 
 安装器为每份 Codex 配置注册一个本地市场。更新时先准备并校验新快照，然后原子替换市场清单，再请 Codex 刷新插件缓存。刷新失败时会恢复原快照和启用状态。Codex 判断 hook 信任时会核对已安装插件的内容，所以即使命令没变，内置提示词或配置指南的改动也可能触发重新确认。安装器和 `doctor` 都从 `hooks/list` 读取实际状态。
 
-尚未发布的源码版首次交互安装并选用普通模式时，会询问是否使用 OpenAI 风格检查，默认跳过。之后可在运行插件的机器上使用同一份 Codex 配置，运行 `node scripts/install.mjs openai` 管理密钥。终端隐藏输入，密钥保存在 `$CODEX_HOME/codex-polish/credentials/openai.key`。源码版忽略 `OPENAI_API_KEY`，已发布的 `0.0.1-beta.8` 仍会使用这个环境变量。[密钥设置与 API 计费](../plugins/codex-polish/skills/codex-polish-setup/references/credentials.md#选配-openai-风格检查)
+尚未发布的源码版首次交互安装并选用普通模式时，会询问是否使用 OpenAI 风格检查，默认跳过。之后可在运行插件的机器上使用同一份 Codex 配置，运行 `node scripts/install.mjs openai` 管理密钥。终端隐藏输入，密钥保存在 `$CODEX_HOME/codex-polish/credentials/openai.key`。源码版忽略 `OPENAI_API_KEY`，已发布的 `0.0.1-beta.8` 仍会使用这个环境变量。[密钥设置与 API 计费](../plugins/codex-polish/skills/codex-polish-setup/references/credentials.md#选配-openai-decisions-api)
 
 在当前源码仓库根目录运行 `node scripts/install.mjs uninstall`，会移除插件和专用市场，清除会话指针，并删除这份 Codex 配置保存的改写模式、模型、自定义提示词和 OpenAI 密钥。卸载还会删除这份配置最后保存并记录的项目设置文件。这些文件即使由 Git 跟踪，或后来被手动就地修改，也会删除。其他应用仍可使用共用的 `agy`。
 

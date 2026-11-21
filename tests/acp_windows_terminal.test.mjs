@@ -56,7 +56,17 @@ test('Windows Codex terminal sends a long Unicode frame to the native provider a
     const provider = join(bin, 'agy.exe');
     const source = join(bin, 'fixture.cs');
     fs.writeFileSync(source, fixture);
-    t.after(() => fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5 }));
+    let stopServer;
+    let disposeWorkspace;
+    t.after(async () => {
+      try {
+        // Windows keeps a running process's working directory open.
+        await stopServer?.();
+        disposeWorkspace?.();
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5 });
+      }
+    });
     const powershell = windowsSystemTool('WindowsPowerShell/v1.0/powershell.exe');
     const compiled = spawnSync(powershell, ['-NoProfile', '-NonInteractive', '-Command',
       'Add-Type -Path $env:POLISH_TEST_SOURCE -OutputAssembly $env:POLISH_TEST_EXE -OutputType ConsoleApplication -ErrorAction Stop'], {
@@ -65,7 +75,7 @@ test('Windows Codex terminal sends a long Unicode frame to the native provider a
     assert.equal(compiled.status, 0, compiled.stderr);
 
     const { workspace, output_file, cleanup_token } = prepareWorkspace({ catalog: true });
-    t.after(() => dispose(workspace, cleanup_token));
+    disposeWorkspace = () => dispose(workspace, cleanup_token);
     assert.deepEqual(readOutput(workspace, cleanup_token, 0), { text: '', next_offset: 0 });
     const codex = executable('codex');
     assert.ok(codex, 'requires the Codex CLI');
@@ -75,12 +85,12 @@ test('Windows Codex terminal sends a long Unicode frame to the native provider a
     const server = spawn(codex.command, [...codex.args, 'app-server', '--stdio'], { cwd: dir, env });
     const closed = once(server, 'close');
     const hardStop = setTimeout(() => server.kill(), 50_000);
-    t.after(async () => {
+    stopServer = async () => {
       clearTimeout(hardStop);
       server.stdin.end();
       if (server.exitCode === null) server.kill();
       await closed;
-    });
+    };
     server.stderr.resume();
     const rpc = (id, method, params) => server.stdin.write(JSON.stringify({ id, method, params }) + '\n');
     const processId = 'windows-terminal';

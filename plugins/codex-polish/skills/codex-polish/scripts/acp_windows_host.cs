@@ -92,7 +92,16 @@ public static class CodexPolishAcpHost {
     }
 
     static async Task Copy(Stream from, Stream to, bool end) {
-        try { await from.CopyToAsync(to).ConfigureAwait(false); }
+        try {
+            // Process.StandardInput.BaseStream is buffered on .NET Framework.
+            // Flush each chunk so a short reply can unblock the next agent action.
+            byte[] buffer = new byte[32768];
+            int count;
+            while ((count = await from.ReadAsync(buffer, 0, buffer.Length).ConfigureAwait(false)) != 0) {
+                await to.WriteAsync(buffer, 0, count).ConfigureAwait(false);
+                await to.FlushAsync().ConfigureAwait(false);
+            }
+        }
         catch (IOException) {} catch (ObjectDisposedException) {}
         finally { if (end) to.Close(); }
     }

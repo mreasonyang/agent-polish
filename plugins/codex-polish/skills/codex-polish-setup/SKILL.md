@@ -43,7 +43,7 @@ For project-level changes append `--cwd "<project>"` to each setter. When the us
 
 ## Optional OpenAI API key
 
-First interactive setup in Normal mode offers the OpenAI Decisions API check once and defaults to skipping it. If the user wants to add, replace or remove a key later, direct them to the hidden terminal input in the `openai` menu on the machine and Codex profile that run the plugin. From the source checkout run `node scripts/install.mjs openai`. The published `0.0.1-beta.8` has no menu and still uses `OPENAI_API_KEY`. The source version ignores that variable. Uninstall deletes the profile’s saved key. Keep keys out of chat and command arguments. [Create an OpenAI API key](https://platform.openai.com/api-keys)
+First interactive setup in Normal mode offers the OpenAI Decisions API check once and defaults to skipping it. To add, replace or remove a key later, run `npx @kyun.si/codex-polish@beta openai` on the machine and Codex profile that run the plugin. In Windows PowerShell, use `npx.cmd`. From a source checkout, run `node scripts/install.mjs openai`. Enter keys only at the hidden terminal prompt. The plugin ignores `OPENAI_API_KEY`. Uninstall deletes the profile’s saved key. [Create an OpenAI API key](https://platform.openai.com/api-keys)
 
 ## Profile polishing prompt
 

@@ -2,10 +2,10 @@
 
 [中文使用说明](docs/README.zh-CN.md) · [English README](README.md)
 
-## 未发布 / Unreleased
+## 0.0.1-beta.9
 
-- 默认只用 Gemini，忽略已有的 `OPENAI_API_KEY`。首次交互安装并选用普通模式时，可以选择启用按 API 用量计费的 OpenAI 风格检查。以后可用 `openai` 命令管理本配置保存的密钥，卸载时会删除密钥。
-- Gemini now runs alone by default, even when `OPENAI_API_KEY` is set. The first interactive setup in Normal mode offers an optional, API-billed OpenAI style check. Manage the profile’s saved key later with `openai`. Uninstall deletes it.
+- 默认只用 Gemini，忽略已有的 `OPENAI_API_KEY`。首次交互安装并选用普通模式时，可以选择启用按 API 用量计费的 OpenAI Decisions API 检查。以后可用 `openai` 命令管理当前 Codex 配置保存的密钥，卸载时会删除密钥。
+- Gemini now runs alone by default, even when `OPENAI_API_KEY` is set. The first interactive setup in Normal mode offers an optional OpenAI Decisions API check billed by API usage. Manage the profile’s saved key later with `openai`. Uninstall deletes it.
 
 - 在任意目录用方向键选择默认改写模式和 Gemini 模型。安装后可为当前 Codex 配置保存一份润色提示词，所有项目共用。恢复默认或卸载会删除保存的提示词。卸载也会删除该配置的默认选项和已记录的项目设置。
 - Choose a default rewrite mode and Gemini model from any folder. After setup, save one polishing prompt for every project in the active profile. Reset or uninstall deletes that prompt. Uninstall also removes the profile defaults and recorded project settings.

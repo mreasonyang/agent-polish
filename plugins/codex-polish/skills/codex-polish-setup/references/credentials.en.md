@@ -20,13 +20,13 @@ If `agy` works in your terminal but the chat reports a failure at `session/new`,
 
 ## Optional OpenAI Decisions API
 
-In the unreleased source version, the first interactive setup in Normal mode offers this check once. Press **Enter** to skip it and use Gemini alone. If enabled, OpenAI receives the current question, draft and any custom polishing prompt to decide whether Gemini should rewrite the draft. The OpenAI project that owns the key pays for the API usage. History goes only to Gemini. Turbo and explicit rewrites skip OpenAI.
+The first interactive setup in Normal mode offers this check once. Press **Enter** to skip it and use Gemini alone. If enabled, OpenAI receives the current question, draft and any custom polishing prompt to decide whether Gemini should rewrite the draft. The OpenAI project that owns the key pays for the API usage. History goes only to Gemini. Turbo and explicit rewrites skip OpenAI.
 
 1. Create an OpenAI API key in the project you want to use. Restricted keys need access to `POST /v1/decisions` and the project needs access to `gpt-6-luna`. [OpenAI API keys](https://platform.openai.com/api-keys) · [API billing](https://platform.openai.com/account/billing/overview)
-2. Choose to configure the OpenAI Decisions API during setup, or run `node scripts/install.mjs openai` from the checkout on the machine and Codex profile that run the plugin. Paste the key only at the terminal’s hidden prompt. The plugin stores it in `$CODEX_HOME/codex-polish/credentials/openai.key`.
+2. Choose to configure the OpenAI Decisions API during setup, or run `npx @kyun.si/codex-polish@beta openai` on the machine and Codex profile that run the plugin. In Windows PowerShell, run `npx.cmd @kyun.si/codex-polish@beta openai`. From a source checkout, run `node scripts/install.mjs openai`. Paste the key only at the terminal’s hidden prompt. The plugin stores it in `$CODEX_HOME/codex-polish/credentials/openai.key`.
 3. Open the same menu to replace or remove the saved key. Uninstall also deletes the local copy. To skip the check in a single project, say **“Use only Gemini for rewrites in this project.”**
 
-Published `0.0.1-beta.8` still reads `OPENAI_API_KEY` from the Codex environment and has no `openai` command. The source version ignores that variable. Once this change reaches the npm beta, the menu will also be available as `npx @kyun.si/codex-polish@beta openai` (use `npx.cmd @kyun.si/codex-polish@beta openai` in Windows PowerShell).
+The plugin ignores the `OPENAI_API_KEY` environment variable.
 
 ## Other Antigravity sign-in methods
 

@@ -21,7 +21,7 @@ node -e "require('node:fs').mkdirSync('dist', { recursive: true })"
 npm pack --ignore-scripts --pack-destination dist
 ```
 
-`npm pack` 会把 `@kyun.si/codex-polish` 的 `0.0.1-beta.8` 版打包为 `dist/kyun.si-codex-polish-0.0.1-beta.8.tgz`。默认测试无需 API 密钥，原生安装测试会使用临时 Codex 配置。Decisions 测试使用模拟响应验证风格判定。
+`npm pack` 按照 `package.json` 中的版本号生成 `dist/kyun.si-codex-polish-<version>.tgz`。默认测试无需 API 密钥，原生安装测试会使用临时 Codex 配置。Decisions 测试使用模拟响应验证风格判定。
 
 ## 反馈问题
 

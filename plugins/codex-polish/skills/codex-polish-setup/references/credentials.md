@@ -16,13 +16,13 @@
 
 ## 选配 OpenAI Decisions API
 
-在尚未发布的源码版中，首次交互安装并选用普通模式时，安装器会询问一次是否启用这项检查。直接按**回车**即可跳过，只用 Gemini。启用后，OpenAI 只收到本轮问题、草稿和已设置的自定义润色提示词，据此判断是否需要 Gemini 改写草稿。API 用量计入密钥所属的 OpenAI 项目。历史问答只发给 Gemini。Turbo 和点名润色始终跳过 OpenAI。
+首次交互安装并选用普通模式时，安装器会询问一次是否启用这项检查。直接按**回车**即可跳过，只用 Gemini。启用后，OpenAI 只收到本轮问题、草稿和已设置的自定义润色提示词，据此判断是否需要 Gemini 改写草稿。API 用量计入密钥所属的 OpenAI 项目。历史问答只发给 Gemini。Turbo 和点名润色始终跳过 OpenAI。
 
 1. 在承担费用的 OpenAI 项目中创建 API 密钥。若使用受限密钥，请允许调用 `POST /v1/decisions`，并确认项目可以使用 `gpt-6-luna`。[OpenAI API 密钥](https://platform.openai.com/api-keys) · [API 账单](https://platform.openai.com/account/billing/overview)
-2. 在安装时选择配置 OpenAI Decisions API，或在运行插件的机器上使用同一份 Codex 配置，从源码仓库根目录运行 `node scripts/install.mjs openai`。只在终端提示隐藏输入时粘贴密钥。插件将其保存在 `$CODEX_HOME/codex-polish/credentials/openai.key`。
+2. 在安装时选择配置 OpenAI Decisions API，或在运行插件的机器上使用同一份 Codex 配置，运行 `npx @kyun.si/codex-polish@beta openai`。Windows PowerShell 中运行 `npx.cmd @kyun.si/codex-polish@beta openai`。用源码安装时，在仓库根目录运行 `node scripts/install.mjs openai`。只在终端提示隐藏输入时粘贴密钥。插件将其保存在 `$CODEX_HOME/codex-polish/credentials/openai.key`。
 3. 以后可在同一菜单里更换或移除密钥，卸载也会删除本地副本。若只想关闭本项目的检查，可说**“这个项目只用 Gemini 改写”**。
 
-已发布的 `0.0.1-beta.8` 仍从 Codex 进程环境读取 `OPENAI_API_KEY`，尚无 `openai` 命令。源码版忽略这个变量。等此改动发布到 npm beta 后，也可运行 `npx @kyun.si/codex-polish@beta openai` 打开菜单，Windows PowerShell 使用 `npx.cmd @kyun.si/codex-polish@beta openai`。
+插件会忽略 `OPENAI_API_KEY` 环境变量。
 
 ## 确认配置
 

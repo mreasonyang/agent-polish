@@ -43,25 +43,23 @@ npx @kyun.si/codex-polish@beta setup
 
 使用 T3 Code 时，选择 Codex 后端。
 
-用 **↑ / ↓** 选择改写模式和 Gemini 模型，按**回车**确认。缺少 `agy` 时，安装器会在选模型前提示安装。npm 发行版 `0.0.1-beta.8` 将选项存入所选项目。
-
-如需给同一份 Codex 配置下的所有项目设置默认值，可在当前源码仓库根目录运行 `node scripts/install.mjs setup`。单个项目仍可另选模式或模型。再次运行安装命令会跳过已经保存的选项。[其他安装方式](technical.md#安装更新和卸载)
+用 **↑ / ↓** 为当前 Codex 配置选择默认改写模式和 Gemini 模型，按**回车**确认。缺少 `agy` 时，安装器会在选模型前提示安装。单个项目仍可另选模式或模型。再次运行安装命令会跳过已经保存的选项。[其他安装方式](technical.md#安装更新和卸载)
 
 - **信任 hook 前手动试用：** 试试 **“为什么缓存命中了还要等？返回结果 polish。”** 主动要求润色就会用 Turbo。Gemini 会收到草稿，这次不附带以前的问答。
 - **自动模式（默认）：** 在 Codex **设置 → Hooks**（CLI 输入 `/hooks`）中信任 `UserPromptSubmit` 并**新开聊天**。之后照常提问就会触发润色流程，也可以附上最近几轮对话。
 
-### 可选的 OpenAI Decisions API（尚未发布）
+### 可选的 OpenAI Decisions API
 
-从源码首次交互安装并选用普通模式时，安装器会询问是否启用 OpenAI Decisions API，由它判断是否需要 Gemini 改写草稿。直接按**回车**即可跳过，只用 Gemini。启用后，OpenAI 会收到本轮问题、草稿和已设置的自定义润色提示词。在承担检查费用的 OpenAI 项目中创建 API 密钥，再粘贴到终端的隐藏输入框。密钥保存在当前 Codex 配置中。Turbo 始终直接使用 Gemini。[OpenAI API 密钥](https://platform.openai.com/api-keys)
+首次交互安装并选用普通模式时，安装器会询问是否启用 OpenAI Decisions API，由它判断是否需要 Gemini 改写草稿。直接按**回车**即可跳过，只用 Gemini。启用后，OpenAI 会收到本轮问题、草稿和已设置的自定义润色提示词。在承担检查费用的 OpenAI 项目中创建 API 密钥，再粘贴到终端的隐藏输入框。密钥保存在当前 Codex 配置中。Turbo 始终直接使用 Gemini。[OpenAI API 密钥](https://platform.openai.com/api-keys)
 
-以后要添加、更换或移除密钥，可在源码仓库根目录运行 `node scripts/install.mjs openai`。已发布的 `0.0.1-beta.8` 仍会读取 `OPENAI_API_KEY`，当前源码版忽略这个环境变量。[凭据指南](../plugins/codex-polish/skills/codex-polish-setup/references/credentials.md#选配-openai-decisions-api)
+以后要添加、更换或移除密钥，运行 `npx @kyun.si/codex-polish@beta openai`。Windows PowerShell 中使用 `npx.cmd @kyun.si/codex-polish@beta openai`。插件会忽略 `OPENAI_API_KEY` 环境变量。[凭据指南](../plugins/codex-polish/skills/codex-polish-setup/references/credentials.md#选配-openai-decisions-api)
 
 ## 常用聊天指令
 
 - **“让 Gemini 把上一条改成两句话。”** 也可以说“重写前面讲缓存的那条”。再次要求改原稿时，插件会找回最初的问题。原稿无法确认时，Codex 会请你指明或贴出原文。即使项目的自动润色设为普通模式，主动要求润色或改写也会跳过 OpenAI Decisions API。
 - **“只在我要求时润色。”** 这会把项目设为手动触发。想让自动润色也用 Turbo，可以说“把这个项目的默认改写模式设成 Turbo”。只想看本轮改稿，就说“只给我润色后的正文”。
 - **“选择改写模型。”** 查看 Antigravity 账号可用的模型，内置默认模型是 **Gemini 4 Hydrogen**（`gemini-4-hydrogen`）。
-- **“把我的润色提示词设为：先写结论，尽量用短句。”** 当前源码版中，同一份 Codex 配置下的所有项目共用这一份提示词。它完整替换普通和 Turbo 模式的内置编辑指令。说**“恢复默认润色提示词”**即可删除已保存的文字。
+- **“把我的润色提示词设为：先写结论，尽量用短句。”** 同一份 Codex 配置下的所有项目共用这一份提示词。它完整替换普通和 Turbo 模式的内置编辑指令。说**“恢复默认润色提示词”**即可删除已保存的文字。
 
 ## 会发送哪些内容
 
@@ -82,6 +80,6 @@ npx @kyun.si/codex-polish@beta setup
 
 在 Windows PowerShell 中，使用 `npx.cmd` 调用 `doctor`、`update` 和 `uninstall`。`doctor` 检查本机依赖、项目设置和 hook 信任状态。要确认 Antigravity 登录是否可用，可以说 **“选择改写模型”**，查看账号当前能用的模型。插件更新后，Codex 可能提示你重新信任 hook。
 
-当前源码版的卸载命令会删除这份 Codex 配置保存的默认改写模式、模型、自定义提示词和 OpenAI API 密钥，并清理已记录的项目设置。[卸载范围](technical.md#安装更新和卸载)
+卸载会删除这份 Codex 配置保存的默认改写模式、模型、自定义提示词和 OpenAI API 密钥，并清理已记录的项目设置。[卸载范围](technical.md#安装更新和卸载)
 
 [凭据与配置指南](../plugins/codex-polish/skills/codex-polish-setup/references/credentials.md) · [技术参考](technical.md) · [离线评测](../evaluation/README.md) · [参与贡献](../CONTRIBUTING.md) · [安全说明](../SECURITY.md) · [更新记录](../CHANGELOG.md) · [Apache-2.0 许可证](../LICENSE)

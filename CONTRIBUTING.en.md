@@ -22,7 +22,7 @@ node -e "require('node:fs').mkdirSync('dist', { recursive: true })"
 npm pack --ignore-scripts --pack-destination dist
 ```
 
-`npm pack` writes version `0.0.1-beta.8` of `@kyun.si/codex-polish` to `dist/kyun.si-codex-polish-0.0.1-beta.8.tgz`. Default tests need no API key. Native installer tests use a temporary Codex profile. The Decisions tests use mock responses to exercise the style check.
+`npm pack` writes `dist/kyun.si-codex-polish-<version>.tgz` using the version from `package.json`. Default tests need no API key. Native installer tests use a temporary Codex profile. The Decisions tests use mock responses to exercise the style check.
 
 ## Reporting Bugs
 

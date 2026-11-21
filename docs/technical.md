@@ -31,7 +31,7 @@ Git 项目的设置保存在最近的仓库根目录的 `.codex/`。同一仓库
 
 ### 查看、设置或恢复润色提示词
 
-当前源码版中，每份 Codex 配置可以保存一份润色提示词。可以在聊天里说“查看我的润色提示词”“把我的润色提示词设为：先写结论，再讲依据。”或“恢复默认润色提示词”。安装时沿用内置提示词，你可以随后自行设置。改写整条回复时，普通和 Turbo 模式都会用你提供的全文替换内置提示词，适用于所有项目。明确要求只发送选段时使用内置 Turbo 提示词。
+每份 Codex 配置可以保存一份润色提示词。可以在聊天里说“查看我的润色提示词”“把我的润色提示词设为：先写结论，再讲依据。”或“恢复默认润色提示词”。安装时沿用内置提示词，你可以随后自行设置。改写整条回复时，普通和 Turbo 模式都会用你提供的全文替换内置提示词，适用于所有项目。明确要求只发送选段时使用内置 Turbo 提示词。
 
 以下命令依次用于查看、保存和恢复默认。设置命令会从标准输入完整复制 UTF-8 文本到 `$CODEX_HOME/codex-polish/settings/codex-polish.prompt.md`，包括换行和首尾空白。从文件导入后，如要采用原文件的新内容，再导入一次即可。恢复默认和卸载都会删除保存的副本。
 
@@ -104,16 +104,16 @@ Windows 上，宿主通过系统自带的 Windows PowerShell 和 .NET 启动 `ag
 
 ## 安装、更新和卸载
 
-在任意目录运行 `npx @kyun.si/codex-polish@beta setup` 即可安装。将最后一个参数换成 `update`、`doctor` 或 `uninstall` 即可更新、检查当前项目或卸载。从 GitHub 源码安装时，在仓库根目录运行 `node scripts/install.mjs setup`，其余子命令相同。[安装步骤](README.zh-CN.md#快速开始)
+在任意目录运行 `npx @kyun.si/codex-polish@beta setup` 即可安装 npm beta 版。将最后一个参数换成 `update`、`doctor` 或 `uninstall` 即可更新、检查当前项目或卸载。Windows PowerShell 中使用 `npx.cmd`。从 GitHub 源码安装时，在仓库根目录运行 `node scripts/install.mjs setup`，其余子命令相同。[安装步骤](README.zh-CN.md#快速开始)
 
-macOS 用户也可以解压仓库，在 Finder 中双击安装脚本。`0.0.1-beta.8` 发行版配置所选项目。当前源码版从 Finder 或终端安装时，会为同一份 Codex 配置下的所有项目设置默认值。安装器会依次询问尚未保存的改写模式和 Gemini 模型，选择模型需要 `agy` 可用。[Finder 安装脚本](../安装回复润色.command)
+macOS 用户也可以解压安装包，在 Finder 中双击安装脚本。从 Finder 或终端安装时，默认设置适用于同一份 Codex 配置下的所有项目。安装器会依次询问尚未保存的改写模式和 Gemini 模型，选择模型需要 `agy` 可用。[Finder 安装脚本](../安装回复润色.command)
 
 `setup` 和 `update` 支持 `--install-agy`，在缺少 Antigravity CLI 时可自动安装。更新会保留项目设置与插件启用状态。同一版本号的新构建也能用 `update` 覆盖或重试中断的更新。
 
 安装器为每份 Codex 配置注册一个本地市场。更新时先准备并校验新快照，然后原子替换市场清单，再请 Codex 刷新插件缓存。刷新失败时会恢复原快照和启用状态。Codex 判断 hook 信任时会核对已安装插件的内容，所以即使命令没变，内置提示词或配置指南的改动也可能触发重新确认。安装器和 `doctor` 都从 `hooks/list` 读取实际状态。
 
-尚未发布的源码版首次交互安装并选用普通模式时，会询问是否使用 OpenAI 风格检查，默认跳过。之后可在运行插件的机器上使用同一份 Codex 配置，运行 `node scripts/install.mjs openai` 管理密钥。终端隐藏输入，密钥保存在 `$CODEX_HOME/codex-polish/credentials/openai.key`。源码版忽略 `OPENAI_API_KEY`，已发布的 `0.0.1-beta.8` 仍会使用这个环境变量。[密钥设置与 API 计费](../plugins/codex-polish/skills/codex-polish-setup/references/credentials.md#选配-openai-decisions-api)
+首次交互安装并选用普通模式时，安装器会询问是否启用 OpenAI Decisions API 检查，默认跳过。之后可在运行插件的机器上使用同一份 Codex 配置，运行 `npx @kyun.si/codex-polish@beta openai` 管理密钥。Windows PowerShell 中使用 `npx.cmd`。终端隐藏输入，密钥保存在 `$CODEX_HOME/codex-polish/credentials/openai.key`。插件会忽略 `OPENAI_API_KEY`。[密钥设置与 API 计费](../plugins/codex-polish/skills/codex-polish-setup/references/credentials.md#选配-openai-decisions-api)
 
-在当前源码仓库根目录运行 `node scripts/install.mjs uninstall`，会移除插件和专用市场，清除会话指针，并删除这份 Codex 配置保存的改写模式、模型、自定义提示词和 OpenAI 密钥。卸载还会删除这份配置最后保存并记录的项目设置文件。这些文件即使由 Git 跟踪，或后来被手动就地修改，也会删除。其他应用仍可使用共用的 `agy`。
+卸载会移除插件和专用市场，清除会话指针，并删除这份 Codex 配置保存的改写模式、模型、自定义提示词和 OpenAI 密钥。卸载还会删除这份配置最后保存并记录的项目设置文件。这些文件即使由 Git 跟踪，或后来被手动就地修改，也会删除。其他应用仍可使用共用的 `agy`。
 
 旧版没有记录创建项目设置的位置。如需一并清理，可到曾配置过的项目中逐项查看 `.codex/codex-polish.*` 文件。安装文件如有手动改动，卸载时会显示备份位置。使用本地打包的版本时，可将 npm 包名换成实际压缩包路径，例如 `npx --yes file:./kyun.si-codex-polish-VERSION.tgz uninstall`。

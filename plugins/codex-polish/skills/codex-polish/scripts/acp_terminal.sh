@@ -4,6 +4,7 @@ unset OPENAI_API_KEY
 umask 077
 acp_provider=
 acp_observer=
+acp_reported_status=
 acp_stop_children() {
     acp_signalled=
     [ -n "$!" ] || return 0
@@ -14,6 +15,13 @@ acp_stop_children() {
         case "$acp_job" in '['[0-9]*']'*) ;; *) continue ;; esac
         # dash separates the current/previous-job marker from the job number.
         case "$acp_pid" in '+'|'-') acp_pid=$acp_state; acp_state=$acp_next ;; esac
+        # dash drops the wait status after jobs -l lists a finished child.
+        if [ "$acp_pid" = "$acp_provider" ]; then
+            case "$acp_state" in
+                Done) acp_reported_status=0 ;;
+                Done\(*\)) acp_code=${acp_state#Done\(}; acp_reported_status=${acp_code%\)} ;;
+            esac
+        fi
         case "$acp_state" in Running|Stopped|Suspended) ;; *) continue ;; esac
         case "$acp_pid" in ''|*[!0-9]*) continue ;; esac
         # $! covers an interrupt before the launcher assigned the new child PID.
@@ -35,6 +43,9 @@ acp_finish() {
     if [ -n "$acp_provider" ]; then
         wait "$acp_provider" 2>/dev/null
         acp_provider_status=$?
+        if [ "$acp_provider_status" = 127 ] && [ -n "$acp_reported_status" ]; then
+            acp_provider_status=$acp_reported_status
+        fi
         if [ "$acp_status" = 0 ] && [ -z "$acp_terminated" ]; then acp_status=$acp_provider_status; fi
     fi
     wait 2>/dev/null || :

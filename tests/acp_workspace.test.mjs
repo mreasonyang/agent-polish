@@ -276,15 +276,23 @@ while IFS= read -r unused; do :; done`);
   });
 }
 
-for (const paged of [false, true]) {
-  const name = paged ? 'paged Markdown survives provider close until the last page drains' :
-    'an inline Markdown delivery reaps the waiting provider';
+const deliveryCases = [
+  { name: 'an inline Markdown delivery reaps the waiting provider', paged: false },
+  { name: 'paged Markdown survives provider close until the last page drains', paged: true },
+];
+if (fs.existsSync('/bin/dash')) {
+  for (const providerExit of [0, 37, 127]) {
+    deliveryCases.push({ name: `dash preserves provider exit ${providerExit} after paged delivery`,
+      paged: true, shell: '/bin/dash', providerExit });
+  }
+}
+for (const { name, paged, shell = '/bin/sh', providerExit = 0 } of deliveryCases) {
   test(name, { timeout: 20000 }, async t => {
     const body = paged ? '分页文字'.repeat(1600) : '  一行回答。\n';
     const id = 'fixture-id';
     const draft = paged ? '原稿\n'.repeat(4000) : '  原稿。  ';
     const markdown = formatReply({ draft, candidate: body, display_language: base.display, source_label: paged ? 'quoted' : 'gpt' }).display_text;
-    // Every input/output below is fixed fixture data; the fake provider keeps reading after close.
+    // The provider exits after close, even if the local reply still has pages to serve.
     const emit = fields => "printf '%s\\n' '" + JSON.stringify({ jsonrpc: '2.0', ...fields }) + "'";
     const { agyPath, cwd } = fixture(t, [
       "trap '' TERM", 'printf %s "$$" > "$0.pid"', 'IFS= read -r line',
@@ -296,10 +304,10 @@ for (const paged of [false, true]) {
       emit({ method: 'session/update', params: { sessionId: id, update: {
         sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: body } } } }),
       emit({ id: 6, result: { stopReason: 'end_turn' } }),
-      'IFS= read -r line', emit({ id: 7, result: {} }), ': > "$0.closed"',
+      'IFS= read -r line', emit({ id: 7, result: {} }), ': > "$0.closed"', `exit ${providerExit}`,
     ].join('\n'));
     const setup = prepare(t, { agyPath, cwd, ...base, quotedSource: paged });
-    const proc = launch(setup.start);
+    const proc = launch({ ...setup.start, shell });
     t.after(() => proc.kill('SIGTERM'));
     const done = once(proc, 'close');
     const lines = createInterface({ input: proc.stdout, crlfDelay: Infinity })[Symbol.asyncIterator]();
@@ -343,7 +351,7 @@ for (const paged of [false, true]) {
     } else assert.equal(result.markdown, markdown);
     const pid = Number(fs.readFileSync(agyPath + '.pid', 'utf8'));
     const [code] = await done;
-    assert.equal(code, 0);
+    assert.equal(code, providerExit);
     assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
     assert.equal(fs.existsSync(setup.workspace), false);
   });

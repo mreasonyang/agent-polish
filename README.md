@@ -6,18 +6,16 @@
 
 Codex Polish lets Gemini rewrite a Codex reply so it’s easier to read. Codex sends its draft through Antigravity (`agy acp`) and shows the rewrite in chat. In clients that support folding, you can expand the original underneath. Here’s an example translated from a Chinese test run.
 
-**Polished by Gemini**
-
 The export button is fixed and passed local tests. It still needs to be checked in production.
 
 <details>
-<summary>View original GPT draft</summary>
+<summary>Rewritten by Gemini · View original GPT draft</summary>
 
 Regarding progress with the export button fix, let me explain the actual situation. The export button has now been fixed, local tests have passed, and production verification has not yet been done.
 
 </details>
 
-If Gemini returns the original wording, you see it once. If the rewrite fails, you get the draft and a short explanation.
+During automatic polishing, you see only the draft if OpenAI Decisions keeps it or Gemini returns it word for word. If you asked for a rewrite and Gemini keeps the wording, you also see “Gemini returned the original draft.” If a rewrite fails, you get the draft and a brief reason.
 
 ## Quick start
 

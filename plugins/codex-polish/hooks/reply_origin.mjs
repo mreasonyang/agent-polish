@@ -4,8 +4,11 @@ import { cacheScope, withCache } from './recovery.mjs';
 
 const retention = 7 * 24 * 60 * 60;
 const digest = text => createHash('sha256').update(text).digest('hex');
+// Earlier entries used FORMATTED for all wrappers. New entries distinguish
+// a plain notice from the same opening words in a rewritten paragraph.
+const FORMATTED = 0, BODY_ONLY = 1, NOTICE = 2, COMPARISON = 3;
 
-export function rememberReplyOrigin(cwd, source, text, origin, label, literal) {
+export function rememberReplyOrigin(cwd, source, text, origin, label, { literal, notice }) {
   if (origin !== null && !/^[A-Za-z0-9_-]{1,128}$/.test(origin)) origin = null;
   try {
     const scope = cacheScope(cwd);
@@ -19,7 +22,7 @@ export function rememberReplyOrigin(cwd, source, text, origin, label, literal) {
       if (pointer?.turn === source.turn_id && pointer.path === source.transcript_path) {
         db.prepare('DELETE FROM reply_origin WHERE updated NOT BETWEEN ? AND ?').run(now - retention, now);
         db.prepare('INSERT OR REPLACE INTO reply_origin VALUES (?,?,?,?,?,?,?,?)')
-          .run(scope, source.session_id, source.turn_id, digest(text), origin, label, Number(literal), now);
+          .run(scope, source.session_id, source.turn_id, digest(text), origin, label, literal ? BODY_ONLY : notice ? NOTICE : COMPARISON, now);
       }
       db.exec('COMMIT');
     });
@@ -39,8 +42,10 @@ export function lookupReplyOrigin(cwd, session, turnIds, text) {
       for (const id of turnIds) {
         const row = query.get(scope, session, id, now - retention, now);
         if (!row) continue;
-        if (found || row.digest !== digest(text) || !['gpt', 'quoted'].includes(row.label) || ![0, 1].includes(row.literal)) return;
-        found = row;
+        if (found || row.digest !== digest(text) || !['gpt', 'quoted'].includes(row.label) ||
+            ![FORMATTED, BODY_ONLY, NOTICE, COMPARISON].includes(row.literal)) return;
+        found = { origin: row.origin, label: row.label, literal: row.literal === BODY_ONLY,
+          notice: row.literal === FORMATTED ? undefined : row.literal === NOTICE };
       }
       return found;
     });

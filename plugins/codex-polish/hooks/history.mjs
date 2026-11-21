@@ -241,12 +241,12 @@ export function readHistory(file, sessionId, turnId = null, turns = DEFAULT_HIST
 function replyBodies({ exchange, turnIds }, lookupOrigin) {
   const reply = exchange.assistant;
   const receipt = lookupOrigin?.(turnIds, reply);
-  const display = receipt?.literal ? null : readReplyDisplay(reply, { formatted: Boolean(receipt) });
+  const display = receipt?.literal ? null : readReplyDisplay(reply, { formatted: Boolean(receipt), notice: receipt?.notice });
   return { receipt, visible: display?.visible ?? reply, draft: receipt?.literal ? reply : display?.original };
 }
 
 function visibleExchange(item, lookupOrigin) {
-  if (!item.exchange.assistant.startsWith('**')) return item.exchange;
+  if (!item.exchange.assistant.includes('\n\n')) return item.exchange;
   return { user: item.exchange.user, assistant: replyBodies(item, lookupOrigin).visible };
 }
 

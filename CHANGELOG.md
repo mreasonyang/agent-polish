@@ -2,6 +2,14 @@
 
 [中文使用说明](docs/README.zh-CN.md) · [English README](README.md)
 
+## 0.0.1-beta.12
+
+- 自动润色保留原稿时只显示正文。Gemini 改动文字时，回复直接从改稿开始，底部的“Gemini 改写 · 查看 GPT 原稿”可展开对照。主动要求润色而文字未变时，会附上一句确认。
+- Automatic polishing shows only the draft when it is kept. Changed replies open with the rewritten text. Expand “Rewritten by Gemini · View original GPT draft” underneath to compare. When you explicitly request a rewrite and the wording stays the same, a brief sentence confirms the result.
+
+- 润色失败时附上简短原因。您可从历史中找回有来源记录的原稿，也可继续改写之前的正文。
+- When a rewrite fails, the reply gives a brief reason. You can retrieve the original draft when its source is recorded, or rewrite the visible text from a previous reply.
+
 ## 0.0.1-beta.11
 
 - 修复了 Codex 桌面端在“未润色”和“Gemini 返回了原稿”等状态后显示 HTML 注释的问题。

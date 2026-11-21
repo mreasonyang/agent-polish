@@ -11,13 +11,13 @@ export { formatReply, originalReplyText } from './reply_display.mjs';
 function formatSkipped({ draft, reason, display_language }) {
   if (typeof reason !== 'string' || !reason.trim() || /[\r\n\u2028\u2029]/u.test(reason)) throw new Error('invalid reason');
   if (!display_language) return { text: draft };
-  const heading = display_language === 'zh' ? '未润色' : 'Polishing skipped';
-  return { text: draft, display_text: `**${heading}** · ${reason}\n\n${draft}` };
+  return { text: draft, display_text: `${reason}\n\n${draft}` };
 }
 
-export function delivery(payload, { cwd, selection, skipped, turnsBack }) {
+export function delivery(payload, { cwd, selection, skipped, kept, turnsBack, trigger = 'auto' }) {
   const { draft, display_language } = payload;
-  if (typeof draft !== 'string' || (!skipped && typeof payload.candidate !== 'string') ||
+  if (!['auto', 'explicit'].includes(trigger) || (kept && (skipped || trigger !== 'auto'))) throw new Error('invalid options');
+  if (typeof draft !== 'string' || (!kept && !skipped && typeof payload.candidate !== 'string') ||
       (display_language !== undefined && !['zh', 'en'].includes(display_language)) ||
       (payload.source_label !== undefined && !['gpt', 'quoted'].includes(payload.source_label))) throw new Error('invalid input');
 
@@ -42,10 +42,16 @@ export function delivery(payload, { cwd, selection, skipped, turnsBack }) {
     source = null;
   }
 
-  const result = skipped ? formatSkipped(payload) : formatReply({ ...payload, source_label: label });
+  let result;
+  if (kept) result = { text: draft };
+  else if (skipped) result = formatSkipped(payload);
+  else result = formatReply({ ...payload, source_label: label }, { trigger });
   if (source) {
-    const literal = display_language === undefined;
-    rememberReplyOrigin(cwd, source, result.display_text ?? result.text, origin, literal && !skipped ? 'quoted' : label, literal);
+    const shown = result.display_text ?? result.text;
+    const literal = shown === result.text;
+    const notice = !literal && (skipped || draft === payload.candidate);
+    const bodyOnlyRewrite = display_language === undefined && !kept && !skipped;
+    rememberReplyOrigin(cwd, source, shown, origin, bodyOnlyRewrite ? 'quoted' : label, { literal, notice });
   }
   return result;
 }
@@ -53,7 +59,7 @@ export function delivery(payload, { cwd, selection, skipped, turnsBack }) {
 if (isMain(import.meta.url)) {
   try {
     const { values } = parseArgs({ options: {
-      'host-input': { type: 'boolean' }, cwd: { type: 'string' }, selection: { type: 'boolean' }, 'turns-back': { type: 'string' }, skipped: { type: 'boolean' }, render: { type: 'boolean' },
+      'host-input': { type: 'boolean' }, cwd: { type: 'string' }, trigger: { type: 'string' }, selection: { type: 'boolean' }, 'turns-back': { type: 'string' }, skipped: { type: 'boolean' }, kept: { type: 'boolean' }, render: { type: 'boolean' },
     } });
     const back = values['turns-back'];
     if ((values.cwd !== undefined && !isAbsolute(values.cwd)) || (back !== undefined &&

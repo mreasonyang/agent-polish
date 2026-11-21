@@ -233,30 +233,63 @@ test('a verified whole reply uses its question and draft and only the turns befo
   assert.equal(previous(2), null);
 });
 
-test('previous rewrite extracts the displayed GPT original in either language, including quoted disclosures', t => {
+test('history uses the visible candidate and retrieval recovers the exact original in either disclosure format', t => {
   const { file, write } = fixture(t);
   for (const lang of ['zh', 'en']) {
     for (const draft of [
       'Plain original, with an intentional ending.\n',
       'The example contains markup.\r\n<details><summary>Demo</summary>\r\n\r\n\n> Example\n</details>\n\n```\n:::',
-    ]) for (const candidate of ['Gemini supplied different text.', draft]) {
+    ]) {
+      const candidate = 'Gemini supplied different text.\r\n';
       const display = formatReply({ draft, candidate, display_language: lang }).display_text;
       write(...exchange('old', 'Earlier question.', 'Earlier answer.'), ...exchange('selected', 'Original question.', display),
         start('now'), user('Have Gemini rewrite the last reply.'));
-      assert.deepEqual(readPreviousReply(file, 's', 'now', 1), { selection: candidate === draft ? display : candidate });
+      const latest = [{ user: 'Original question.', assistant: candidate }];
+      assert.deepEqual(readHistory(file, 's', 'now', 1), latest);
+      assert.deepEqual(readPreviousReply(file, 's', 'now', 1), { selection: candidate });
       assert.equal(readPreviousReply(file, 's', 'now', 1, 1, { requireGpt: true }), null);
-      const receipt = () => ({ label: 'gpt', origin: 'selected', literal: false });
-      assert.deepEqual(readPreviousReply(file, 's', 'now', 1, 1, { lookupOrigin: receipt }), {
+      const lookupOrigin = turnIds => turnIds.has('selected') ? { label: 'gpt', origin: 'selected', literal: false } : null;
+      assert.deepEqual(readHistory(file, 's', 'now', 1, { lookupOrigin }), latest);
+      assert.deepEqual(readPreviousReply(file, 's', 'now', 1, 1, { lookupOrigin }), {
         question: 'Original question.', draft, source_label: 'gpt', origin_turn_id: 'selected', history: [{ user: 'Earlier question.', assistant: 'Earlier answer.' }],
       });
     }
   }
 });
 
+test('history recovers older comparison and status formats with their original receipts', t => {
+  const { file, write } = fixture(t);
+  const draft = 'Original example.\n', candidate = 'Edited example.';
+  const lookupOrigin = () => ({ label: 'gpt', origin: 'old', literal: false });
+  for (const [title, summary, unchanged, skipped] of [
+    ['Gemini 润色版', '查看 GPT 原稿', 'Gemini 返回了原稿', '**未润色** · 服务暂不可用。'],
+    ['Polished by Gemini', 'View original GPT draft', 'Gemini returned the original draft', '**Polishing skipped** · Service unavailable.'],
+  ]) {
+    for (const marker of ['', ' <!-- codex-polish -->']) {
+      const comparison = `**${title}**${marker}\n\n${candidate}\n\n<details><summary>${summary}</summary>\n\n${draft}\n\n</details>`;
+      const displays = [
+        [comparison, candidate],
+        [`**${unchanged}**${marker}\n\n${draft}`, draft],
+        [skipped + marker + '\n\n' + draft, draft],
+      ];
+      for (const [display, visible] of displays) {
+        write(...exchange('old', 'Question.', display), start('now'));
+        assert.deepEqual(readHistory(file, 's', 'now', 1, { lookupOrigin }), [{ user: 'Question.', assistant: visible }]);
+        assert.deepEqual(readPreviousReply(file, 's', 'now', 0, 1, { lookupOrigin, requireGpt: true }), {
+          question: 'Question.', draft, source_label: 'gpt', origin_turn_id: 'old', turns_back: 1, history: [],
+        });
+        assert.deepEqual(readPreviousReply(file, 's', 'now'), { selection: marker || display === comparison ? visible : display });
+      }
+    }
+  }
+});
+
 test('the next rewrite uses the original body after a Normal decision or a service failure', () => {
-  const draft = 'The browser reuses a cached copy.\n';
-  for (const notice of ['**未润色** · OpenAI 判断原稿已经清楚。', '**Polishing skipped** · Gemini was unavailable.']) {
-    assert.equal(originalReplyText(notice + ' <!-- codex-polish -->\n\n' + draft), draft);
+  for (const draft of ['The browser reuses a cached copy.\n',
+    'A literal example.\n\n<details><summary>Rewritten by Gemini · View original text</summary>\n\nA sample fold.\n\n</details>']) {
+    for (const notice of ['**未润色** · OpenAI 判断原稿已经清楚。', '**Polishing skipped** · Gemini was unavailable.']) {
+      assert.equal(originalReplyText(notice + ' <!-- codex-polish -->\n\n' + draft), draft);
+    }
   }
 });
 
@@ -283,15 +316,15 @@ test('a title inside an ordinary answer and ambiguous chart text both remain ava
 
 test('the formatter labels user-selected source neutrally and preserves it for later rewrites', () => {
   const script = path.join(plugin, 'skills/codex-polish/scripts/format_reply.mjs');
-  for (const [lang, summary, unchanged] of [['zh', '查看原文', 'Gemini 返回了原文'], ['en', 'View original text', 'Gemini returned the original text']]) {
+  for (const [lang, summary, unchanged] of [['zh', '查看原文', 'Gemini 返回了原文。'], ['en', 'View original text', 'Gemini returned the original text.']]) {
     for (const draft of ['A user-selected excerpt.', 'A quoted example.\n\n<details>\n:::']) {
       const input = { draft, candidate: 'Rewritten excerpt.', display_language: lang, source_label: 'quoted' };
       const { display_text } = json(run(script, [], { input: JSON.stringify(input) }));
       assert.ok(display_text.includes(summary));
       assert.ok(!display_text.includes('GPT'));
       assert.equal(originalReplyText(display_text), draft);
-      const same = formatReply({ ...input, candidate: draft });
-      assert.equal(same.display_text, `**${unchanged}**\n\n${draft}`);
+      const same = formatReply({ ...input, candidate: draft }, { trigger: 'explicit' });
+      assert.equal(same.display_text, unchanged + '\n\n' + draft);
       assert.equal(originalReplyText(same.display_text), same.display_text);
     }
   }

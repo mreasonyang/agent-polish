@@ -83,6 +83,15 @@ test('the CLI exposes auto and explicit as the only trigger choices', t => {
   }
 });
 
+test('the host workflow forwards the trigger and uses distinct commands for a Decisions keep and a failure', () => {
+  const skill = path.join(plugin, 'skills/codex-polish');
+  const acp = fs.readFileSync(path.join(skill, 'references/acp.md'), 'utf8');
+  const workflow = fs.readFileSync(path.join(skill, 'WORKFLOW.md'), 'utf8');
+  assert.match(acp, /acp_answer\.mjs\b[^`\n]*--trigger\b/);
+  assert.match(workflow, /format_reply\.mjs\b[^`\n]*--kept\b/);
+  assert.match(workflow, /format_reply\.mjs\b[^`\n]*--skipped\b/);
+});
+
 test('missing or invalid prerequisites never invoke a provider', t => {
   const { judge, agy, calls, env } = fixture(t);
   for (const [variable, value, expected] of [['CODEX_POLISH_AGY_AUTH', 'oauth-personal', 'unsupported_google_auth']]) {

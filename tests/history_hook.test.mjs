@@ -216,27 +216,27 @@ test('bare, body-only and detached quoted sources keep neutral attribution', t =
   end(neutral);
   begin('quote', 'Use just the selected sentence.');
   assert.deepEqual(json(previous()), { question, draft: candidate, source_label: 'quoted' });
-  const quotation = display({ draft, candidate: draft, source_label: 'gpt', display_language: 'zh' }, '--selection');
-  assert.equal(quotation, '**Gemini 返回了原文**\n\n' + draft);
+  const quotation = display({ draft, candidate: draft, source_label: 'gpt', display_language: 'zh' }, '--trigger', 'explicit', '--selection');
+  assert.equal(quotation, 'Gemini 返回了原文。\n\n' + draft);
   end(quotation);
   begin('next', 'Again.');
   assert.deepEqual(json(previous()), { selection: draft });
   assert.equal(previous(1,'--require-gpt').status, 1);
 });
 
-for (const [status, heading] of [
-  ['skipped', '**Polishing skipped** · Service unavailable.'],
-  ['unchanged', '**Gemini returned the original draft**'],
+for (const [status, notice] of [
+  ['skipped', 'Service unavailable.'],
+  ['unchanged', 'Gemini returned the original draft.'],
 ]) {
-  test(`history recognizes ${status} headings only with a matching formatted delivery`, t => {
+  test(`history strips a plain ${status} notice only with a matching formatted delivery`, t => {
     const { begin, end, display, previous, gemini } = conversation(t);
     const question = 'What happened to my request?';
     const draft = 'Your request was saved.\n';
     begin('generated', question);
     const formatted = status === 'skipped'
       ? display({ draft, reason: 'Service unavailable.', display_language: 'en' }, '--skipped')
-      : display({ draft, candidate: draft, display_language: 'en' });
-    assert.equal(formatted, heading + '\n\n' + draft);
+      : display({ draft, candidate: draft, display_language: 'en' }, '--trigger', 'explicit');
+    assert.equal(formatted, notice + '\n\n' + draft);
     end(formatted);
 
     const literalQuestion = 'Quote the entire example.';
@@ -262,6 +262,49 @@ for (const [status, heading] of [
     ]);
   });
 }
+
+test('automatic keep, identical rewrite and failure retain a GPT draft that itself looks like a comparison', t => {
+  const { begin, end, display, previous, gemini } = conversation(t);
+  const draft = 'Example foreground.\n\n<details><summary>Rewritten by Gemini · View original text</summary>\n\nExample fold.\n\n</details>';
+  for (const [status, fields, flags] of [
+    ['keep', {}, ['--kept']],
+    ['identical', { candidate: draft }, []],
+    ['failure', { reason: 'Gemini was unavailable.' }, ['--skipped']],
+  ]) {
+    const question = 'Show the comparison syntax for ' + status + '.';
+    begin(status, question);
+    const output = display({ draft, display_language: 'en', ...fields }, '--trigger', 'auto', ...flags);
+    assert.equal(output, status === 'failure' ? fields.reason + '\n\n' + draft : draft);
+    end(output);
+    const followup = { question: 'What did I receive?', draft: 'You received the original example.' };
+    begin(status + '-next', followup.question);
+    assert.deepEqual(json(previous(1, '--require-gpt')), { question, draft, source_label: 'gpt', turns_back: 1 });
+    assert.deepEqual(gemini(followup).history.at(-1), { user: question, assistant: draft });
+    end(followup.draft);
+  }
+});
+
+test('a comparison receipt preserves an old marked status quoted at the beginning of Gemini’s rewrite', t => {
+  const { begin, end, display, previous, gemini, sql } = conversation(t);
+  const question = 'Show the historical status text.';
+  const draft = 'The old layout had a status heading.';
+  const heading = '**Polishing skipped** · Example only. <!-- codex-polish -->';
+  const candidate = heading + '\n\nThis is how the heading looked.';
+  begin('sample', question);
+  const shown = display({ draft, candidate, display_language: 'en' });
+  end(shown);
+  const followup = { question: 'Which part was rewritten?', draft: 'The explanation was rewritten.' };
+  begin('next', followup.question);
+  assert.deepEqual(json(previous(1, '--require-gpt')), { question, draft, source_label: 'gpt', turns_back: 1 });
+  assert.deepEqual(gemini(followup).history, [{ user: question, assistant: candidate }]);
+
+  // Older installations used 0 for all formatted deliveries. The same visible
+  // bytes then represent a status followed by a literal comparison example.
+  sql('UPDATE reply_origin SET literal=0');
+  const literalExample = shown.slice(heading.length + 2);
+  assert.deepEqual(json(previous(1, '--require-gpt')), { question, draft: literalExample, source_label: 'gpt', turns_back: 1 });
+  assert.deepEqual(gemini(followup).history, [{ user: question, assistant: literalExample }]);
+});
 
 test('changed delivery, a stale formatter target or an expired reference cannot attach another question', t => {
   const { begin, end, display, previous, sql } = conversation(t);
@@ -329,21 +372,30 @@ test('a body-only selection never acquires a question or history when its delive
   check();
 });
 
-test('current and earlier-answer ACP history preserve a verified literal display example in full', t => {
-  const { begin, end, display, previous, gemini } = conversation(t);
-  const question = 'Give me the comparison syntax verbatim.';
-  const example = '**Polished by Gemini**\n\nExample foreground.\n\n<details><summary>View original text</summary>\n\nExample fold.\n\n</details>';
-  begin('example', question);
-  end(display({ draft: 'Show the syntax.', candidate: example }, '--selection'));
-  begin('second', 'Explain the layout.');
-  assert.deepEqual(json(previous()), { selection: example });
-  const target = { question: 'Explain the layout.', draft: 'The layout is vertical.' };
-  const history = [{ user: question, assistant: example }];
-  assert.deepEqual(gemini(target), { ...target, history });
-  end(display({ ...target, candidate: 'The sections stack.', display_language: 'en' }));
-  begin('third', 'Rewrite the explanation.');
-  assert.deepEqual(gemini(target, 1), { ...target, history });
-});
+for (const [layout, example] of [
+  ['headed', '**Polished by Gemini**\n\nExample foreground.\n\n<details><summary>View original text</summary>\n\nExample fold.\n\n</details>'],
+  ['headerless', 'Example foreground.\n\n<details><summary>Rewritten by Gemini · View original text</summary>\n\nExample fold.\n\n</details>'],
+]) {
+  test(`a body-only selection reproducing a ${layout} comparison stays literal in retrieval and ACP history`, t => {
+    const { begin, end, display, previous, gemini } = conversation(t);
+    const question = 'Give me the comparison syntax verbatim.';
+    begin('example', question);
+    const output = display({ draft: 'Show the syntax.', candidate: example }, '--selection', '--trigger', 'explicit');
+    assert.equal(output, example);
+    end(output);
+    begin('second', 'Explain the layout.');
+    const selected = json(previous());
+    assert.deepEqual(selected, { selection: example });
+    assert.deepEqual(gemini(selected), { draft: example });
+    assert.equal(previous(1, '--require-gpt').status, 1);
+    const target = { question: 'Explain the layout.', draft: 'The layout is vertical.' };
+    const history = [{ user: question, assistant: example }];
+    assert.deepEqual(gemini(target), { ...target, history });
+    end(display({ ...target, candidate: 'The sections stack.', display_language: 'en' }));
+    begin('third', 'Rewrite the explanation.');
+    assert.deepEqual(gemini(target, 1), { ...target, history });
+  });
+}
 
 test('locally recovered GPT text preserves the original code indentation and CRLF', t => {
   const { begin, end, display, previous } = conversation(t);

@@ -8,7 +8,7 @@ import { isMain, readHostLine, readLimited, record, utf8, writeHostPages } from 
 import { delivery } from './format_reply.mjs';
 import { validateSourceText } from './rewrite_material.mjs';
 
-export function completedAnswer(input, { sessionId, model, thinkingLevel, cwd, selection, turnsBack }) {
+export function completedAnswer(input, { sessionId, model, thinkingLevel, cwd, selection, turnsBack, trigger }) {
   validateSourceText(sessionId, 4096);
   if (!validModelId(model) || !validThinkingLevel(thinkingLevel) || !isAbsolute(cwd) ||
       (turnsBack !== undefined && (selection || !Number.isSafeInteger(turnsBack) || turnsBack < 1)))
@@ -28,7 +28,7 @@ export function completedAnswer(input, { sessionId, model, thinkingLevel, cwd, s
       throw Error('acp_thinking_level_unavailable');
   }
   const result = delivery({ draft, question, candidate: state.text, display_language, source_label },
-    { cwd, selection, turnsBack });
+    { cwd, selection, turnsBack, trigger });
   return result.display_text ?? result.text;
 }
 
@@ -36,15 +36,15 @@ if (isMain(import.meta.url)) {
   try {
     const { values } = parseArgs({ options: {
       'session-id': { type: 'string' }, model: { type: 'string' }, 'thinking-level': { type: 'string' },
-      cwd: { type: 'string' }, selection: { type: 'boolean' }, 'turns-back': { type: 'string' },
+      cwd: { type: 'string' }, trigger: { type: 'string' }, selection: { type: 'boolean' }, 'turns-back': { type: 'string' },
       'host-input': { type: 'boolean' }, help: { type: 'boolean', short: 'h' },
     } });
-    if (values.help) console.log('Usage: acp_answer.mjs --session-id ID --model MODEL --thinking-level LEVEL --cwd DIR [--selection | --turns-back N] [--host-input]');
+    if (values.help) console.log('Usage: acp_answer.mjs --session-id ID --model MODEL --thinking-level LEVEL --cwd DIR [--trigger auto|explicit] [--selection | --turns-back N] [--host-input]');
     else {
       const input = values['host-input'] ? await readHostLine() : await readLimited(process.stdin);
       const markdown = completedAnswer(JSON.parse(utf8(input)), {
         cwd: values.cwd, sessionId: values['session-id'], model: values.model, thinkingLevel: values['thinking-level'],
-        selection: values.selection, turnsBack: values['turns-back'] === undefined ? undefined : Number(values['turns-back']),
+        trigger: values.trigger, selection: values.selection, turnsBack: values['turns-back'] === undefined ? undefined : Number(values['turns-back']),
       });
       if (values['host-input']) await writeHostPages(markdown);
       else process.stdout.write(markdown);

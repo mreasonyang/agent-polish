@@ -32,17 +32,21 @@ test('a complete rewrite can be formatted without the original question', () => 
   assert.deepEqual(formatReply({ draft, candidate }), { text: candidate });
 });
 
-test('display shows a changed reply and a closed disclosure in the requested language', () => {
+test('the changed reply comes first and the closed disclosure credits Gemini and identifies the source', () => {
   const draft = '目前已经修复。详见 [记录](https://example.org/a_(b))。';
   const candidate = draft.replace('目前已经', '已经');
-  for (const [language, heading, original] of [
-    ['zh', '**Gemini 润色版**', '查看 GPT 原稿'],
-    ['en', '**Polished by Gemini**', 'View original GPT draft'],
+  for (const [display_language, source_label, summary] of [
+    ['zh', 'gpt', 'Gemini 改写 · 查看 GPT 原稿'],
+    ['en', 'gpt', 'Rewritten by Gemini · View original GPT draft'],
+    ['zh', 'quoted', 'Gemini 改写 · 查看原文'],
+    ['en', 'quoted', 'Rewritten by Gemini · View original text'],
   ]) {
-    assert.deepEqual(formatReply({ draft, candidate, display_language: language }), {
-      text: candidate,
-      display_text: [heading, candidate, `<details><summary>${original}</summary>`, draft, '</details>'].join('\n\n'),
-    });
+    for (const trigger of ['auto', 'explicit']) {
+      assert.deepEqual(formatReply({ draft, candidate, display_language, source_label }, { trigger }), {
+        text: candidate,
+        display_text: [candidate, `<details><summary>${summary}</summary>`, draft, '</details>'].join('\n\n'),
+      });
+    }
   }
 });
 
@@ -51,30 +55,49 @@ test('a draft discussing disclosure syntax stays verbatim inside a single fenced
   const candidate = draft.replace('Original explanation.', 'Revised explanation.');
   const result = formatReply({ draft, candidate, display_language: 'en' });
   assert.equal(result.text, candidate);
-  assert.equal(result.display_text, '**Polished by Gemini**\n\n' + candidate
-    + '\n\n:::github-details{summary="View original GPT draft"}\n\n> `````text\n'
+  assert.equal(result.display_text, candidate
+    + '\n\n:::github-details{summary="Rewritten by Gemini · View original GPT draft"}\n\n> `````text\n'
     + '> Original explanation.\n> \n> <details><summary>Example</summary>\r\n>     :::\n> \n> </details>\n> \n> ````html\n> </details>\n> ````\n> `````\n\n:::');
 });
 
-test('an exactly identical reply displays once in either language', () => {
+test('identical drafts are silent by default and explicit requests acknowledge the correct source once', () => {
   const draft = '  Café is ready.  \r\nDoors open tomorrow.\r\n';
-  for (const [language, heading] of [['zh', '**Gemini 返回了原稿**'], ['en', '**Gemini returned the original draft**']]) {
-    assert.deepEqual(formatReply({ draft, candidate: draft, display_language: language }), {
-      text: draft, display_text: heading + '\n\n' + draft,
-    });
+  assert.deepEqual(formatReply({ draft, candidate: draft }, { trigger: 'explicit' }), { text: draft });
+  for (const [display_language, source_label, notice] of [
+    ['zh', 'gpt', 'Gemini 返回了原稿。'],
+    ['en', 'gpt', 'Gemini returned the original draft.'],
+    ['zh', 'quoted', 'Gemini 返回了原文。'],
+    ['en', 'quoted', 'Gemini returned the original text.'],
+  ]) {
+    const input = { draft, candidate: draft, display_language, source_label };
+    assert.deepEqual(formatReply(input), { text: draft, display_text: draft });
+    const explicit = formatReply(input, { trigger: 'explicit' });
+    assert.equal(explicit.display_text, notice + '\n\n' + draft);
+    assert.equal(explicit.text, draft);
+    assert.equal(cli([formatScript, '--render', '--trigger', 'auto'], JSON.stringify(input)).stdout, draft);
+    assert.equal(cli([formatScript, '--render', '--trigger', 'explicit'], JSON.stringify(input)).stdout, explicit.display_text);
   }
 });
 
-test('skipping a rewrite renders only the localized status and the exact draft', () => {
+test('Decisions keeping a draft renders only the exact draft', () => {
+  const draft = '  Already clear.  \r\n\r\n';
+  for (const display_language of ['zh', 'en', undefined]) {
+    assert.equal(cli([formatScript, '--render', '--trigger', 'auto', '--kept'], JSON.stringify({ draft, display_language })).stdout, draft);
+  }
+});
+
+test('failed rewrites display one localized sentence followed by the exact draft', () => {
   const draft = '  Original <!-- a comment in the draft -->\r\n\r\n';
-  for (const [display_language, title, reason] of [
-    ['zh', '未润色', 'OpenAI 判断原稿已经清晰，无需润色。'],
-    ['en', 'Polishing skipped', 'OpenAI found the draft clear.'],
+  for (const [display_language, reason] of [
+    ['zh', 'Gemini 请求超时，已保留原稿。'],
+    ['en', 'The Gemini request timed out, so the original draft is shown below.'],
   ]) {
     const input = JSON.stringify({ draft, reason, display_language });
-    assert.equal(cli([formatScript, '--render', '--skipped'], input).stdout, `**${title}** · ${reason}\n\n${draft}`);
+    for (const trigger of ['auto', 'explicit']) {
+      assert.equal(cli([formatScript, '--render', '--skipped', '--trigger', trigger], input).stdout, reason + '\n\n' + draft);
+    }
   }
-  assert.equal(cli([formatScript, '--render', '--skipped'], JSON.stringify({ draft, reason: 'Already clear.' })).stdout, draft);
+  assert.equal(cli([formatScript, '--render', '--skipped'], JSON.stringify({ draft, reason: 'Gemini timed out.' })).stdout, draft);
 });
 
 test('edits to indentation, outer whitespace, line endings or Unicode retain the exact original', () => {
@@ -84,7 +107,7 @@ test('edits to indentation, outer whitespace, line endings or Unicode retain the
     assert.deepEqual(formatReply({ draft, candidate }), { text: candidate });
     const result = formatReply({ draft, candidate, display_language: 'en' });
     assert.equal(result.text, candidate);
-    assert.ok(result.display_text.includes('<summary>View original GPT draft</summary>'));
+    assert.ok(result.display_text.includes('<summary>Rewritten by Gemini · View original GPT draft</summary>'));
     assert.equal(originalReplyText(result.display_text), draft);
   }
 });
@@ -102,7 +125,7 @@ test('the formatter CLI preserves long fenced Markdown, tabs, CRLF and trailing 
   const result = cli([formatScript], JSON.stringify({ draft, candidate, display_language: 'en' }));
   assert.deepEqual(JSON.parse(result.stdout), {
     text: candidate,
-    display_text: '**Polished by Gemini**\n\n' + candidate + '\n\n<details><summary>View original GPT draft</summary>\n\n' + draft + '\n\n</details>',
+    display_text: candidate + '\n\n<details><summary>Rewritten by Gemini · View original GPT draft</summary>\n\n' + draft + '\n\n</details>',
   });
 });
 
@@ -121,10 +144,10 @@ test('all display modes preserve the provider’s chart markers, wording and whi
   for (const reference of candidates) {
     const candidate = '  Revised opening.\r\n\r\n' + reference + '\r\n\r\nLast line.  ';
     assert.deepEqual(formatReply({ draft, candidate }), { text: candidate });
-    for (const [display_language, heading] of [['en', 'Polished by Gemini'], ['zh', 'Gemini 润色版']]) {
+    for (const display_language of ['en', 'zh']) {
       const output = formatReply({ draft, candidate, display_language });
       assert.equal(output.text, candidate);
-      assert.ok(output.display_text.startsWith('**' + heading + '**\n\n' + candidate + '\n\n'));
+      assert.ok(output.display_text.startsWith(candidate + '\n\n<details>'));
     }
   }
 });

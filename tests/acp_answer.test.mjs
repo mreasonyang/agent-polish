@@ -31,11 +31,33 @@ test('offline rendering accepts only the completed text for the submitted sessio
     line({ id: 6, method: 'session/request_permission' }) + chunk(candidate) + end() };
   assert.equal(completedAnswer(input, options), candidate);
   assert.equal(completedAnswer({ ...input, display_language: 'zh' }, options),
-    '**Gemini 润色版**\n\n' + candidate + '\n\n<details><summary>查看 GPT 原稿</summary>\n\n原稿。\n\n</details>');
-  assert.match(completedAnswer({ ...input, display_language: 'en' }, { ...options, selection: true }), /View original text/);
-  assert.match(completedAnswer({ ...input, draft: candidate, display_language: 'zh' }, options), /Gemini 返回了原稿/);
+    candidate + '\n\n<details><summary>Gemini 改写 · 查看 GPT 原稿</summary>\n\n原稿。\n\n</details>');
+  assert.equal(completedAnswer({ ...input, display_language: 'en' }, { ...options, selection: true, trigger: 'explicit' }),
+    candidate + '\n\n<details><summary>Rewritten by Gemini · View original text</summary>\n\n原稿。\n\n</details>');
+  const same = { ...input, draft: candidate, display_language: 'zh' };
+  assert.equal(completedAnswer(same, options), candidate);
+  assert.equal(completedAnswer(same, { ...options, trigger: 'explicit' }), 'Gemini 返回了原稿。\n\n' + candidate);
   assert.throws(() => completedAnswer(input, { ...options, turnsBack: 1 }), /invalid_input/);
   assert.throws(() => completedAnswer(input, { ...options, turnsBack: 1, selection: true }), /invalid_options/);
+});
+
+test('the offline CLI forwards the trigger when Gemini returns a user selection unchanged', t => {
+  const { cwd } = scope(t);
+  const args = [program, '--cwd', cwd, '--model', model, '--thinking-level', 'medium', '--session-id', SESSION];
+  const draft = '   Quoted paragraph.\r\n';
+  const input = JSON.stringify({ draft, display_language: 'en', output: chunk(draft) + end() });
+  function run(...flags) {
+    return spawnSync(process.execPath, [...args, ...flags], { input, encoding: 'utf8' });
+  }
+  const selected = run('--trigger', 'explicit', '--selection');
+  assert.equal(selected.status, 0, selected.stderr);
+  assert.equal(selected.stdout, 'Gemini returned the original text.\n\n' + draft);
+  const automatic = run('--trigger', 'auto');
+  assert.equal(automatic.status, 0, automatic.stderr);
+  assert.equal(automatic.stdout, draft);
+  const invalid = run('--trigger', 'turbo');
+  assert.notEqual(invalid.status, 0);
+  assert.equal(invalid.stdout, '');
 });
 
 test('offline renderer reports incomplete, corrupt, or mismatched output without exposing a partial answer', t => {

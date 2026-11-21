@@ -67,11 +67,11 @@ The plugin requires the official Antigravity CLI 1.2.1 or later. By default it r
 
 ## What Appears in the Final Reply
 
-When Gemini returns a changed reply, the final message starts with **Polished by Gemini**. In the Codex app, select “View original GPT draft” below the rewrite to expand the full draft. Select it again to collapse it. Drafts retain their Markdown formatting. When a draft contains disclosure tags or container delimiters, the expanded view shows its Markdown source so you can read those markers verbatim.
+When Gemini changes a reply, the final message starts with the rewritten text. In the Codex app, select “Rewritten by Gemini · View original GPT draft” underneath to expand the full draft. For a selected passage or an earlier Gemini version, “Rewritten by Gemini · View original text” opens the exact text submitted for editing. Drafts retain their Markdown formatting. When a draft contains disclosure tags or container delimiters, the expanded view shows its Markdown source so you can read those markers verbatim.
 
-For a selected passage or a previous Gemini version, the comparison is labeled **View original text**. The expanded comparison shows the exact passage submitted for editing.
+During automatic polishing, you see only the original if Decisions keeps the draft or Gemini returns it verbatim. When you explicitly ask for a rewrite and Gemini returns identical wording, the text appears once with the sentence “Gemini returned the original draft.” For a selected passage, the sentence reads “Gemini returned the original text.”
 
-If Gemini returns identical text, the reply says it left the draft unchanged and shows the text once. If polishing is skipped before sending or the ACP request ends without a complete reply, the status explains what happened and the reply shows the original. Asking for “only the polished text” shows just Gemini’s text when the rewrite completes. Requests for plain JSON, a single command, or other exact output receive the requested content without labels or status.
+If polishing cannot run or ACP fails to return a complete reply, you see the original and a brief reason. When you request only the body, you receive the rewritten text on success or the original if it is kept or the rewrite fails. Requests for plain JSON, a single command, or other exact output take precedence.
 
 When the full reply arrives, the local formatter uses the original draft retained by the Codex agent to produce the final Markdown. Both the comparison view and text-only delivery preserve Gemini’s chart references, whitespace, and line endings. Codex can retrieve a long formatted message in pages.
 

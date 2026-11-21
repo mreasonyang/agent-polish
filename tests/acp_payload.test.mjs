@@ -110,7 +110,9 @@ function setup(t, { savedKey = false } = {}) {
       if (index === verifiedIndex) {
         submit(turn_id, user);
         const script = join(plugin, 'skills/codex-polish/scripts/format_reply.mjs');
-        assert.equal(json(cli(script, ['--cwd', project, '--skipped'], {draft:assistant, reason:'Kept the draft.'})).text, assistant);
+        const kept = cli(script, ['--render', '--cwd', project, '--kept'], {draft:assistant});
+        assert.equal(kept.status, 0, kept.stderr);
+        assert.equal(kept.stdout, assistant);
       }
       records.push(
         {type:'response_item',payload:{type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text:assistant}]}},
@@ -421,6 +423,9 @@ test('an explicit rewrite sends the selected earlier question and draft, its pre
   const target = {question:'Why do I still see the old avatar?', draft:'Your browser still has the old image.'};
   ctx.configure([older, [target.question, target.draft], ['What time is the meeting?', 'Nine.']],
     'Rewrite your earlier reply about the old avatar. Make it two sentences.', 1);
+  const previous = join(plugin, 'skills/codex-polish/scripts/previous_reply.mjs');
+  assert.deepEqual(json(ctx.cli(previous, ['--cwd', ctx.project, '--turns-back', '2', '--require-gpt'])),
+    {...target, source_label:'gpt', turns_back:2});
   const roleFile = join(ctx.root, 'once.md');
   const stage = trigger => {
     const role = ctx.cli(roleScript, ['--cwd', ctx.project, '--trigger', trigger]);

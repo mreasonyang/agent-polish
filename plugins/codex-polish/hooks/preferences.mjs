@@ -11,7 +11,7 @@ import { LANGUAGES, LANGUAGE_FILE, language, languageSettings, tr } from './ui_l
 import { cacheScope, withCache } from './recovery.mjs';
 
 const MODES = ['auto', 'manual', 'off'];
-const MODE_FILE = 'codex-polish.mode';
+export const MODE_FILE = 'codex-polish.mode';
 const HISTORY_FILE = 'codex-polish.history-turns';
 export const DECISIONS_FILE = 'codex-polish.decisions';
 export const MODEL_FILE = 'codex-polish.model';

@@ -26,7 +26,7 @@ Requires **Windows, macOS, or Linux**, **Node.js 22.16+**, a [Codex CLI](https:/
 Open PowerShell on the machine running Codex and run this command from any folder.
 
 ```powershell
-npx.cmd @kyun.si/codex-polish@beta setup
+npx.cmd @kyun.si/codex-polish setup
 ```
 
 ### macOS and Linux
@@ -34,16 +34,16 @@ npx.cmd @kyun.si/codex-polish@beta setup
 Open a terminal on the machine running Codex and run this command from any folder.
 
 ```sh
-npx @kyun.si/codex-polish@beta setup
+npx @kyun.si/codex-polish setup
 ```
 
 ### Finish setup
 
 For T3 Code, select the Codex backend.
 
-Use **↑ / ↓** and **Enter** to choose a rewrite mode, then a Gemini model and its thinking level. The initial defaults are **Normal**, **Gemini 4 Hydrogen** and **Medium**. Setup offers to install `agy` if needed. [Other installation options](docs/technical.en.md#installation-updates-and-uninstall)
+Use **↑ / ↓** and **Enter** to choose **Normal** (automatic, when useful), **Turbo** (automatic, every time), **Only when asked**, or **Turn off polishing**. When polishing is on, pick a Gemini model and its thinking level. The initial defaults are **Normal**, **Gemini 4 Hydrogen** and **Medium**. Setup offers to install `agy` if needed. Choosing **Turn off polishing** saves `off` for this Codex profile and exits right away without model, dependency, key or hook prompts. [Other installation options](docs/technical.en.md#installation-updates-and-uninstall)
 
-Codex Polish uses one set of preferences for your current Codex profile. Changes you save in chat or in the terminal take effect immediately in every chat and folder using that profile. Run `setup` again to review the rewrite mode, model and thinking level. Press **Enter** to keep each saved choice or use the arrows to change it. Use `update` to upgrade with your existing settings.
+Codex Polish uses one set of preferences for your current Codex profile. Changes you save in chat or in the terminal take effect immediately in every chat and folder using that profile. Run `setup` again to review your mode, model and thinking level, turn polishing off, or select **Normal**, **Turbo** or **Only when asked** from the same menu to turn it back on. Press **Enter** to keep each saved choice or use the arrows to change it. Turning polishing off stops automatic and requested rewrites—nothing is sent to Gemini or OpenAI Decisions—while keeping your saved model, thinking level, custom prompt and OpenAI key. Use `update` to upgrade with your existing settings.
 
 - **Before trusting the hook:** Ask **“Why does a cache hit still take time? Polish the answer.”** Asking for a polish uses Turbo. Gemini receives the draft without earlier exchanges.
 - **Automatic mode (default):** Trust `UserPromptSubmit` in Codex **Settings → Hooks** (`/hooks` in the CLI) and start a **new chat**. Codex then runs the polishing workflow on ordinary questions and can include recent exchanges.
@@ -52,15 +52,15 @@ Codex Polish uses one set of preferences for your current Codex profile. Changes
 
 On first interactive setup, choosing Normal lets you enable the OpenAI Decisions API to check whether Gemini should rewrite each draft. Press **Enter** to skip it and use Gemini alone. If you opt in, OpenAI receives your current question, draft and any custom polishing prompt. Create an OpenAI API key in the project that will pay for the checks and enter it at the hidden terminal prompt. The key is saved for this Codex profile. Turbo always goes directly to Gemini. [OpenAI API keys](https://platform.openai.com/api-keys)
 
-To add, replace or remove the key later, run `npx @kyun.si/codex-polish@beta openai`. In Windows PowerShell, use `npx.cmd @kyun.si/codex-polish@beta openai`. Codex Polish ignores the `OPENAI_API_KEY` environment variable. [Credentials guide](plugins/codex-polish/skills/codex-polish-setup/references/credentials.en.md#optional-openai-decisions-api)
+To add, replace or remove the key later, run `npx @kyun.si/codex-polish openai`. In Windows PowerShell, use `npx.cmd @kyun.si/codex-polish openai`. Codex Polish ignores the `OPENAI_API_KEY` environment variable. [Credentials guide](plugins/codex-polish/skills/codex-polish-setup/references/credentials.en.md#optional-openai-decisions-api)
 
 ## Useful chat prompts
 
-- **“Set up Codex Polish.”** Opens your saved settings. You can keep or change the automatic rewrite mode, Gemini model and thinking level.
+- **“Set up Codex Polish.”** Opens your saved settings. You can keep or change the polishing mode (**Normal**, **Turbo**, **Only when asked**, or **Turn off polishing**), or pick a Gemini model and thinking level when polishing is on.
 - **“Speak plainly.” “Rewrite.” “Polish.”** Send any of these on its own to rewrite the last reply with Gemini. To apply it to a new answer, ask **“Why does a cache hit still take time? Say it in plain English.”**
 - **“Have Gemini rewrite your last answer in two sentences.”** You can name an earlier answer in the same chat. Asking to rewrite the original again uses the question that first prompted it. If Codex can’t identify the original, it asks you to point it out or quote it. A request to polish or rewrite skips the OpenAI Decisions API even when automatic polishing is set to Normal.
 - **“Switch to Turbo mode.”** Saves Turbo for automatic polishing. To restore Normal, say **“Switch back to Normal mode.”** For a one-time rewrite, say **“Use Turbo for this reply.”**
-- **“Only polish when I ask.”** Saves manual mode. **“Only show the polished text”** hides the comparison for one reply.
+- **“Only polish when I ask.” “Turn off polishing.” “Turn on automatic polishing.”** Switch to manual mode, turn off all automatic and requested rewrites across this Codex profile (keeping your saved model, prompt and key), or turn automatic polishing back on. **“Only show the polished text”** hides the comparison for one reply.
 - **“Choose a rewrite model.”** Pick a model from your Antigravity account and a thinking level it supports. To change just the level, say **“Use High thinking for Gemini.”** Normal and Turbo both use your selection.
 - **“Set my polishing prompt to: Lead with the conclusion and use short sentences.”** Your custom prompt replaces the built-in editing instructions for Normal and Turbo. Say **“Restore the default polishing prompt”** to delete the saved text.
 
@@ -77,9 +77,9 @@ Codex Polish sends the selected text as written, including any keys or tokens it
 
 | Action | Command |
 | --- | --- |
-| Check setup | `npx @kyun.si/codex-polish@beta doctor` |
-| Update | `npx @kyun.si/codex-polish@beta update` |
-| Uninstall | `npx @kyun.si/codex-polish@beta uninstall` |
+| Check setup | `npx @kyun.si/codex-polish doctor` |
+| Update | `npx @kyun.si/codex-polish update` |
+| Uninstall | `npx @kyun.si/codex-polish uninstall` |
 
 In Windows PowerShell, use `npx.cmd` to run `doctor`, `update`, and `uninstall`. `doctor` checks local dependencies, your saved settings and hook trust. Ask **“Choose a rewrite model”** to check your Antigravity sign-in and see the available models. After an update, Codex may ask you to trust the hook again.
 

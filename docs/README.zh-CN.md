@@ -26,7 +26,7 @@ Codex 的回答太绕时，可以让 Gemini 换个说法。Codex 通过 Antigrav
 在运行 Codex 的 Windows 电脑上打开 PowerShell，在任意目录执行下面的命令。
 
 ```powershell
-npx.cmd @kyun.si/codex-polish@beta setup
+npx.cmd @kyun.si/codex-polish setup
 ```
 
 ### macOS 和 Linux
@@ -34,16 +34,16 @@ npx.cmd @kyun.si/codex-polish@beta setup
 在运行 Codex 的电脑上打开终端，在任意目录执行下面的命令。
 
 ```sh
-npx @kyun.si/codex-polish@beta setup
+npx @kyun.si/codex-polish setup
 ```
 
 ### 完成设置
 
 使用 T3 Code 时，选择 Codex 后端。
 
-用 **↑ / ↓** 选择改写模式，再选 Gemini 模型和思考等级，按**回车**确认。初始默认值是**普通模式、Gemini 4 Hydrogen、中等（Medium）**。缺少 `agy` 时，安装器会提示安装。[其他安装方式](technical.md#安装更新和卸载)
+用 **↑ / ↓** 选择 **Normal**（自动按需改写）、**Turbo**（自动每次改写）、**仅手动**（只在我要求时润色）或**关闭润色**；开启润色时继续选 Gemini 模型和思考等级，按**回车**确认。初始默认值是 **Normal、Gemini 4 Hydrogen、中等（Medium）**。缺少 `agy` 时，安装器会提示安装。若选**关闭润色**，安装器会为当前 Codex 配置保存全局关闭并直接结束，不再引导配置模型、依赖、密钥或 hook 信任。[其他安装方式](technical.md#安装更新和卸载)
 
-同一份 Codex 配置下的所有聊天和目录共用一套润色设置。在聊天或终端保存后，更改立即生效。再次运行 `setup` 可以查看或更改自动改写模式、模型和思考等级。菜单会预选已保存的值，按**回车**保留，用方向键更改。只想升级插件并保留设置时，运行 `update`。
+同一份 Codex 配置下的所有聊天和目录共用一套润色设置。在聊天或终端保存后，更改立即生效。再次运行 `setup` 可查看或更改模式、模型和思考等级；菜单会预选当前项，按**回车**保留，或从同一菜单改选 **Normal**、**Turbo**、**仅手动**重新开启。关闭润色会同时停用自动和点名改写，不向 Gemini 或 OpenAI Decisions 发送内容，并保留已保存的模型、思考等级、提示词和密钥。只想升级插件并保留设置时，运行 `update`。
 
 - **信任 hook 前手动试用：** 试试 **“为什么缓存命中了还要等？返回结果 polish。”** 主动要求润色就会用 Turbo。Gemini 会收到草稿，这次不附带以前的问答。
 - **自动模式（默认）：** 在 Codex **设置 → Hooks**（CLI 输入 `/hooks`）中信任 `UserPromptSubmit` 并**新开聊天**。之后照常提问就会触发润色流程，也可以附上最近几轮对话。
@@ -52,15 +52,15 @@ npx @kyun.si/codex-polish@beta setup
 
 首次交互安装并选用普通模式时，安装器会询问是否启用 OpenAI Decisions API，由它判断是否需要 Gemini 改写草稿。直接按**回车**即可跳过，只用 Gemini。启用后，OpenAI 会收到本轮问题、草稿和已设置的自定义润色提示词。在承担检查费用的 OpenAI 项目中创建 API 密钥，再粘贴到终端的隐藏输入框。密钥保存在当前 Codex 配置中。Turbo 始终直接使用 Gemini。[OpenAI API 密钥](https://platform.openai.com/api-keys)
 
-以后要添加、更换或移除密钥，运行 `npx @kyun.si/codex-polish@beta openai`。Windows PowerShell 中使用 `npx.cmd @kyun.si/codex-polish@beta openai`。插件会忽略 `OPENAI_API_KEY` 环境变量。[凭据指南](../plugins/codex-polish/skills/codex-polish-setup/references/credentials.md#选配-openai-decisions-api)
+以后要添加、更换或移除密钥，运行 `npx @kyun.si/codex-polish openai`。Windows PowerShell 中使用 `npx.cmd @kyun.si/codex-polish openai`。插件会忽略 `OPENAI_API_KEY` 环境变量。[凭据指南](../plugins/codex-polish/skills/codex-polish-setup/references/credentials.md#选配-openai-decisions-api)
 
 ## 常用聊天指令
 
-- **“配置回复润色。”** 可以重新打开已保存的设置，保留或更改自动润色的改写模式、Gemini 模型和思考等级。
+- **“配置回复润色。”** 打开已保存的设置，可保留或切换 **Normal**、**Turbo**、**仅手动**和**关闭润色**；润色开启时可继续选择 Gemini 模型和思考等级。
 - **“说人话”“重写”“润色”** 都可以单独发，默认让 Gemini 改上一条回复。英文也可以说 **“Speak plainly.” “Rewrite.” “Polish.”** 想改本轮答案，直接问 **“什么是缓存穿透？说人话。”**
 - **“让 Gemini 把上一条改成两句话。”** 也可以说“重写前面讲缓存的那条”。再次要求改原稿时，插件会找回最初的问题。原稿无法确认时，Codex 会请你指明或贴出原文。即使自动润色设为普通模式，主动要求润色或改写也会跳过 OpenAI Decisions API。
 - **“切换到 Turbo 模式。”** 保存后，自动润色会用 Turbo。说**“恢复普通模式”**即可切回。只想改这一条时，说**“这次用 Turbo 润色”**。
-- **“只在我要求时润色。”** 这会将润色设为手动触发。只想看本轮改稿，就说“只给我润色后的正文”。
+- **“只在我要求时润色。”“关闭润色。”“开启自动润色。”** 分别切换为仅手动、关闭当前 Codex 配置下的自动和点名改写（保留已保存的模型、提示词和密钥），或重新开启自动润色。只想看本轮改稿，就说“只给我润色后的正文”。
 - **“选择改写模型。”** 从 Antigravity 账号可用的模型中选择，再选该模型支持的思考等级。也可以只改等级，比如**“把 Gemini 的思考等级调到高。”** 普通和 Turbo 模式都用你选的等级。
 - **“把我的润色提示词设为：先写结论，尽量用短句。”** 保存后，这份提示词会完整替换普通和 Turbo 模式的内置编辑指令。说**“恢复默认润色提示词”**即可删除已保存的文字。
 
@@ -77,9 +77,9 @@ npx @kyun.si/codex-polish@beta setup
 
 | 操作 | 命令 |
 | --- | --- |
-| 检查配置 | `npx @kyun.si/codex-polish@beta doctor` |
-| 更新 | `npx @kyun.si/codex-polish@beta update` |
-| 卸载 | `npx @kyun.si/codex-polish@beta uninstall` |
+| 检查配置 | `npx @kyun.si/codex-polish doctor` |
+| 更新 | `npx @kyun.si/codex-polish update` |
+| 卸载 | `npx @kyun.si/codex-polish uninstall` |
 
 在 Windows PowerShell 中，使用 `npx.cmd` 调用 `doctor`、`update` 和 `uninstall`。`doctor` 检查本机依赖、已保存的设置和 hook 信任状态。要确认 Antigravity 登录是否可用，可以说 **“选择改写模型”**，查看账号当前能用的模型。插件更新后，Codex 可能提示你重新信任 hook。
 

@@ -15,7 +15,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { executable, windows, agyDirectory, windowsSystemTool, openRegular, sameEntry } from '../plugins/codex-polish/hooks/platform.mjs';
 import { language, languageSettings, tr } from '../plugins/codex-polish/hooks/ui_locale.mjs';
-import { DEFAULT_GEMINI_MODEL, DEFAULT_THINKING_LEVEL, DECISIONS_FILE, PROFILE_PREFERENCE_FILES, findAgy, runtimeStatus, saveModelSelection } from '../plugins/codex-polish/hooks/preferences.mjs';
+import { DEFAULT_GEMINI_MODEL, DEFAULT_THINKING_LEVEL, DECISIONS_FILE, MODE_FILE, PROFILE_PREFERENCE_FILES, findAgy, runtimeStatus, saveModelSelection, triggerMode } from '../plugins/codex-polish/hooks/preferences.mjs';
 import { REWRITE_MODE_FILE, REWRITE_MODES } from '../plugins/codex-polish/hooks/rewrite_mode.mjs';
 import { accessSettingFile, readProfileSetting, writeProfileSetting } from '../plugins/codex-polish/hooks/profile_setting.mjs';
 import { readOpenAIKey, saveOpenAIKey, clearOpenAIKey } from '../plugins/codex-polish/hooks/openai_credentials.mjs';
@@ -34,8 +34,8 @@ const CODEX_INSTALL = 'https://developers.openai.com/codex/cli/';
 const GEMINI_KEYS = 'https://aistudio.google.com/apikey';
 const OPENAI_KEYS = 'https://platform.openai.com/api-keys';
 const OPENAI_OFFER_FILE = 'codex-polish.openai-offer';
-const openAICommand = `${windows ? 'npx.cmd' : 'npx'} @kyun.si/codex-polish@beta openai`;
-const installAgyCommand = `${windows ? 'npx.cmd' : 'npx'} @kyun.si/codex-polish@beta setup --install-agy`;
+const openAICommand = `${windows ? 'npx.cmd' : 'npx'} @kyun.si/codex-polish openai`;
+const installAgyCommand = `${windows ? 'npx.cmd' : 'npx'} @kyun.si/codex-polish setup --install-agy`;
 const AGY_INSTALL = 'https://antigravity.google/docs/getting-started/?tab=cli';
 const AGY_BOOTSTRAP = 'https://antigravity.google/cli/install.' + (windows ? 'ps1' : 'sh');
 const VERSION = '[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][a-zA-Z0-9.+-]+)?';
@@ -462,7 +462,7 @@ export async function writeEnabled(value) {
   if (!['ok', 'okOverridden'].includes(result.status))
     throw fail('Codex 配置接口没有确认写入。', "Codex didn't confirm that it saved the setting.");
 }
-async function hookGuidance(lang, cwd = process.cwd()) {
+async function hookGuidance(lang, mode, cwd = process.cwd()) {
   const settings = tr('Codex「设置 → Hooks」（CLI 输入 /hooks）', 'Codex Settings → Hooks (/hooks in the CLI)', lang);
   let hook;
   try {
@@ -477,6 +477,9 @@ async function hookGuidance(lang, cwd = process.cwd()) {
   if (!hook.enabled) return tr(`UserPromptSubmit 已停用。要自动润色或附带历史，可在 ${settings} 中启用它。`,
     `UserPromptSubmit is disabled. To use automatic polishing or include history, enable it in ${settings}.`, lang);
   if (hook.trustStatus === 'trusted') return tr('Codex 已信任 UserPromptSubmit。', 'Codex trusts UserPromptSubmit.', lang);
+  if (mode === 'manual' && ['modified', 'untrusted'].includes(hook.trustStatus))
+    return tr(`手动润色已开启。想在改写时附带聊天历史，可在 ${settings} 中信任 UserPromptSubmit，再新开聊天。`,
+      `Manual polishing is on. To include chat history, trust UserPromptSubmit in ${settings} and start a new chat.`, lang);
   if (hook.trustStatus === 'modified')
     return tr(`已安装的插件内容有变，Codex 要求重新确认。请在 ${settings} 中审查并重新信任 UserPromptSubmit，再新开聊天。`,
       `The installed plugin changed. Review and trust UserPromptSubmit again in ${settings}, then start a new chat.`, lang);
@@ -913,19 +916,19 @@ export async function manage(action, root, store, run = codex, setEnabled = writ
   });
 }
 function readChecks() {
-  const checks = runtimeStatus();
-  Object.assign(checks, languageSettings());
-  if (checks.agy_available && !supportedAgy(checks.agy_path)) {
+  return { ...runtimeStatus(), ...languageSettings() };
+}
+function checkAgyVersion(checks) {
+  if (checks.agy_path && checks.agy_available && !supportedAgy(checks.agy_path)) {
     checks.agy_available = false;
     checks.blockers.push('agy_unsupported');
   }
   return checks;
 }
 
-function saveSetupRewriteMode(value) {
+function saveSetupMode(file, value) {
   try {
-    if (!REWRITE_MODES.includes(value)) throw new Error('invalid choice');
-    writeProfileSetting(REWRITE_MODE_FILE, value);
+    writeProfileSetting(file, value);
   } catch {
     throw new SetupError(tr('无法保存默认设置。请检查 Codex 用户目录的写入权限。',
       'Could not save your defaults. Check write access to your Codex profile.', language()));
@@ -1278,11 +1281,13 @@ export async function manageOpenAI(lang, { onboarding = false, input = process.s
   }
 }
 export function chooseSetupMode(lang, current, input, output) {
-  const currentLabel = tr('（当前）', ' (current)', lang);
-  const normalLabel = current === 'normal' ? currentLabel : current ? '' : tr('（默认）', ' (default)', lang);
+  const currentLabel = id => id === current ? tr('（当前）', ' (current)', lang) : '';
+  const normalLabel = current ? currentLabel('normal') : tr('（默认）', ' (default)', lang);
   return chooseOption(tr('默认怎么润色？', 'How should replies be polished by default?', lang), [
     { id: 'normal', name: 'Normal' + normalLabel + tr(' · 按需改写', ' · rewrite when useful', lang) },
-    { id: 'turbo', name: 'Turbo' + (current === 'turbo' ? currentLabel : '') + tr(' · 每次都请 Gemini 改写', ' · ask Gemini to rewrite every time', lang) }
+    { id: 'turbo', name: 'Turbo' + currentLabel('turbo') + tr(' · 每次都请 Gemini 改写', ' · ask Gemini to rewrite every time', lang) },
+    { id: 'manual', name: tr('仅手动 · 只在我要求时润色', 'Only when asked', lang) + currentLabel('manual') },
+    { id: 'off', name: tr('关闭润色', 'Turn off polishing', lang) + currentLabel('off') }
   ], lang, input, output, current);
 }
 
@@ -1402,7 +1407,8 @@ export async function showSetupGuidance({
   dependencyOnly = false,
   interactive = process.stdin.isTTY && process.stdout.isTTY,
   check = readChecks,
-  saveRewriteMode = saveSetupRewriteMode,
+  saveRewriteMode = value => saveSetupMode(REWRITE_MODE_FILE, value),
+  saveTriggerMode = value => saveSetupMode(MODE_FILE, value),
   saveModel = ({ model, thinkingLevel }, lang) => saveModelSelection(model, thinkingLevel, lang),
   chooseMode = chooseSetupMode,
   chooseModel = chooseSetupModel,
@@ -1425,14 +1431,26 @@ export async function showSetupGuidance({
     return !installDependency;
   }
   if (interactive && !dependencyOnly) {
-    const current = checks.rewrite_mode_configured ? checks.rewrite_mode : undefined;
+    let current = checks.mode;
+    if (current === 'auto') current = checks.rewrite_mode_configured ? checks.rewrite_mode : undefined;
     const selected = await chooseMode(lang, current);
     if (!selected) return true;
     if (selected !== current) {
-      await saveRewriteMode(selected);
+      const useAutomatic = REWRITE_MODES.includes(selected);
+      const mode = useAutomatic ? 'auto' : selected;
+      if (useAutomatic && (!checks.rewrite_mode_configured || selected !== checks.rewrite_mode)) {
+        await saveRewriteMode(selected);
+      }
+      if (mode !== checks.mode) await saveTriggerMode(mode);
       checks = check();
     }
   }
+  if (checks.mode === 'off') {
+    console.log(tr('已关闭润色。要重新开启，可再次运行 setup。', 'Polishing is off. Run setup again to turn it back on.', lang));
+    if (!installDependency || (interactive && !dependencyOnly)) return true;
+    dependencyOnly = true;
+  }
+  checkAgyVersion(checks);
   if (installDependency && checks.blockers.includes('agy_unsupported')) {
     console.error(tr(issues.agy_unsupported[0], issues.agy_unsupported[1], lang) + '\n' + AGY_INSTALL);
     return false;
@@ -1453,7 +1471,7 @@ export async function showSetupGuidance({
       try {
         console.log(tr('正在从 Google 下载并安装 agy…', 'Downloading and installing agy from Google…', lang));
         await install();
-        checks = check();
+        checks = checkAgyVersion(check());
         if (!checks.agy_available)
           throw fail('装好后仍找不到 agy。', 'The installer finished, but agy is still missing.');
         console.log(tr('agy 已安装，可以使用。', 'agy is installed and ready to use.', lang));
@@ -1486,7 +1504,7 @@ export async function showSetupGuidance({
   }
   const [lines, pages] = setupIssues(checks, lang);
   if (lines.length) console.log(lines.join('\n'));
-  if (interactive && checks.rewrite_mode === 'normal' && checks.rewrite_mode_configured && !checks.blockers.length)
+  if (interactive && checks.mode === 'auto' && checks.rewrite_mode === 'normal' && checks.rewrite_mode_configured && !checks.blockers.length)
     await offerOpenAI(lang);
   if (
     pages.length &&
@@ -1505,7 +1523,7 @@ export async function showSetupGuidance({
   }
   return true;
 }
-export function doctor(checks = readChecks()) {
+export function doctor(checks = checkAgyVersion(readChecks())) {
   const lang = checks.ui_language,
     modes = { manual: ['只在我要求时', 'only when asked'], auto: ['自动改写', 'automatic'], off: ['已关闭', 'off'] };
   const lines = [
@@ -1576,8 +1594,8 @@ export function doctor(checks = readChecks()) {
 }
 function usage(lang) {
   return tr(
-    '用法：node scripts/install.mjs [setup|update|doctor|openai|uninstall] [--install-agy]\nsetup 安装并选择默认模式和模型，可重复运行（默认命令）。update 更新插件，doctor 检查插件设置和运行环境，openai 管理可选的 OpenAI Decisions API 检查和密钥，uninstall 卸载。\n--install-agy 在缺少 agy 时安装，仅限 setup 和 update。\n-h, --help 显示帮助并退出。',
-    'Usage: node scripts/install.mjs [setup|update|doctor|openai|uninstall] [--install-agy]\nsetup (default) installs the plugin. Run it again to change your default mode and model. update upgrades the plugin, doctor checks your settings and local environment, openai manages the optional OpenAI Decisions API check and its key, and uninstall removes the plugin.\n--install-agy installs Google’s Antigravity CLI if missing during setup or update.\n-h, --help shows this help.',
+    '用法：node scripts/install.mjs [setup|update|doctor|openai|uninstall] [--install-agy]\nsetup 安装插件并选择模式和模型，再次运行可关闭或重新开启润色（默认命令）。update 更新插件，doctor 检查插件设置和运行环境，openai 管理可选的 OpenAI Decisions API 检查和密钥，uninstall 卸载。\n--install-agy 在缺少 agy 时安装，仅限 setup 和 update。\n-h, --help 显示帮助并退出。',
+    'Usage: node scripts/install.mjs [setup|update|doctor|openai|uninstall] [--install-agy]\nsetup (default) installs the plugin. Run it again to change your mode or model, turn polishing off, or turn it back on. update upgrades the plugin, doctor checks your settings and local environment, openai manages the optional OpenAI Decisions API check and its key, and uninstall removes the plugin.\n--install-agy installs Google’s Antigravity CLI if missing during setup or update.\n-h, --help shows this help.',
     lang
   );
 }
@@ -1602,16 +1620,19 @@ export async function main(args = process.argv.slice(2)) {
   try {
     if (action === 'openai') return (await manageOpenAI(lang)) ? 0 : 1;
     if (action === 'doctor') {
-      const checks = readChecks();
+      const checks = checkAgyVersion(readChecks());
       console.log(doctor(checks));
-      console.log(await hookGuidance(checks.ui_language));
+      if (checks.mode !== 'off') console.log(await hookGuidance(checks.ui_language, checks.mode));
       return 0;
     }
     const [message, enabled] = await manage(action, ROOT, snapshotStore());
     console.log(message);
     const setup = action === 'setup' && (enabled || (process.stdin.isTTY && process.stdout.isTTY));
     if ((setup || installDependency) && !(await showSetupGuidance({ installDependency, dependencyOnly: !setup }))) return 1;
-    if (enabled) console.log(await hookGuidance(lang, homedir()));
+    if (enabled) {
+      const mode = triggerMode();
+      if (mode !== 'off') console.log(await hookGuidance(lang, mode, homedir()));
+    }
     return 0;
   } catch (error) {
     console.error(

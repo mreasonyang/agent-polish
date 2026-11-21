@@ -1,11 +1,11 @@
-name: Publish beta to npm
+name: Publish to npm
 on:
   push:
-    tags: ['v*-beta.*']
+    tags: ['v[0-9]*.[0-9]*.[0-9]*']
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing beta tag to publish or verify
+        description: Existing stable or beta tag to publish or verify
         required: true
         type: string
 
@@ -13,6 +13,7 @@ permissions:
   contents: read
 
 concurrency:
+  # Keep both channels serialized with runs of the original beta workflow.
   group: npm-beta
   queue: max
 
@@ -30,7 +31,7 @@ jobs:
         shell: bash
         run: |
           number='(0|[1-9][0-9]*)'
-          [[ "$RELEASE_TAG" =~ ^v${number}\.${number}\.${number}-beta\.${number}$ ]]
+          [[ "$RELEASE_TAG" =~ ^v${number}\.${number}\.${number}(-beta\.${number})?$ ]]
       - uses: actions/checkout@v4
         with:
           ref: refs/tags/${{ env.RELEASE_TAG }}
@@ -56,7 +57,7 @@ jobs:
           assert.equal(pkg.name, '@kyun.si/codex-polish');
           assert.equal('v' + pkg.version, process.env.RELEASE_TAG);
           assert.equal(plugin.version, pkg.version);
-          assert.equal(pkg.publishConfig.tag, 'beta');
+          assert.equal(pkg.publishConfig.tag, pkg.version.includes('-beta.') ? 'beta' : 'latest');
           assert.equal(pkg.publishConfig.access, 'public');
           assert.equal(pkg.publishConfig.registry, 'https://registry.npmjs.org/');
           NODE
@@ -65,7 +66,7 @@ jobs:
         run: npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP"
       - uses: actions/upload-artifact@v4
         with:
-          name: npm-beta
+          name: npm-release
           path: ${{ runner.temp }}/kyun.si-codex-polish-*.tgz
           if-no-files-found: error
 
@@ -93,10 +94,10 @@ jobs:
       - run: npm install --global npm@11.21.3
       - uses: actions/download-artifact@v4
         with:
-          name: npm-beta
-          path: ${{ runner.temp }}/npm-beta
-      - name: Publish the verified archive via npm OIDC and attach it to the GitHub prerelease
-        run: bash .github/scripts/publish-beta.sh
+          name: npm-release
+          path: ${{ runner.temp }}/npm-release
+      - name: Publish the verified archive via npm OIDC and attach it to the GitHub release
+        run: bash .github/scripts/publish.sh
         env:
           SOURCE_SHA: ${{ needs.qualify.outputs.source_sha }}
           GH_TOKEN: ${{ github.token }}

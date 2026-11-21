@@ -2,6 +2,14 @@
 
 [中文使用说明](docs/README.zh-CN.md) · [English README](README.md)
 
+## 0.0.1
+
+- 首个正式版。运行 `npx @kyun.si/codex-polish setup` 安装；Windows PowerShell 请用 `npx.cmd @kyun.si/codex-polish setup`。
+- 在终端或聊天的 Setup 首页可选 Normal、Turbo、仅手动或关闭。关闭后，自动润色和点名改写都会停用；重新开启时，之前的模型、思考等级、提示词和密钥仍然可用。
+
+- First stable release. Install with `npx @kyun.si/codex-polish setup`, or `npx.cmd @kyun.si/codex-polish setup` in Windows PowerShell.
+- Choose Normal, Turbo, Only when asked, or Turn off polishing from Setup in the terminal or in chat. Turning polishing off pauses both automatic and requested rewrites. Your model, thinking level, custom prompt and saved key are ready when you turn it back on.
+
 ## 0.0.1-beta.13
 
 - 同一份 Codex 配置下的所有聊天和目录共用一套润色设置。在聊天或终端保存后立即生效。再运行一次交互式 `setup` 或在聊天中打开「配置回复润色」，即可查看或更改自动改写模式、Gemini 模型和思考等级。终端菜单按回车即可保留原选择。

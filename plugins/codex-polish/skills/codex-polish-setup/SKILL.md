@@ -17,18 +17,21 @@ Use one language for the conversation, including menus, status, examples and rec
 
 ## Opening Setup
 
-Opening **Setup** or saying “配置回复润色” / “Set up Codex Polish” starts with `check`. Offer to review the saved automatic rewrite mode, model and thinking level each time Setup opens. A request about one setting goes straight to that setting. A request to check or show settings ends with the read-only result.
+Opening **Setup** or saying “配置回复润色” / “Set up Codex Polish” starts with `check`. Offer to review the polishing mode, and when polishing is on, the Gemini model and thinking level. A request about one setting goes straight to that setting. A request to check or show settings ends with the read-only result.
 
-1. Offer Normal and Turbo with the host’s single-select control, or accept the mode name in chat. Show the effective mode and default to keeping it. With the built-in prompt, Normal can keep a clear draft and Turbo asks Gemini to rewrite it. Save a change with `set-rewrite-mode normal` or `set-rewrite-mode turbo`.
-2. Once `agy` is available, show the current Gemini model and thinking level together. Offer to keep them, adjust the level, or choose another model using the picker below. The built-in pair is Gemini 4 Hydrogen and Medium.
+1. Offer **Normal** (automatic, rewrite when useful / 自动按需改写), **Turbo** (automatic, rewrite every time / 自动每次改写), **Only when asked** (仅手动 · 只在我要求时润色), and **Turn off polishing** (关闭润色) with the host’s single-select control, or accept the choice in chat. Show the current choice and default to keeping it (`normal` or `turbo` when `mode=auto`, `manual` when `mode=manual`, `off` when `mode=off`). With the built-in prompt, Normal can keep a clear draft and Turbo asks Gemini to rewrite it.
+   - Choosing **Normal** or **Turbo** enables automatic polishing: save `set-rewrite-mode normal` or `set-rewrite-mode turbo` when the rewrite mode changes, and `set-mode auto` when `mode` was `manual` or `off`.
+   - Choosing **Only when asked** saves `set-mode manual` (keeping the saved automatic `rewrite_mode`) and continues to step 2 so the user can still choose a Gemini model and thinking level.
+   - Choosing **Turn off polishing** saves `set-mode off` (when not already `off`) and finishes immediately—do not prompt for a Gemini model, `agy` installation, API keys, or hook trust. Turning polishing off disables both automatic and explicit rewrites and sends nothing to Gemini or OpenAI Decisions, while preserving the saved model, thinking level, custom prompt, and OpenAI key. Selecting **Normal**, **Turbo**, or **Only when asked** from the same menu turns polishing back on.
+2. When polishing is on (`auto` or `manual`) and `agy` is available, show the current Gemini model and thinking level together. Offer to keep them, adjust the level, or choose another model using the picker below. The built-in pair is Gemini 4 Hydrogen and Medium.
 
 For either menu, save a setting only when the user chooses to change it.
 
-Interactive terminal and Finder setup open the same settings as chat. Running `setup` again preselects the saved choices and Enter keeps them. Use `update` to upgrade with the existing settings.
+Interactive terminal and Finder setup open the same choices as chat. Running `setup` again preselects the current option; pressing Enter keeps it, and choosing Normal, Turbo or Only when asked from the same menu turns polishing back on. Use `update` to upgrade with the existing settings.
 
-- **A required step is missing.** Give the relevant next step from the [中文指南](references/credentials.md) or [English guide](references/credentials.en.md). For `agy_missing`, suggest `npx @kyun.si/codex-polish@beta setup --install-agy` from any folder on the machine running Codex. A source checkout also supports `node scripts/install.mjs setup --install-agy` from its root. Open `agy` to sign in if Antigravity requests authentication.
+- **A required step is missing.** Give the relevant next step from the [中文指南](references/credentials.md) or [English guide](references/credentials.en.md). For `agy_missing`, suggest `npx @kyun.si/codex-polish setup --install-agy` from any folder on the machine running Codex. A source checkout also supports `node scripts/install.mjs setup --install-agy` from its root. Open `agy` to sign in if Antigravity requests authentication.
 - **Ready for automatic polishing.** Before asking for hook trust, briefly tell the user what goes to each service. Google receives the question and draft as written, any edit instructions or custom prompt, and up to two earlier exchanges by default. Secrets in that text are sent too. Gemini runs alone by default. With a key explicitly saved for this profile, the optional OpenAI Decisions API check in Normal mode sends the current question, draft and any custom prompt to OpenAI and incurs API usage on the key’s project. Direct the user to **Settings → Hooks** (`/hooks` in the CLI) to trust `UserPromptSubmit` and start a new chat.
-- **Manual or off.** In manual mode, the user can ask “把这轮回复润色一下” / “Polish this reply”. Before hook trust, explicit requests omit earlier exchanges. If polishing is off, explain how to enable it when the user wants to try it. Offer detailed settings or a live model lookup when requested.
+- **Manual or off.** In manual mode, the user can ask “把这轮回复润色一下” / “Polish this reply”. Before hook trust, explicit requests omit earlier exchanges. When polishing is off, both automatic and explicit rewrites are skipped and nothing is sent to Gemini or OpenAI Decisions; the saved model, thinking level, custom prompt and OpenAI key stay intact. Explain that the user can reopen Setup (or rerun `setup`) and choose Normal, Turbo or Only when asked, or say “开启自动润色” / “Turn on automatic polishing” or “只在我要求时润色” / “Only polish when I ask”.
 
 ## Saved settings
 
@@ -36,7 +39,7 @@ When asked to show settings, describe the current values in plain language. For 
 
 | What the user can change | What to do |
 | --- | --- |
-| **什么时候润色 / When to polish** | “自动润色 / Polish automatically” → `set-mode auto` (default). “只在我要求时 / Only when I ask” → `set-mode manual`. “关闭 / Turn off” → `set-mode off`. Off also skips explicit requests. For auto, explain the sharing and hook steps above. |
+| **什么时候润色 / When to polish** | “开启自动润色 / Turn on automatic polishing” or “自动润色 / Polish automatically” → `set-mode auto` (default). “只在我要求时润色 / Only polish when I ask” → `set-mode manual`. “关闭润色 / Turn off polishing” → `set-mode off`. Off stops both automatic and explicit rewrites without sending text to Gemini or OpenAI Decisions, and preserves the saved model, thinking level, custom prompt and OpenAI key. For auto, explain the sharing and hook steps above. |
 | **自动润色的改写模式 / Automatic rewrite mode** | “切换到 Turbo 模式 / Switch to turbo mode” → `set-rewrite-mode turbo`. Turbo sends every eligible draft directly to Gemini over ACP. “恢复普通模式 / Switch back to normal mode” → `set-rewrite-mode normal` to return to Normal with the saved OpenAI preference. |
 | **改写模型与思考等级 / Rewrite model and thinking level** | “选择改写模型 / Choose a rewrite model” opens the picker below. “把思考等级调到高 / Use High thinking” changes the level for the effective model. “恢复默认模型 / Restore the default model” → `set-model --reset` to restore the built-in pair, Gemini 4 Hydrogen and Medium. |
 | **全局润色提示词 / Profile polishing prompt** | “查看润色提示词 / Show the polishing prompt”, “设置润色提示词 / Set the polishing prompt”, and “恢复默认润色提示词 / Restore the default polishing prompt” use the local prompt commands below. |
@@ -48,7 +51,7 @@ For a general check, report actual blockers or a ready-to-try status. When showi
 
 ## Optional OpenAI API key
 
-First interactive setup in Normal mode offers the OpenAI Decisions API check once and defaults to skipping it. To add, replace or remove a key later, run `npx @kyun.si/codex-polish@beta openai` on the machine and Codex profile that run the plugin. In Windows PowerShell, use `npx.cmd`. From a source checkout, run `node scripts/install.mjs openai`. Enter keys only at the hidden terminal prompt. The plugin ignores `OPENAI_API_KEY`. Uninstall deletes the profile’s saved key. [Create an OpenAI API key](https://platform.openai.com/api-keys)
+First interactive setup in Normal mode offers the OpenAI Decisions API check once and defaults to skipping it. To add, replace or remove a key later, run `npx @kyun.si/codex-polish openai` on the machine and Codex profile that run the plugin. In Windows PowerShell, use `npx.cmd`. From a source checkout, run `node scripts/install.mjs openai`. Enter keys only at the hidden terminal prompt. The plugin ignores `OPENAI_API_KEY`. Uninstall deletes the profile’s saved key. [Create an OpenAI API key](https://platform.openai.com/api-keys)
 
 ## Profile polishing prompt
 

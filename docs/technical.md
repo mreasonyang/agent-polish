@@ -12,7 +12,7 @@ Codex Polish 支持 Windows、macOS 和 Linux。本地脚本使用 Node.js 22.16
 
 | 配置文件 | 取值范围与默认值 | 运行行为 |
 | --- | --- | --- |
-| `codex-polish.mode` | `auto`（默认）、`manual`、`off` | 未保存模式时使用 `auto`。在 Codex 的 **设置 → Hooks** 或 CLI `/hooks` 中信任插件的 `UserPromptSubmit`，再新开聊天，普通提问就会触发润色流程。`manual` 仅在点名时触发。两种模式都可以点名润色本轮问答，无需 hook。`off` 跳过所有润色请求。 |
+| `codex-polish.mode` | `auto`（默认）、`manual`、`off` | 未保存模式时使用 `auto`。在 Codex 的 **设置 → Hooks** 或 CLI `/hooks` 中信任插件的 `UserPromptSubmit`，再新开聊天，普通提问就会触发润色流程。`manual` 仅在点名时触发。两种模式都可以点名润色本轮问答，无需 hook。`off` 关闭自动和点名改写，不向 Gemini 或 OpenAI Decisions 发送内容，并保留已保存的模型、思考等级、提示词和密钥。 |
 | `codex-polish.rewrite-mode` | `normal`（内置默认值）、`turbo` | 仅用于自动 hook。两种模式都无须 OpenAI 密钥，未启用检查时都直接交由 Gemini 处理。使用内置提示词时，`normal` 可保留清晰原稿并支持可选的 OpenAI Decisions 检查，`turbo` 则跳过 Decisions 并请 Gemini 改写草稿。 |
 | `codex-polish.model` | Gemini 模型和思考等级，默认 `gemini-4-hydrogen`、`medium` | 选模型时可以选择该模型支持的思考等级。普通和 Turbo 模式都使用这组设置。若下次改写时模型或等级已不可用，本轮保留原稿。 |
 | `codex-polish.history-turns` | `0`–`10` 的整数，默认 `2` | 控制 Gemini 改写整条回复时附带的最近完整问答轮数，从下次改写起生效。设为 `0` 就不附历史问答。保存大于 `10` 的值会报错。手动写入无效值时，插件会报告配置错误和可用范围。无论手动还是自动模式，读取历史都需要受信任的 `UserPromptSubmit` hook。 |
@@ -104,15 +104,15 @@ Codex agent 用宿主进程工具直接启动官方 `agy acp`，向同一进程�
 
 ## 安装、更新和卸载
 
-在任意目录运行 `npx @kyun.si/codex-polish@beta setup` 即可安装 npm beta 版。将最后一个参数换成 `update`、`doctor` 或 `uninstall` 即可更新、检查插件设置和本地环境或卸载。Windows PowerShell 中使用 `npx.cmd`。从 GitHub 源码安装时，在仓库根目录运行 `node scripts/install.mjs setup`，其余子命令相同。[安装步骤](README.zh-CN.md#快速开始)
+在任意目录运行 `npx @kyun.si/codex-polish setup` 即可从 npm 安装 Codex Polish。将最后一个参数换成 `update`、`doctor` 或 `uninstall` 即可更新、检查插件设置和本地环境或卸载。Windows PowerShell 中使用 `npx.cmd`。从 GitHub 源码安装时，在仓库根目录运行 `node scripts/install.mjs setup`，其余子命令相同。[安装步骤](README.zh-CN.md#快速开始)
 
-macOS 用户也可以解压安装包，在 Finder 中双击安装脚本。每次交互运行 `setup`，都可以为当前 Codex 配置选择普通（Normal）或 Turbo 模式。`agy` 可用时，还可以选择 Gemini 模型和思考等级。再次打开时会预选已保存的值，按**回车**即可保留。思考等级固定的模型会跳过等级选择。[Finder 安装脚本](../安装回复润色.command)
+macOS 用户也可以解压安装包，在 Finder 中双击安装脚本。每次交互运行 `setup`，第一屏都可用方向键为当前 Codex 配置选择 **Normal**（自动按需）、**Turbo**（自动每次）、**仅手动**（只在我要求时润色）或**关闭润色**。选择前三种模式且 `agy` 可用时，还可以继续选择 Gemini 模型和思考等级；思考等级固定的模型会跳过等级选择。选择**关闭润色**会保存全局 `off` 并直接结束，不再引导配置模型、依赖、密钥或 hook 信任，已保存的模型、思考等级、自定义提示词和密钥保持不变。再次运行 `setup` 会预选当前项，按**回车**即可保留，也可从同一菜单选择 Normal、Turbo 或仅手动重新开启。[Finder 安装脚本](../安装回复润色.command)
 
 `setup` 和 `update` 支持 `--install-agy`，在缺少 Antigravity CLI 时可自动安装。更新会跳过设置菜单，保留已保存的润色设置与插件启用状态。同一版本号的新构建也能用 `update` 覆盖或重试中断的更新。
 
 安装器为每份 Codex 配置注册一个本地市场。更新时先准备并校验新快照，然后原子替换市场清单，再请 Codex 刷新插件缓存。刷新失败时会恢复原快照和启用状态。Codex 判断 hook 信任时会核对已安装插件的内容，所以即使命令没变，内置提示词或配置指南的改动也可能触发重新确认。安装器和 `doctor` 都从 `hooks/list` 读取实际状态。
 
-首次交互安装并选用普通模式时，安装器会询问是否启用 OpenAI Decisions API 检查，默认跳过。之后可在运行插件的机器上使用同一份 Codex 配置，运行 `npx @kyun.si/codex-polish@beta openai` 管理密钥。Windows PowerShell 中使用 `npx.cmd`。终端隐藏输入，密钥保存在 `$CODEX_HOME/codex-polish/credentials/openai.key`。插件会忽略 `OPENAI_API_KEY`。[密钥设置与 API 计费](../plugins/codex-polish/skills/codex-polish-setup/references/credentials.md#选配-openai-decisions-api)
+首次交互安装并选用普通模式时，安装器会询问是否启用 OpenAI Decisions API 检查，默认跳过。之后可在运行插件的机器上使用同一份 Codex 配置，运行 `npx @kyun.si/codex-polish openai` 管理密钥。Windows PowerShell 中使用 `npx.cmd`。终端隐藏输入，密钥保存在 `$CODEX_HOME/codex-polish/credentials/openai.key`。插件会忽略 `OPENAI_API_KEY`。[密钥设置与 API 计费](../plugins/codex-polish/skills/codex-polish-setup/references/credentials.md#选配-openai-decisions-api)
 
 卸载会移除插件和专用市场，清除会话指针，并删除当前 Codex 配置保存的所有润色设置、自定义提示词和 OpenAI 密钥。旧版曾在个别目录登记的设置文件若仍在原位，卸载时也会删除，包括 Git 跟踪的文件和后来被就地修改的文件。其他应用仍可使用共用的 `agy`。
 

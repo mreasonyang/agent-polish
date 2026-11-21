@@ -9,8 +9,9 @@ import { PassThrough } from 'node:stream';
 import { setImmediate } from 'node:timers/promises';
 import { chooseSetupModel, chooseSetupMode, discoverSetupModels, manageOpenAI, setupIssues, showSetupGuidance, doctor } from '../scripts/install.mjs';
 import { readOpenAIKey } from '../plugins/codex-polish/hooks/openai_credentials.mjs';
-import { decisionsMode } from '../plugins/codex-polish/hooks/preferences.mjs';
+import { decisionsMode, triggerMode } from '../plugins/codex-polish/hooks/preferences.mjs';
 import { writeProfileSetting } from '../plugins/codex-polish/hooks/profile_setting.mjs';
+import { rewriteModeSettings } from '../plugins/codex-polish/hooks/rewrite_mode.mjs';
 import { catalog } from '../plugins/codex-polish/skills/codex-polish/scripts/acp_models.mjs';
 import { makeProject, windows, homeEnv, useTestProfile } from './hook_fixture.mjs';
 
@@ -42,7 +43,7 @@ test('doctor explains modes, decisions, history, model and Google authentication
     assert.match(defaults, lang === 'en' ? /go straight to Gemini/ : /直接交给 Gemini/);
     assert.match(defaults, lang === 'en' ? /reuses your Antigravity account/ : /复用 Antigravity 里的登录/);
     assert.match(defaults, lang === 'en' ? /Gemini receives up to 2 earlier completed exchanges/ : /Gemini 改写时最多带上最近 2 轮完整问答/);
-    assert.match(report({ openai_key_malformed: true }), /@kyun\.si\/codex-polish@beta openai/);
+    assert.ok(report({ openai_key_malformed: true }).includes(`${windows ? 'npx.cmd' : 'npx'} @kyun.si/codex-polish openai`));
     const withOpenAI = report({ decisions_enabled: true });
     assert.match(
       withOpenAI,
@@ -100,13 +101,17 @@ test('setup reports actionable blockers and offers the relevant official key pag
     }
   }
 });
-test('rewrite mode picker responds to arrows, Enter and cancellation and restores the terminal', async (t) => {
+test('the first setup screen offers Normal, Turbo, manual and off and restores the terminal after selection', async (t) => {
   const down = '\x1b[B', up = '\x1b[A', enter = '\r';
   for (const [name, keys, expected, lang, initiallyRaw, current] of [
     ['Enter accepts the default', [enter], 'normal', 'en', false],
     ['Down selects Turbo', [down, enter], 'turbo', 'zh', false],
+    ['Down twice selects manual', [down, down, enter], 'manual', 'en', false],
+    ['Down three times selects off', [down, down, down, enter], 'off', 'zh', false],
     ['Up returns to Normal', [down, up, enter], 'normal', 'en', true],
     ['Enter keeps the saved Turbo mode', [enter], 'turbo', 'zh', false, 'turbo'],
+    ['Enter keeps the saved manual mode', [enter], 'manual', 'zh', false, 'manual'],
+    ['Enter keeps the saved off mode', [enter], 'off', 'en', false, 'off'],
     ['Up switches saved Turbo back to Normal', [up, enter], 'normal', 'en', false, 'turbo'],
     ['2 leaves Normal highlighted', ['2', enter], 'normal', 'en', false],
     ['1 does not confirm a choice', ['1', down, enter], 'turbo', 'en', false],
@@ -131,6 +136,8 @@ test('rewrite mode picker responds to arrows, Enter and cancellation and restore
       assert.equal(input.isRaw, true);
       assert.match(display, /Normal/);
       assert.match(display, /Turbo/);
+      assert.match(display, lang === 'en' ? /manual|when (?:I |you )?(?:ask|request)/i : /手动|要求|点名/);
+      assert.match(display, lang === 'en' ? /off|disable/i : /关闭|停用/);
       if (current === 'turbo') assert.match(display, /❯ ● Turbo(?:（当前）| \(current\))/);
       assert.match(display, lang === 'en' ? /Enter/i : /回车|Enter/);
       assert.match(display, /↑/);
@@ -538,22 +545,87 @@ test('interactive setup chooses an unsaved mode before offering to install agy',
   }
 });
 
+test('choosing off saves the trigger and ends setup before dependency, model or key questions', async t => {
+  useTestProfile(t);
+  const log = t.mock.method(console, 'log', () => {});
+  writeProfileSetting('codex-polish.rewrite-mode', 'turbo');
+  for (const agyAvailable of [false, true]) {
+    writeProfileSetting('codex-polish.mode', 'auto');
+    const ok = await showSetupGuidance({
+      interactive: true,
+      check: () => ({
+        ...checks, mode: triggerMode(), ...rewriteModeSettings(), agy_available: agyAvailable,
+        google_auth_method: 'gemini-api-key', blockers: [...(agyAvailable ? [] : ['agy_missing']), 'gemini_key_missing']
+      }),
+      chooseMode(lang, current) { assert.equal(current, 'turbo'); return 'off'; },
+      saveRewriteMode: () => assert.fail('turning off must preserve the saved rewrite mode'),
+      chooseModel: () => assert.fail('model picker opened while off'),
+      install: () => assert.fail('dependency installation started while off'),
+      prompt: () => assert.fail('dependency or key prompt opened while off'),
+      browse: () => assert.fail('key page opened while off'),
+      offerOpenAI: () => assert.fail('Decisions offered while off')
+    });
+    assert.equal(ok, true);
+    assert.equal(triggerMode(), 'off');
+    assert.equal(rewriteModeSettings().rewrite_mode, 'turbo');
+  }
+  assert.doesNotMatch(log.mock.calls.map(call => call.arguments.join(' ')).join('\n'), /--install-agy|GEMINI_API_KEY|aistudio\.google\.com/);
+});
+
+test('setup can re-enable Normal, Turbo or manual from a disabled profile', async t => {
+  useTestProfile(t);
+  for (const [selection, expectedTrigger, initialRewrite, expectedRewrite] of [
+    ['normal', 'auto', 'turbo', 'normal'],
+    ['turbo', 'auto', 'normal', 'turbo'],
+    ['manual', 'manual', 'normal', 'normal']
+  ]) {
+    writeProfileSetting('codex-polish.mode', 'off');
+    writeProfileSetting('codex-polish.rewrite-mode', initialRewrite);
+    const steps = [];
+    const ok = await showSetupGuidance({
+      interactive: true,
+      check: () => ({ ...checks, mode: triggerMode(), ...rewriteModeSettings() }),
+      chooseMode(lang, current) { assert.equal(current, 'off'); return selection; },
+      chooseModel(status) {
+        steps.push('model');
+        assert.equal(status.mode, expectedTrigger);
+        assert.equal(status.rewrite_mode, expectedRewrite);
+        return { model: status.gemini_model, thinkingLevel: status.gemini_thinking_level };
+      },
+      offerOpenAI() { steps.push('decisions'); }
+    });
+    assert.equal(ok, true);
+    assert.equal(triggerMode(), expectedTrigger);
+    assert.equal(rewriteModeSettings().rewrite_mode, expectedRewrite);
+    assert.deepEqual(steps, selection === 'normal' ? ['model', 'decisions'] : ['model']);
+  }
+});
+
 test('setup opens saved choices, never writes on Enter for unchanged settings, and stops when cancelled', async () => {
   const fresh = { ...checks, rewrite_mode_configured: false, gemini_model_configured: false };
+  const savedModel = { model: checks.gemini_model, thinkingLevel: checks.gemini_thinking_level };
   for (const [options, status, selectedMode, selectedModel, expected] of [
     [{ interactive: false }, fresh, null, null, []],
     [{ dependencyOnly: true }, checks, null, null, []],
     [{}, fresh, null, null, ['mode']],
     [{}, checks, null, null, ['mode']],
+    [{}, { ...checks, mode: 'off' }, null, null, ['mode']],
+    [{}, { ...checks, mode: 'off' }, 'off', null, ['mode']],
+    [{}, { ...checks, mode: 'manual' }, 'manual', savedModel, ['mode', 'model']],
     [{}, checks, 'normal', null, ['mode', 'model']],
-    [{}, checks, 'normal', { model: checks.gemini_model, thinkingLevel: checks.gemini_thinking_level }, ['mode', 'model', 'openai']]
+    [{}, checks, 'normal', savedModel, ['mode', 'model', 'openai']]
   ]) {
     const offered = [];
     const ok = await showSetupGuidance({
       interactive: true, ...options, check: () => status,
-      chooseMode() { offered.push('mode'); return selectedMode; },
+      chooseMode(lang, current) {
+        if (status.mode === 'manual' || status.mode === 'off') assert.equal(current, status.mode);
+        offered.push('mode');
+        return selectedMode;
+      },
       chooseModel() { offered.push('model'); return selectedModel; },
       offerOpenAI() { offered.push('openai'); },
+      saveTriggerMode: () => assert.fail('no change to trigger'),
       saveRewriteMode: () => assert.fail('no change to mode'),
       saveModel: () => assert.fail('no change to model'),
       prompt: () => assert.fail('unexpected text prompt')
@@ -615,7 +687,7 @@ test('interactive dependency prompts, opt-ins, browser consent, failure messagin
     return { ok, reads, installs, prompts, opens, text: output.join('\n') };
   }
   let result = await setup({ interactive: false });
-  assert.match(result.text, /--install-agy/);
+  assert.ok(result.text.includes(`${windows ? 'npx.cmd' : 'npx'} @kyun.si/codex-polish setup --install-agy`));
   assert.match(result.text, /interactive terminal/);
   assert.equal(result.prompts, 0);
   assert.equal(result.installs, 0);

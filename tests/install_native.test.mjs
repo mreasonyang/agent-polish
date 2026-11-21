@@ -232,6 +232,22 @@ nativeTest('settings are shared across directories and uninstall removes all plu
     for (const file of unrelated) assert.equal(fs.readFileSync(file, 'utf8'), 'keep me');
   }
 });
+nativeTest('setup and update respect saved Off and stop prompting for hook trust', (t) => {
+  const { local, invoke, snapshot, rows } = isolated(t);
+  local('setup');
+  const preferences = join(snapshot(), PRODUCT, 'hooks/preferences.mjs');
+  invoke(process.execPath, [preferences, 'set-mode', 'off']);
+  const reopened = local('setup');
+  assert.match(reopened, /Polishing is off/);
+  assert.doesNotMatch(reopened, /UserPromptSubmit|OpenAI|install-agy|model/i);
+  assert.doesNotMatch(local('update'), /UserPromptSubmit/);
+  const status = local('doctor');
+  assert.match(status, /When to polish: off/);
+  assert.doesNotMatch(status, /UserPromptSubmit/);
+  assert.equal(rows()[0].enabled, true);
+  invoke(process.execPath, [preferences, 'set-mode', 'manual']);
+  assert.match(local('doctor'), /To include chat history, trust UserPromptSubmit/);
+});
 nativeTest('uninstall reports an unreadable ownership database and can be retried', (t) => {
   const { profile, invoke, local } = isolated(t);
   local('setup');

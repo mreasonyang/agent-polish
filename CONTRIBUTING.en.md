@@ -34,15 +34,15 @@ Report security vulnerabilities privately. [Security policy](SECURITY.en.md)
 
 Open a GitHub pull request with the reason for the change, steps to reproduce or verify it, and results from the tests you ran. For changes involving a provider, say whether you used a mock or a live account. Use synthetic samples or authorized, de-identified material. The project uses the [Apache License 2.0](LICENSE).
 
-## Publishing a beta
+## Publishing a release
 
-Set the version in both `package.json` and the plugin manifest to `X.Y.Z-beta.N`. Commit the change and push the matching Git tag. For example, to publish `0.0.1-beta.8`:
+Set the same version in `package.json` and the plugin manifest. In `package.json`, set `publishConfig.tag` to the npm tag for that version.
 
-```sh
-git tag v0.0.1-beta.8
-git push origin v0.0.1-beta.8
-```
+| Version | Git tag | npm tag | GitHub release |
+| --- | --- | --- | --- |
+| `X.Y.Z` | `vX.Y.Z` | `latest` | Release |
+| `X.Y.Z-beta.N` | `vX.Y.Z-beta.N` | `beta` | Prerelease |
 
-GitHub Actions tests the tagged code, publishes the package to npm with the `beta` tag, and creates a GitHub prerelease. If a step fails, run the publishing workflow again from the Actions tab and enter the existing tag.
+Commit the changes to `main`. After CI passes, push the matching Git tag. GitHub Actions tests the tagged code on Linux, macOS and Windows, publishes the verified tarball to npm and attaches it to the GitHub release. To retry an interrupted release, run the publishing workflow from the Actions tab with the existing tag.
 
 npm grants publishing access per package. Configure this package’s trusted publisher for the `mreasonyang/codex-polish` repository and the `publish.yml` workflow, and enable **Allow npm publish** and **Allow npm dist-tag**. Tag access lets the workflow remove `latest` if npm sets it on the first beta. GitHub authenticates the workflow to npm on each release without a stored npm token. [npm trusted publishing](https://docs.npmjs.com/trusted-publishers/)

@@ -33,15 +33,15 @@ npm pack --ignore-scripts --pack-destination dist
 
 请通过 GitHub Pull Request 提交改动，附上改动原因、复现或验证方法，以及实际跑过的测试结果。如果改动涉及 Gemini 或 OpenAI，写明用的是模拟服务还是真实账号。测试样本请使用虚构内容，或已获授权且脱敏的材料。本项目采用 [Apache License 2.0](LICENSE)。
 
-## 发布 beta
+## 发布版本
 
-将 `package.json` 和插件清单中的版本一同改为 `X.Y.Z-beta.N`，提交后推送同名 Git 标签。例如发布 `0.0.1-beta.8` 时运行：
+在 `package.json` 和插件清单中填写同一个版本号，并在 `package.json` 的 `publishConfig.tag` 中填写对应的 npm 标签。
 
-```sh
-git tag v0.0.1-beta.8
-git push origin v0.0.1-beta.8
-```
+| 版本号 | Git 标签 | npm 标签 | GitHub 发布类型 |
+| --- | --- | --- | --- |
+| `X.Y.Z` | `vX.Y.Z` | `latest` | 正式版 |
+| `X.Y.Z-beta.N` | `vX.Y.Z-beta.N` | `beta` | 预发布版 |
 
-GitHub Actions 会测试这个标签的代码，将安装包发布到 npm 的 `beta` 标签，并创建 GitHub 预发布版。如果某一步失败，可以在 Actions 中选择发布工作流，用已有标签重试。
+将改动提交到 `main`，等 CI 通过后推送对应的 Git 标签。GitHub Actions 会在 Linux、macOS 和 Windows 上测试标签对应的代码，再将验证过的安装包发布到 npm 并作为 GitHub 发布附件上传。若发布中断，可在 Actions 页面用已有标签重新运行发布工作流。
 
 npm 按包授权。此包使用 GitHub 仓库 `mreasonyang/codex-polish` 的 `publish.yml` 工作流，可信发布者勾选 **Allow npm publish** 和 **Allow npm dist-tag**。后一项让工作流在 npm 把首个 beta 同时标记为 `latest` 时自动清理标签。发布时 GitHub 会向 npm 证明工作流身份，仓库无需保存 npm 令牌。[npm 可信发布设置](https://docs.npmjs.com/trusted-publishers/)

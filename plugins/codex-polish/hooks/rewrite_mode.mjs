@@ -2,12 +2,14 @@ import { readProjectSetting } from './project_setting.mjs';
 
 export const REWRITE_MODE_FILE = 'codex-polish.rewrite-mode';
 export const REWRITE_MODES = ['normal', 'turbo'];
-export const REWRITE_TRIGGERS = ['auto', 'explicit', 'turbo'];
+export const REWRITE_TRIGGERS = ['auto', 'explicit'];
 
 export function rewriteModeSettings(cwd, trigger) {
-  const [value] = readProjectSetting(cwd, REWRITE_MODE_FILE, 16, { allowMissingLink: true });
-  if (value !== null && !REWRITE_MODES.includes(value)) return { rewrite_mode: null, rewrite_mode_configured: false };
-  return { rewrite_mode: trigger === 'turbo' ? 'turbo' : (value ?? 'normal'), rewrite_mode_configured: value !== null };
+  const [value] = readProjectSetting(cwd, REWRITE_MODE_FILE, 16);
+  const normalized = value?.toLowerCase();
+  const configuredMode = REWRITE_MODES.includes(normalized) ? normalized : null;
+  const automaticMode = value === null ? 'normal' : configuredMode;
+  return { rewrite_mode: trigger === 'explicit' ? 'turbo' : automaticMode, rewrite_mode_configured: configuredMode !== null };
 }
 
 export function projectRewriteMode(cwd) {

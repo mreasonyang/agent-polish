@@ -83,7 +83,7 @@ test('a failed model change or an unexpected response cannot trigger a prompt or
   rejects(targetArgs(4), {jsonrpc:'2.0', id:4, error:{code:-32602}});
 });
 
-test('catalog preserves provider order and excludes routers and non-Gemini models', () => {
+test('catalog preserves provider order and uses the provider IDs to identify Gemini entries', () => {
   const choices = [
     ['gemini-4-neon','Gemini 4 Neon'], ['gemini-4-argon','Gemini 4 Argon'], ['gemini-4-hydrogen','Gemini 4 Hydrogen'],
     ['gemini-pro-orchestrator-neon','Orchestrator (Neon)'], ['gemini-pro-orchestrator-g1-pro','Orchestrator (Argon)'],
@@ -93,7 +93,7 @@ test('catalog preserves provider order and excludes routers and non-Gemini model
     configOptions:[selector], sessionId:'must-omit', _meta:{hidden:true}}});
   assert.equal(out.status, 0, out.stderr);
   assert.deepEqual(JSON.parse(out.stdout), {config_id:'model', current_model:'gemini-4-neon',
-    models:choices.filter(([,name]) => name.startsWith('Gemini ')).map(([id,name]) => ({id,name}))});
+    models:choices.filter(([id]) => id.startsWith('gemini-')).map(([id,name]) => ({id,name}))});
 });
 
 test('grouped model values from the current ACP schema', () => {
@@ -106,29 +106,51 @@ test('grouped model values from the current ACP schema', () => {
   assert.ok(out.models.some(item => item.id === 'gemini-4-hydrogen' && item.name === 'Gemini 4 Hydrogen'));
 });
 
-test('labels cannot substitute for raw provider IDs and non-Gemini current is null', () => {
+test('model labels can be localized or duplicated without changing the selected provider ID', () => {
   const selector = selectOption('model','model','Model','claude-opus', [
     ['gemini-4-neon','Gemini Pro'], ['gemini-4-argon','Gemini Pro'], ['claude-opus','Claude Opus'],
     ['opaque-id','Gemini 4 Hydrogen'], ['google/gemini-2.5-flash','Flash'], ['gemini-4-hydrogen','Hydrogen']]);
   assert.deepEqual(catalog([selector]), {config_id:'model', current_model:null, models:[
-    {id:'gemini-4-neon', name:'Gemini Pro'}, {id:'gemini-4-argon', name:'Gemini Pro'}]});
+    {id:'gemini-4-neon', name:'Gemini Pro'}, {id:'gemini-4-argon', name:'Gemini Pro'},
+    {id:'google/gemini-2.5-flash', name:'Flash'}, {id:'gemini-4-hydrogen', name:'Hydrogen'}]});
 });
 
-test('mislabeled values, metadata and unsafe display text stay private', () => {
-  const selector = selectOption('model','model','Model','opaque', [
-    ['claude-sonnet','Gemini 4 Hydrogen'], ['gemini-pro','Claude Sonnet'], ['gemini-auto','Gemini 4'], ['opaque','Not Gemini'],
-    ['secret','Gemini\nexport key'], ['valid.id','Gemini 4\u202e'], ['bad id','Gemini 4'],
-    ['sk-proj-'+'x'.repeat(24),'Gemini 4'], ['opaque2','Gemini sk-proj-'+'x'.repeat(24)]]);
-  selector.options[0].description = 'must not be returned';
-  assert.deepEqual(catalog([selector]), {config_id:'model',current_model:null,models:[]});
+test('display punctuation, provider aliases and namespace prefixes work from lookup through confirmation', () => {
+  for (const [id, name] of [
+    ['gemini-4-argon', 'Gemini 4 Argon / Preview'],
+    ['models/gemini-4-argon', 'Gemini 4 Argon: High'],
+    ['google:gemini-4-argon', 'Gemini 4 Argon (Auto)'],
+    ['publishers/google/models/gemini-4-argon:preview', '氩 / 预览 🧪'],
+  ]) {
+    const option = selectOption('model','model','Model','other',[[id,name],['other','Gemini-looking label']]);
+    option.options[0].description = 'not part of the menu';
+    const result = n => ({jsonrpc:'2.0',id:n,result:{configOptions:[option]}});
+    const choose = n => JSON.parse(cli(['--response-id',String(n),'--target-model',id],result(n)).stdout);
+    assert.deepEqual(catalog([option]), {config_id:'model',current_model:null,models:[{id,name}]});
+    assert.deepEqual(choose(3),{next:'set_model', config_id:'model', value:id});
+    option.currentValue = id;
+    assert.deepEqual(choose(4),{next:'submit_prompt'});
+  }
 });
 
-test('invalid, ambiguous and legacy unsettable selectors are rejected', () => {
+test('unrelated malformed entries and duplicate aliases cannot hide a usable model', () => {
+  const model = selectOption('model','model','Model',target,[[target,'Hydrogen']]);
+  model.options.unshift(null, 1, {value:'other'}, {options:'invalid'}, {name:'no ID'});
+  model.options.push({group:'others',options:[{value:'gemini-4-argon'}, null, {value:target,name:'other label'}]});
+  const configOptions=[null, {category:'other'}, model];
+  assert.deepEqual(catalog(configOptions), {config_id:'model',current_model:target,models:[
+    {id:target,name:'Hydrogen'}, {id:'gemini-4-argon',name:'gemini-4-argon'}]});
+  assert.deepEqual(next({jsonrpc:'2.0',id:3,result:{configOptions}}),{next:'submit_prompt'});
+  model.currentValue = 'unlisted-current-model';
+  assert.deepEqual(next({jsonrpc:'2.0',id:3,result:{configOptions}}), {next:'set_model',config_id:'model',value:target});
+  rejects(targetArgs(4),{jsonrpc:'2.0',id:4,result:{configOptions}});
+});
+
+test('invalid, ambiguous and unsettable model selectors are rejected', () => {
   const model = selectOption('model','model','Model','gemini-pro',[['gemini-pro','Gemini Pro']]);
   for (const options of [[], [model, {...model,id:'other'}], [model,{id:'model',category:'thought_level'}],
-    [{...model,type:'boolean'}],[{...model,currentValue:'missing'}],
-    [{...model,category:undefined}],[{...model,name:undefined}],[{...model,options:[{value:'gemini-pro'}]}], [{...model,options:[...model.options,...model.options]}],
-    [{...model,options:[...model.options,{group:'g',name:'g',options:[]}]}]]) assert.throws(() => catalog(options));
+    [{...model,type:'boolean'}],[{...model,currentValue:false}], [{...model,id:''}],
+    [{...model,category:undefined}],[{...model,options:undefined}]]) assert.throws(() => catalog(options));
   rejects(['--response-id','3'], {jsonrpc:'2.0',id:3,result:{models:{availableModels:['unusable']}}});
 });
 

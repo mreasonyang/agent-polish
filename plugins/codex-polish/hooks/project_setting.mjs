@@ -4,6 +4,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
+import { readPromptLink, savePromptLink } from './prompt_link.mjs';
+
+export const PROMPT_FILE = 'codex-polish.prompt.md';
 
 const { O_RDONLY, O_DIRECTORY, O_NOFOLLOW, O_NONBLOCK } = fs.constants;
 
@@ -11,9 +14,11 @@ function sameDirectory(a, b) {
   return a.dev === b.dev && a.ino === b.ino;
 }
 
-function accessSetting(directory, operation, filename, value) {
-  const target = path.join(directory, filename);
+function accessSetting(project, operation, filename, value) {
+  const target = filename;
   if (operation === 'read' || operation === 'read-bytes') {
+    if (operation === 'read-bytes' && filename === PROMPT_FILE && fs.lstatSync(target).isSymbolicLink())
+      return readPromptLink(project, target);
     const fd = fs.openSync(target, O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
     try {
       const stat = fs.fstatSync(fd);
@@ -33,14 +38,19 @@ function accessSetting(directory, operation, filename, value) {
       fs.closeSync(fd);
     }
   }
-  if (operation !== 'write' && operation !== 'remove') throw new Error('invalid operation');
+  if (!['write', 'remove', 'link'].includes(operation)) throw new Error('invalid operation');
   const current = fs.lstatSync(target, { throwIfNoEntry: false });
-  if (current && !current.isFile()) throw Object.assign(new Error('invalid setting'), { code: 'EINVAL' });
+  if (current && !current.isFile() && !(filename === PROMPT_FILE && current.isSymbolicLink()))
+    throw Object.assign(new Error('invalid setting'), { code: 'EINVAL' });
+  if (operation === 'link') {
+    if (filename !== PROMPT_FILE) throw new Error('invalid setting');
+    return savePromptLink(project, target, value);
+  }
   if (operation === 'remove') {
     if (current) fs.unlinkSync(target);
     return null;
   }
-  const temporary = path.join(directory, '.' + filename + '-' + randomBytes(12).toString('hex'));
+  const temporary = '.' + filename + '-' + randomBytes(12).toString('hex');
   const fd = fs.openSync(temporary, 'wx', 0o600);
   try {
     try {
@@ -67,7 +77,7 @@ export function accessProjectSetting(directory, operation, filename, value) {
       if (!sameDirectory(fs.fstatSync(fd, { bigint: true }), fs.statSync('.', { bigint: true }))) {
         throw new Error('project settings directory changed');
       }
-      return accessSetting('.', operation, filename, value);
+      return accessSetting(path.dirname(directory), operation, filename, value);
     } finally {
       process.chdir(previous);
     }
@@ -87,17 +97,18 @@ export function projectRoot(cwd) {
   return directory;
 }
 
-export function readProjectSetting(cwd, filename, maxBytes, { allowMissingLink = false, raw = false } = {}) {
+export function readProjectSetting(cwd, filename, maxBytes, { raw = false } = {}) {
   let base;
   try {
     base = projectRoot(cwd);
     if (base === os.homedir() || base === path.dirname(base)) return [null, base];
     const settings = path.join(base, '.codex');
-    if (allowMissingLink && fs.lstatSync(settings).isSymbolicLink() &&
+    if (fs.lstatSync(settings).isSymbolicLink() &&
         fs.statSync(settings, { throwIfNoEntry: false })?.isDirectory() &&
         !fs.lstatSync(path.join(settings, filename), { throwIfNoEntry: false })) return [null, base];
     return [accessProjectSetting(settings, raw ? 'read-bytes' : 'read', filename, maxBytes), base];
   } catch (error) {
+    if (error.code === 'PROMPT_LINK_UNBOUND') throw error;
     return [base && error.code === 'ENOENT' ? null : '', base ?? null];
   }
 }

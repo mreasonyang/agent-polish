@@ -83,6 +83,14 @@ test('permission reply uses the server request ID', () => {
   assert.deepEqual([stopped.id,stopped.result.stopReason], [6,'cancelled']);
 });
 
+test('a denied permission may be followed by a complete text reply', () => {
+  const [fixture, first] = turn('permission-then-text');
+  const [before, permission] = first.map(JSON.parse);
+  const [after, end] = trace(fixture, {id:permission.id, result:{outcome:{outcome:'cancelled'}}}).map(JSON.parse);
+  assert.equal(before.params.update.content.text + after.params.update.content.text, REPLY.join(''));
+  assert.deepEqual([end.id, end.result.stopReason], [6, 'end_turn']);
+});
+
 test('stops and transport errors may follow partial text', () => {
   for (const [scenario, reason] of [['refused','refusal'],['cancelled','cancelled']]) {
     const [chunk, end] = turn(scenario)[1].map(JSON.parse);

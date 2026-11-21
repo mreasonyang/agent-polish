@@ -25,23 +25,25 @@ Requires **macOS or Linux**, **Node.js 22.16+**, a [Codex CLI](https://developer
 npx @kyun.si/codex-polish@beta setup
 ```
 
-Run the command in your project directory. Interactive setup offers to install `agy` if needed and lets you choose a rewrite mode. With the built-in prompt, **Normal** (default) can keep a clear draft as written. **Turbo** asks Gemini to rewrite each eligible draft. With T3 Code, select the Codex backend and install the plugin on the machine running it. [Other installation options](docs/technical.en.md#installation-updates-and-uninstall)
+Run the command in your project directory. Interactive setup offers to install `agy` if needed and lets you choose how automatic polishing works. With the built-in prompt, **Normal** (default) can keep a clear draft as written. **Turbo** asks Gemini to rewrite each draft. With T3 Code, select the Codex backend and install the plugin on the machine running it. [Other installation options](docs/technical.en.md#installation-updates-and-uninstall)
 
-- **Before trusting the hook:** Ask **“Why does a cache hit still take time? Use Turbo for this answer.”** Codex sends the draft to Gemini once, without attaching earlier exchanges.
+- **Before trusting the hook:** Ask **“Why does a cache hit still take time? Polish the answer.”** Asking for a polish uses Turbo. Gemini receives the draft without earlier exchanges.
 - **Automatic mode (default):** Trust `UserPromptSubmit` in Codex **Settings → Hooks** (`/hooks` in the CLI) and start a **new chat**. Codex then runs the polishing workflow on ordinary questions and can include recent exchanges.
 
 ## Useful chat prompts
 
-- **“Have Gemini rewrite your last answer in two sentences.”** One-time Turbo skips the OpenAI check and rewrites the answer you picked. You can also name an earlier answer in the same chat. The next ordinary question uses your project default.
-- **“Only polish when I ask.”** Sets the project to manual. **“Make Turbo the default for this project”** changes how it rewrites. **“Only show the polished text”** hides the comparison for one reply.
-- **Model and prompt:** Defaults to **Gemini 4 Hydrogen** (`gemini-4-hydrogen`). Say **“Choose a rewrite model”** for live account models, or **“Set this project’s polishing prompt to: Lead with the conclusion. Use short sentences.”** (`.codex/codex-polish.prompt.md`).
+- **“Have Gemini rewrite your last answer in two sentences.”** You can name an earlier answer in the same chat. Asking to rewrite the original again uses the question that first prompted it. If Codex can’t identify the original, it asks you to point it out or quote it. A request to polish or rewrite skips the OpenAI check even when automatic polishing is set to Normal.
+- **“Only polish when I ask.”** Sets the project to manual. **“Make Turbo the default for this project”** sets Turbo for automatic polishing. **“Only show the polished text”** hides the comparison for one reply.
+- **Model and prompt:** Defaults to **Gemini 4 Hydrogen** (`gemini-4-hydrogen`). Say **“Choose a rewrite model”** for live account models, or **“Set this project’s polishing prompt to: Rewrite the draft to lead with the conclusion and use short sentences.”** (`.codex/codex-polish.prompt.md`). When a project prompt is used, it replaces the entire built-in editing prompt in both Normal and Turbo modes.
 
-## Privacy and checks
+## What gets sent
 
-If the draft or question contains a suspected credential, Codex Polish skips that rewrite. If you ask for JSON only, a single command, or a verbatim quote, you get the requested format without a polishing label.
+Codex Polish sends the selected text as written, including any keys or tokens it contains. Say **“Skip polishing this time”** to keep this reply out of the polishing workflow. If you ask for JSON only, a single command, or a verbatim quote, Codex delivers that format directly.
 
-- **OpenAI** receives the current question, draft and any custom prompt only when the optional Normal-mode style check runs. With no `OPENAI_API_KEY`, with the check off, or if it’s unavailable, eligible drafts go directly to Gemini. Turbo always skips the check.
-- **Google** receives the selected draft, its original question, any custom prompt, and any directions you gave for this rewrite. With a trusted hook, the plugin includes up to two completed exchanges from before that answer by default. Set history to 0–10 exchanges or say **“Leave out history this time.”** The plugin keeps no draft log of its own.
+- **OpenAI** receives the current question, draft and any custom prompt only when automatic polishing runs the optional Normal-mode style check. With no `OPENAI_API_KEY`, with the check off, or if it’s unavailable, drafts go directly to Gemini. Turbo always skips the check.
+- **Google** receives the original question and draft when you polish a whole reply, along with any custom project prompt and directions for this edit. A trusted hook can include up to two earlier exchanges by default. Set history to 0–10 exchanges or say **“Leave out history this time.”**
+- **Selected passages:** Saying **“Rewrite this passage in two sentences”** sends the passage, your editing direction, and the active project or built-in Turbo prompt. Saying **“Only send this passage to Gemini”** sends just the passage with the built-in Turbo prompt and keeps any extra directions and your project prompt local. Neither sends the surrounding question or chat history.
+- **Follow-up passage edits:** Asking to shorten that last edited passage again sends the displayed version you chose with your new direction and active prompt, while the original question and chat history stay local. The plugin keeps no draft log of its own.
 
 ## Maintenance
 

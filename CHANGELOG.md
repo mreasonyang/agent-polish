@@ -2,6 +2,24 @@
 
 [中文使用说明](docs/README.zh-CN.md) · [English README](README.md)
 
+## 0.0.1-beta.6
+
+- 修复了自动润色时 ACP 消息被截断或多条消息被当成一条读取的问题。收到完整回复时直接排好最终消息，长回复可分页取回，交付前无需手动清理。
+- Fixed truncated ACP input and misread batches of replies during automatic polishing. Completed rewrites now arrive as formatted Markdown. Codex can retrieve long replies in pages and deliver them without a separate cleanup command.
+
+- 再次润色选段时只发送上次选定版本的正文。历史保留带附件消息的文字，支持用户分叉与按轮撤回。排版交付 Gemini 原文，包括图表标记。
+- Editing a polished passage again sends a single version. History keeps attachment captions, reads user forks, and follows the host’s rollback count. Gemini’s reply is delivered verbatim, including chart markers.
+- 选模使用账号返回的 Gemini ID 和显示名。手写设置支持大小写，配置无效时给出原因。项目可链接共用提示词，自动 hook 只提醒当前用户会话。
+- The model picker uses the account’s Gemini IDs and display names. Settings accept mixed case and report invalid values. Projects can link shared prompts, and the automatic hook ignores events for subagents or other sessions.
+
+- 移除了按正文内容跳过润色的本地规则。包含示例密码、代码、JSON 或特殊字符的材料也会按用户指定的范围原样发送。“这轮别润色”仍会跳过本轮。
+- Removed the local rules that skipped rewrites based on their text. Samples containing passwords, code, JSON, or control characters now follow the same route as other text and are sent as written. “Skip polishing this time” still skips the turn.
+
+- “返回结果 polish”或“重写上一条”等主动请求都会使用 Turbo，直接把选定的草稿交给 Gemini，跳过 OpenAI Decisions。项目保存的普通或 Turbo 模式只用于自动润色。
+- Asking to polish a result or rewrite an earlier answer now uses Turbo and sends the selected draft directly to Gemini, skipping OpenAI Decisions. The project’s saved Normal or Turbo mode applies only to automatic polishing.
+- 选中或引用一段文字时，改写只使用该段、当前润色提示词和本次编辑要求。“只把这段原文发给 Gemini”会使用内置 Turbo 提示词，项目提示词、其他要求和聊天历史都留在本地。再次改写旧原稿时，使用原问题和原答复之前的可选历史。无法确认来源时会请用户指出原文。
+- Selected passages now use the active polishing prompt and any editing directions you give. “Only send this passage to Gemini” uses the built-in Turbo prompt and keeps the project prompt, other directions and conversation history local. Rewriting an original again uses its original question and any permitted exchanges from before that original answer. Codex asks you to identify the original when its source is unclear.
+
 ## 0.0.1-beta.5
 
 - The repository and npm beta now open with the English README. The Simplified Chinese guide is linked at the top. Both guides cover first setup, one-time Turbo rewrites, and what each provider receives.

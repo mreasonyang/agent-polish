@@ -7,7 +7,7 @@
 ## 改哪里
 
 - `scripts/install.mjs` 和两个 `.command` 启动脚本负责安装、更新、环境检查和卸载。
-- `plugins/codex-polish/` 里有插件清单、钩子和两个技能。`codex-polish` 通过可选的 OpenAI 风格检查判断是否需要润色，经 ACP 把草稿交给 Gemini，并排版显示完整回复。`codex-polish-setup` 负责设置、选择模型和检查环境，详见[首次配置与登录指南](plugins/codex-polish/skills/codex-polish-setup/references/credentials.md)。改动用户提示或文档时，请同步更新中英文。
+- `plugins/codex-polish/` 里有插件清单、钩子和两个技能。`codex-polish` 经 ACP 把选定的草稿交给 Gemini，并排版显示完整回复。主动要求润色时使用 Turbo，仅在 hook 以普通模式自动触发时才使用可选的 OpenAI 风格检查。`codex-polish-setup` 负责设置、选择模型和检查环境，详见[首次配置与登录指南](plugins/codex-polish/skills/codex-polish-setup/references/credentials.md)。改动用户提示或文档时，请同步更新中英文。
 - 完整源码的 `tests/` 放回归测试，`evaluation/` 放评测脚本和合成样本。[评测说明](evaluation/README.md)
 
 ## 本地测试与打包
@@ -21,7 +21,7 @@ mkdir -p dist
 npm pack --ignore-scripts --pack-destination dist
 ```
 
-`npm pack` 会把 `@kyun.si/codex-polish` 的 `0.0.1-beta.5` 版打包为 `dist/kyun.si-codex-polish-0.0.1-beta.5.tgz`。默认测试无需 API 密钥，原生安装测试会使用临时 Codex 配置。Decisions 测试使用模拟响应验证风格判定。
+`npm pack` 会把 `@kyun.si/codex-polish` 的 `0.0.1-beta.6` 版打包为 `dist/kyun.si-codex-polish-0.0.1-beta.6.tgz`。默认测试无需 API 密钥，原生安装测试会使用临时 Codex 配置。Decisions 测试使用模拟响应验证风格判定。
 
 ## 反馈问题
 
@@ -35,11 +35,11 @@ npm pack --ignore-scripts --pack-destination dist
 
 ## 发布 beta
 
-将 `package.json` 和插件清单中的版本一同改为 `X.Y.Z-beta.N`，提交后推送同名 Git 标签。例如发布 `0.0.1-beta.5` 时运行：
+将 `package.json` 和插件清单中的版本一同改为 `X.Y.Z-beta.N`，提交后推送同名 Git 标签。例如发布 `0.0.1-beta.6` 时运行：
 
 ```sh
-git tag v0.0.1-beta.5
-git push origin v0.0.1-beta.5
+git tag v0.0.1-beta.6
+git push origin v0.0.1-beta.6
 ```
 
 GitHub Actions 会测试这个标签的代码，将安装包发布到 npm 的 `beta` 标签，并创建 GitHub 预发布版。如果某一步失败，可以在 Actions 中选择发布工作流，用已有标签重试。

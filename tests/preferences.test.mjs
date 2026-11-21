@@ -41,15 +41,22 @@ test('a fresh project receives a reminder for an ordinary prompt without writing
   assert.equal(fs.existsSync(path.join(cwd, '.codex')), false);
 });
 
-test('explicit project modes apply to subdirectories and malformed modes disable rewriting', t => {
-  const { mode, getMode, hook } = fixture(t);
+test('explicit project modes are case insensitive and malformed modes are reported', t => {
+  const { mode, getMode, hook, check, call } = fixture(t);
   for (const [value, expected] of [
-    ['manual', 'manual'], ['auto\n', 'auto'], ['off', 'off'], ['typo', 'off'],
-    ['auto\n             trailing', 'off'], ['', 'off'],
+    ['manual', 'manual'], ['AUTO\n', 'auto'], ['OFF', 'off'],
   ]) {
     fs.writeFileSync(mode, value);
     assert.equal(getMode(), expected);
     assert.equal(Boolean(hook()), expected === 'auto');
+  }
+  for (const bad of ['typo', 'auto\n             trailing', '']) {
+    fs.writeFileSync(mode, bad);
+    assert.equal(check().mode, null);
+    assert.ok(check().blockers.includes('mode_invalid'));
+    assert.match(call(['mode']).stderr, /codex-polish.mode/);
+    assert.match(JSON.parse(hook()).systemMessage, /auto, manual or off/);
+    assert.equal(json(call(['decision', 'judge', '--trigger', 'explicit'])).reason, 'mode_invalid');
   }
 });
 
@@ -113,7 +120,7 @@ test('outside Git the chosen folder owns its settings', t => {
   assert.equal(check({ where: base }).gemini_model, 'gemini-4-neon');
 });
 
-test('decision policy inherits, and invalid decisions disable only OpenAI', t => {
+test('Decisions settings recognize ON and OFF and report unknown values', t => {
   const { check, call, env, mode, cwd, project } = fixture(t), options = { env: { ...env, OPENAI_API_KEY: 'example' } };
   const policy = () => { const s = check(options); return [s.mode, s.decisions_mode, s.decisions_enabled]; };
   fs.writeFileSync(mode, 'auto');
@@ -122,9 +129,30 @@ test('decision policy inherits, and invalid decisions disable only OpenAI', t =>
   assert.equal(parent.decisions_mode, 'off'); assert.deepEqual(policy(), ['auto', 'off', false]);
   const child = json(call(['set-decisions', 'auto']));
   assert.deepEqual(policy(), ['auto', 'auto', true]); assert.equal(fs.readFileSync(parent.file, 'utf8'), 'auto\n');
-  fs.writeFileSync(child.file, 'typo'); assert.deepEqual(policy(), ['auto', 'off', false]);
+  fs.writeFileSync(child.file, 'ON'); assert.deepEqual(policy(), ['auto', 'auto', true]);
+  fs.writeFileSync(child.file, 'OFF'); assert.deepEqual(policy(), ['auto', 'off', false]);
+  fs.writeFileSync(child.file, 'typo'); assert.deepEqual(policy(), ['auto', null, false]);
+  assert.ok(check(options).blockers.includes('decisions_mode_invalid'));
+  assert.ok(!json(call(['check','--trigger','explicit'], options)).blockers.includes('decisions_mode_invalid'));
+  json(call(['set-rewrite-mode', 'turbo']));
+  assert.ok(check(options).blockers.includes('decisions_mode_invalid'));
+  assert.ok(!json(call(['check', '--trigger', 'auto'], options)).blockers.includes('decisions_mode_invalid'));
   fs.unlinkSync(child.file); fs.writeFileSync(path.join(cwd, '.git'), 'gitdir: ../.git');
   assert.deepEqual(policy(), ['auto', 'auto', true]);
+});
+
+test('automatic Normal bypasses an invalid Decisions setting when there is no OpenAI key', t => {
+  const { project, env, call } = fixture(t);
+  fs.writeFileSync(path.join(project, '.codex/codex-polish.decisions'), 'typo');
+  fs.writeFileSync(path.join(project, 'agy'), '#!/bin/sh\nexit 1\n', { mode: 0o700 });
+  const options = { env: { ...env, PATH: project } };
+  assert.ok(json(call(['check'], options)).blockers.includes('decisions_mode_invalid'));
+  const status = json(call(['check', '--trigger', 'auto'], options));
+  assert.deepEqual([status.rewrite_mode, status.decisions_enabled, status.blockers], ['normal', false, []]);
+  assert.deepEqual(json(call(['decision', 'judge', '--trigger', 'auto', '--route', 'acp'], options)),
+    { action: 'rewrite', reason: 'direct_acp', route: 'acp' });
+  options.env.OPENAI_API_KEY = 'example';
+  assert.ok(json(call(['check', '--trigger', 'auto'], options)).blockers.includes('decisions_mode_invalid'));
 });
 
 test('rewrite mode inherits independently of the trigger and Decisions settings', t => {
@@ -142,7 +170,7 @@ test('rewrite mode inherits independently of the trigger and Decisions settings'
   json(call(['set-mode', 'manual']));
   json(call(['set-decisions', 'off']));
   assert.deepEqual(modeSelection(), ['turbo', true]);
-  const child = json(call(['set-rewrite-mode', 'normal']));
+  const child = json(call(['set-rewrite-mode', 'Normal']));
   const status = check();
   assert.deepEqual([status.rewrite_mode, status.rewrite_mode_configured, status.mode, status.decisions_mode], ['normal', true, 'manual', 'off']);
   assert.equal(child.file, setting);
@@ -154,7 +182,7 @@ test('rewrite mode inherits independently of the trigger and Decisions settings'
   assert.deepEqual(modeSelection(), ['normal', false]);
 });
 
-test('invalid or linked rewrite strategy settings prevent provider calls', t => {
+test('invalid or linked automatic rewrite settings block automatic polishing and leave explicit Turbo available', t => {
   const { call, check, env, project, cwd } = fixture(t);
   fs.mkdirSync(path.join(cwd, '.git'));
   const { file } = json(call(['set-rewrite-mode', 'turbo']));
@@ -165,11 +193,16 @@ test('invalid or linked rewrite strategy settings prevent provider calls', t => 
     assert.equal(status.decisions_enabled, false);
     assert.equal(status.prompt_source, 'default');
     assert.ok(status.blockers.includes('rewrite_mode_invalid'));
-    assert.equal(json(call(['decision', 'judge', '--trigger', 'explicit'], options)).reason, 'rewrite_mode_invalid');
+    assert.equal(json(call(['decision', 'judge', '--trigger', 'auto'], options)).reason, 'rewrite_mode_invalid');
+    const explicit = json(call(['check', '--trigger', 'explicit'], options));
+    assert.equal(explicit.rewrite_mode, 'turbo');
+    assert.equal(explicit.decisions_enabled, false);
+    assert.ok(!explicit.blockers.includes('rewrite_mode_invalid'));
     const prompt = call(['prompt'], options);
     assert.equal(prompt.status, 1);
     assert.match(prompt.stderr, /set-rewrite-mode/);
   };
+  fs.writeFileSync(file, 'Normal'); assert.equal(check().rewrite_mode,'normal');
   fs.writeFileSync(file, 'typo'); inspect();
   fs.unlinkSync(file);
   const parent = json(call(['set-rewrite-mode', 'normal'], { where: project }));
@@ -221,8 +254,8 @@ test('unsafe mode settings disable rewriting and reject writes', t => {
   fs.mkdirSync(path.join(cwd, '.git'));
   const dir = path.join(cwd, '.codex'), marker = path.join(dir, path.basename(mode));
   const rejectsMode = () => {
-    assert.equal(getMode(), 'off');
-    assert.equal(hook(), '');
+    assert.equal(getMode(), '');
+    assert.match(JSON.parse(hook()).systemMessage, /codex-polish.mode/);
     assert.notEqual(call(['set-mode', 'auto']).status, 0);
   };
   fs.symlinkSync(path.join(cwd, 'missing-directory'), dir);
@@ -236,21 +269,25 @@ test('unsafe mode settings disable rewriting and reject writes', t => {
   rejectsMode(); assert.ok(fs.lstatSync(marker).isFIFO()); assert.equal(fs.readFileSync(mode, 'utf8'), 'auto\n');
 });
 
-test('a linked settings directory with no mode still inherits the nearest mode', t => {
-  const { cwd, mode, getMode } = fixture(t);
-  const empty = path.join(cwd, 'empty-directory');
-  fs.mkdirSync(empty);
-  fs.symlinkSync(empty, path.join(cwd, '.codex'));
-  assert.equal(getMode(), 'auto');
-  fs.writeFileSync(mode, 'manual');
-  assert.equal(getMode(), 'manual');
+test('a linked repository settings directory uses defaults for absent plugin settings', t => {
+  const { home, project, check } = fixture(t);
+  const defaults = check();
+  const settings = path.join(project, '.codex');
+  const shared = path.join(home, 'shared-settings');
+  fs.mkdirSync(shared);
+  fs.writeFileSync(path.join(shared, 'config.toml'), '');
+  fs.rmdirSync(settings);
+  fs.symlinkSync(shared, settings);
+  assert.deepEqual(check(), defaults);
+  fs.writeFileSync(path.join(shared, 'codex-polish.decisions'), 'auto');
+  assert.deepEqual(check().blockers, ['decisions_mode_invalid', ...defaults.blockers]);
 });
 
 test('an unreadable mode file disables rewriting', { skip: process.getuid() === 0 }, t => {
   const { mode, getMode, hook } = fixture(t);
   fs.writeFileSync(mode, 'auto', { mode: 0o000 });
-  assert.equal(getMode(), 'off');
-  assert.equal(hook(), '');
+  assert.equal(getMode(), '');
+  assert.match(JSON.parse(hook()).systemMessage, /codex-polish.mode/);
 });
 
 test('history count has independent default, inheritance and override', t => {
@@ -268,7 +305,7 @@ test('history count has independent default, inheritance and override', t => {
   assert.equal(count({ where: child }), 2);
 });
 
-test('invalid history input preserves saved value and malformed settings disable history', t => {
+test('invalid history input preserves saved value and malformed settings report the error', t => {
   const { call, check, project, cwd, mode, getMode } = fixture(t);
   const max = '9223372036854775807', parent = { where: project };
   json(call(['set-history-turns', '6'], parent));
@@ -281,11 +318,14 @@ test('invalid history input preserves saved value and malformed settings disable
   fs.mkdirSync(path.join(cwd, '.git'));
   const dir = path.join(cwd, '.codex'), file = path.join(dir, 'codex-polish.history-turns'); fs.mkdirSync(dir);
   for (const value of ['', '-3', '11', 'bad', '1\n0', Buffer.from([255]), '9'.repeat(100)]) {
-    fs.writeFileSync(file, value); assert.equal(check().history_turns, 0);
+    fs.writeFileSync(file, value); assert.equal(check().history_turns, null);
+    assert.ok(check().blockers.includes('history_turns_invalid'));
+    assert.equal(json(call(['check','--no-history'])).history_turns, 0);
+    assert.ok(!json(call(['check','--no-history'])).blockers.includes('history_turns_invalid'));
   }
   assert.equal(getMode(), 'auto');
   fs.unlinkSync(file); mkfifo(file);
-  const invalid = () => { assert.equal(check().history_turns, 0); assert.notEqual(call(['set-history-turns', '1']).status, 0); };
+  const invalid = () => { assert.equal(check().history_turns, null); assert.notEqual(call(['set-history-turns', '1']).status, 0); };
   invalid(); fs.unlinkSync(file); fs.symlinkSync(path.join(path.dirname(mode),path.basename(file)), file);
   invalid(); assert.equal(check(parent).history_turns, 6); fs.unlinkSync(file); fs.rmdirSync(dir); fs.symlinkSync(path.dirname(mode), dir);
   invalid();

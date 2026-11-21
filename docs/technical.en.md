@@ -2,7 +2,7 @@
 
 [简体中文](technical.md) · [Overview](../README.md)
 
-Codex Polish `0.0.1-beta.5` is a Codex plugin for macOS and Linux. Its local scripts use built-in Node.js modules and require Node.js 22.16 or newer. The automatic hook directs Codex to follow the [polishing workflow](../plugins/codex-polish/skills/codex-polish/WORKFLOW.md) once the draft is ready and show the result in the final reply. Explicit requests use the same workflow through the [rewrite skill](../plugins/codex-polish/skills/codex-polish/SKILL.md). The [setup skill](../plugins/codex-polish/skills/codex-polish-setup/SKILL.md) checks the environment and manages project settings.
+Codex Polish is a Codex plugin for macOS and Linux. Its local scripts use built-in Node.js modules and require Node.js 22.16 or newer. The automatic hook directs Codex to follow the [polishing workflow](../plugins/codex-polish/skills/codex-polish/WORKFLOW.md) once the draft is ready and show the result in the final reply. Explicit requests use the same workflow through the [rewrite skill](../plugins/codex-polish/skills/codex-polish/SKILL.md). The [setup skill](../plugins/codex-polish/skills/codex-polish-setup/SKILL.md) checks the environment and manages project settings.
 
 ## Project Settings
 
@@ -11,22 +11,24 @@ Settings live in the nearest Git repository’s root .codex directory. All direc
 | File | Values and Default | Behavior |
 | --- | --- | --- |
 | `.codex/codex-polish.mode` | `auto` (default), `manual`, `off` | Without a saved mode, the project uses `auto`. The trusted hook triggers polishing for ordinary questions. `manual` runs only on explicit requests. `off` skips rewrites even when requested. |
-| `.codex/codex-polish.rewrite-mode` | `normal` (default), `turbo` | Once polishing is triggered, normal uses the saved Decisions setting. Turbo sends each eligible draft directly to Gemini. |
+| `.codex/codex-polish.rewrite-mode` | `normal` (default), `turbo` | Applies only to the automatic hook. Neither mode needs an OpenAI key, and without the check both send drafts to Gemini. With the built-in prompts, `normal` can keep a clear draft and optionally checks with OpenAI Decisions, while `turbo` skips Decisions and asks Gemini to rewrite the draft. |
 | `.codex/codex-polish.model` | Model ID, default `gemini-4-hydrogen` (Gemini 4 Hydrogen) | The model picker lists models from the signed-in Antigravity account without sending a draft or history. If the saved model becomes unavailable, that rewrite keeps the original draft. |
-| `.codex/codex-polish.prompt.md` | UTF-8 text, defaults to the active mode’s built-in prompt | Custom text takes effect on the next rewrite and carries over to new chats in the same project. |
-| `.codex/codex-polish.history-turns` | Integer `0`–`10`, default `2` | Maximum completed exchanges to attach to a Gemini rewrite. Use `0` to omit earlier exchanges. Saving a value above `10` returns an error. An invalid or out-of-range setting disables history. Changes apply on the next rewrite. |
-| `.codex/codex-polish.decisions` | `auto` (default), `off` | In normal mode, `auto` enables the OpenAI style check when `OPENAI_API_KEY` is set. `off` uses ACP only. This setting is independent of the trigger mode. |
+| `.codex/codex-polish.prompt.md` | UTF-8 text, defaults to the active mode’s built-in prompt | Custom text applies across project chats. A request to send only a passage uses the built-in Turbo prompt. |
+| `.codex/codex-polish.history-turns` | Integer `0`–`10`, default `2` | Maximum completed exchanges to attach when Gemini rewrites a whole reply. Use `0` to omit earlier exchanges. Saving a value above `10` returns an error. An invalid setting reports the file and the allowed range. Changes apply on the next rewrite. |
+| `.codex/codex-polish.decisions` | `auto` (default), `off` | For hook-triggered polishing in Normal mode, `auto` enables the OpenAI style check when `OPENAI_API_KEY` is set. With `off`, drafts go directly to Gemini. |
 | `.codex/codex-polish.language` | `auto` (default), `zh`, `en` | Sets the language for plugin prompts and setup checks. |
 
-Say “Switch to turbo mode” or “Switch back to normal mode” to save the project preference. From a source checkout, run `node plugins/codex-polish/hooks/preferences.mjs set-rewrite-mode turbo --cwd /path/to/project`. Use `normal` to switch back. The `check --cwd /path/to/project` command reports the effective `rewrite_mode`. An invalid value pauses polishing locally until you save either mode.
+Trigger mode, automatic rewrite mode, and Decisions accept mixed-case settings. Decisions also accepts `on` to enable the check. Diagnostics identify an invalid setting and list the allowed values.
 
-“Use Turbo for this answer” applies to the current draft. “Have Gemini rewrite the answer about caching” uses Turbo on the selected earlier reply in the same chat. Codex interprets the request in context. A question like “What does Turbo do?” asks for an explanation. A one-time rewrite uses `--trigger turbo`, goes directly to ACP, and expires after the reply. Saving the project default takes a separate request. Explicit requests work in `manual` mode and are skipped in `off` mode.
+Say “Switch to turbo mode” or “Switch back to normal mode” to save the project preference. From a source checkout, run `node plugins/codex-polish/hooks/preferences.mjs set-rewrite-mode turbo --cwd /path/to/project`. Use `normal` to switch back. The `check --cwd /path/to/project` command reports the effective `rewrite_mode`. An invalid value pauses automatic polishing until you save either mode. Explicit requests still use Turbo.
+
+“Polish the result” applies to the current draft. “Have Gemini rewrite the answer about caching” selects an earlier reply in the same chat. Both use `--trigger explicit` and send the selected draft directly to Gemini over ACP in Turbo mode. The request applies once and works in either `auto` or `manual`. Codex interprets requests in context, so “What does Turbo do?” asks for an explanation. The hook uses `--trigger auto` on ordinary questions and follows the project’s saved rewrite mode. The project’s `off` setting skips both triggers.
 
 When `.codex/codex-polish.language` is `auto`, chat prompts match the user's current message, falling back to the established chat language and then the system locale. Short replies such as menu numbers use the chat language. Terminal checks and the installer check the project setting first, then the system locale, and default to English.
 
 ### Show, set, or restore the polishing prompt
 
-In chat, say “Show the polishing prompt”, “Set this project's polishing prompt to: Lead with the conclusion, then give the evidence”, or “Restore the default polishing prompt”. You can also run these commands locally from the root of a source checkout. Replace `/path/to/project` with the target project directory. The setter saves standard input verbatim, including line breaks and surrounding spaces. The reader returns the effective `text` and its `source` (`default` or `custom`). With no custom prompt, it returns the built-in text for the active rewrite mode. With a custom prompt, the returned `text` is the complete editing prompt for Gemini in both Normal and Turbo. The role file’s header configures the ACP session and tool access. Its body contains only that text.
+In chat, say “Show the polishing prompt”, “Set this project's polishing prompt to: Lead with the conclusion, then give the evidence”, or “Restore the default polishing prompt”. You can also run these commands locally from the root of a source checkout. Replace `/path/to/project` with the target project directory. The setter saves standard input verbatim, including line breaks and surrounding spaces. The reader returns the effective `text` and its `source` (`default` or `custom`). With no custom prompt, the reader shows the project’s automatic mode prompt, and explicit requests use the built-in Turbo prompt. A custom prompt supplies Gemini’s editing role for Normal and Turbo. A request to send only the selected text uses the built-in Turbo role instead. The role file’s header configures the ACP session and tool access. Its body contains only that text.
 
 ```sh
 node plugins/codex-polish/hooks/preferences.mjs prompt --cwd /path/to/project
@@ -34,19 +36,19 @@ node plugins/codex-polish/hooks/preferences.mjs set-prompt --cwd /path/to/projec
 node plugins/codex-polish/hooks/preferences.mjs set-prompt --reset --cwd /path/to/project
 ```
 
-You can edit the prompt file directly. Restoring the default removes the project prompt. Invalid UTF-8, whitespace-only contents, display controls or a suspected credential prevent polishing until the file is corrected or reset.
+You can edit the project prompt file directly or link it to a prompt tracked by Git in the same project. The setup command creates a relative link for a tracked project file. Commit the link to share it across clones. To use a shared prompt elsewhere or an untracked file, name the file in chat or run `node plugins/codex-polish/hooks/preferences.mjs set-prompt --link /path/to/prompt.md --cwd /path/to/project`. The file must contain valid UTF-8 and at least one non-whitespace character. Replacing the prompt or restoring the default changes only the project link.
 
 ## Rewrite Routes, Stages, and Thresholds
 
-- **Direct ACP.** Turbo always uses this route, even with an OpenAI key. Its built-in prompt asks Gemini to actively rewrite each eligible draft. In normal mode, when `OPENAI_API_KEY` is missing, empty, or entirely whitespace, the plugin uses Gemini alone. Setting `codex-polish.decisions` to `off` has the same effect. Every eligible draft that passes local checks goes to Gemini, even if it already reads well.
-- **OpenAI Decisions and ACP.** In normal mode with `codex-polish.decisions` set to `auto` and a nonblank key, the plugin checks the key’s format locally before contacting OpenAI. It sends one request to `gpt-6-luna` to decide whether the draft needs editing. [Decisions API](https://developers.openai.com/api/reference/resources/decisions/methods/create)
+- **Direct ACP.** Explicit requests and automatic Turbo rewrites use this route, even with an OpenAI key. The built-in Turbo prompt asks Gemini to actively rewrite each draft. For automatic polishing in Normal mode, when `OPENAI_API_KEY` is missing, empty, or entirely whitespace, the plugin uses Gemini alone. Setting `codex-polish.decisions` to `off` has the same effect.
+- **OpenAI Decisions and ACP.** For automatic polishing in Normal mode with `codex-polish.decisions` set to `auto` and a nonblank key, the plugin checks the key’s format locally before contacting OpenAI. It sends one request to `gpt-6-luna` to decide whether the draft needs editing. [Decisions API](https://developers.openai.com/api/reference/resources/decisions/methods/create)
 
 | Stage | Behavior |
 | --- | --- |
-| 1. Local input checks | The plugin skips polishing if it detects a possible credential in the current question or draft, the user requests exact output such as JSON only, or the draft has an unsupported structure. |
-| 2. Style check | Direct ACP proceeds after local checks. With Decisions enabled, OpenAI considers only the current question, draft, and any custom polishing prompt. Gemini rewrites when `P(needs rewrite) > 0.50`. |
-| 3. ACP rewrite | Gemini loads the project’s effective prompt from the body of the editor role. The agent launches `agy acp` in a temporary workspace under a dedicated editor role, opens a session with the configured Antigravity identity, reads the live model list, and checks the project settings and selected model before sending. It rejects tool permission requests and collects only reply text from this session. The reply is ready to display once the agent has nonempty text and an `end_turn` matching the request ID. |
-| 4. Display | Both modes format Gemini’s complete reply for display. The formatter ignores outer whitespace and line-ending differences when deciding whether to show one or both versions. |
+| 1. Select the text | Codex uses the current draft, an earlier answer, or a selected passage, as requested. If you ask it to skip polishing, keep the text local, or return a verbatim answer, it follows that request directly. |
+| 2. Style check | Direct ACP sends the selected text to Gemini. With Decisions enabled, OpenAI considers only the current question, draft, and any custom polishing prompt. Gemini rewrites when `P(needs rewrite) > 0.50`. |
+| 3. ACP rewrite | Gemini loads the polishing prompt for this request from the body of the editor role. The agent launches `agy acp` in a temporary workspace under a dedicated editor role, opens a session with the configured Antigravity identity, reads the live model list, and checks the project settings and selected model before sending. It rejects tool permission requests and collects only reply text from this session. The reply is ready to display once the agent has nonempty text and an `end_turn` matching the request ID. |
+| 4. Display | Identical replies appear once. The comparison keeps both versions if their indentation, whitespace, or line endings differ. |
 
 During a rewrite, `agy` connects to Google. The plugin's Node.js scripts contact a provider only for the optional OpenAI style check. The current Codex agent starts and cleans up the ACP process, selects the model, and exchanges protocol messages. [ACP operating instructions](../plugins/codex-polish/skills/codex-polish/references/acp.md)
 
@@ -56,21 +58,25 @@ The plugin requires the official Antigravity CLI 1.2.1 or later. By default it r
 
 When Gemini returns a changed reply, the final message starts with **Polished by Gemini**. In the Codex app, select “View original GPT draft” below the rewrite to expand the full draft. Select it again to collapse it. Drafts retain their Markdown formatting. When a draft contains disclosure tags or container delimiters, the expanded view shows its Markdown source so you can read those markers verbatim.
 
-For a selected passage or a previous Gemini version, the comparison is labeled **View original text**. Only the selected text and its question are used, along with any editing directions. Additional conversation history is omitted.
+For a selected passage or a previous Gemini version, the comparison is labeled **View original text**. The expanded comparison shows the exact passage submitted for editing.
 
 If Gemini returns identical text, the reply says it left the draft unchanged and shows the text once. If polishing is skipped before sending or the ACP request ends without a complete reply, the status explains what happened and the reply shows the original. Asking for “only the polished text” shows just Gemini’s text when the rewrite completes. Requests for plain JSON, a single command, or other exact output receive the requested content without labels or status.
 
-When a visualization reference loses its delimiters in the ACP reply and unambiguously matches a reference in the draft, the formatter restores the delimiters. The formatter still displays Gemini’s reply if a reference changes or disappears. New visualization markers with no match in the draft appear as text.
+When the full reply arrives, the local formatter uses the original draft held in memory to produce the final Markdown. Both the comparison view and text-only delivery preserve Gemini’s chart references, whitespace, and line endings. Codex can retrieve a long formatted message in pages.
 
 ## Outgoing Content, Hooks, and Limits
 
 For automatic polishing, trust the plugin's `UserPromptSubmit` hook in Codex (**Settings → Hooks** or `/hooks` in the CLI), then start a fresh chat. Explicit requests to polish the current question and draft work without the hook in both automatic and manual mode. Including earlier exchanges requires the trusted hook in either mode. [Codex plugins](https://developers.openai.com/plugins/build/plugins) · [Codex hooks](https://learn.chatgpt.com/docs/hooks#where-codex-looks-for-hooks)
 
-When the OpenAI style check runs, the plugin sends only the current `question`, `draft`, and any custom `editor_prompt` in `input_json.data`. Gemini receives the `question` and `draft` for the reply being rewritten and optional `history`. If the user gives editing directions for a one-time Turbo rewrite, the plugin includes them in `rewrite_request`. The Antigravity editor role supplies any custom project prompt. The question, draft, and history are sent as written, including code, commands, paths, links, quotations, and numbers.
+When the OpenAI style check runs, the plugin sends only the current `question`, `draft`, and any custom `editor_prompt` in `input_json.data`. For a whole reply, Gemini receives the original `question` and `draft` and optional `history`. Explicit requests may also include the user’s editing directions in `rewrite_request`. The Antigravity editor role supplies any custom project prompt. All material is sent as written, including any keys or tokens, code, commands, paths, links, quotations and numbers.
 
-The trusted hook records the transcript location and current turn locally so a user can select an earlier reply for rewriting. This record holds only metadata, even when history is set to zero. For an earlier rewrite, `question` and `draft` come from the same turn. If that turn showed both versions, the plugin uses the folded GPT draft. When the target is unclear or unavailable, Codex asks the user to identify it or supply the text.
+For a selected passage or an explicitly requested Gemini version, `--selection` takes the exact text and sends it as `draft`, with the active polishing prompt and any separately requested `rewrite_request`. The surrounding request, original question and chat history stay local. “Only send this passage” uses `--selection-only`. Its ACP message contains only `draft`, and its editor role uses the built-in Turbo prompt. Separate directions and the project prompt stay local.
 
-Optional `history` comes from before the selected reply and is sent in chronological order. An exchange consists of a user prompt (including follow-up messages within that turn) and Codex's final reply. The plugin skips progress updates, tool output, incomplete exchanges, and exchanges with detected credentials or attachments. The target question and draft do not count toward the limit of 0–10 exchanges (default 2). With history at zero, an untrusted hook, no usable history, or a request to omit history for this rewrite, the ACP message omits `history`.
+The trusted hook records the transcript location and current turn locally, even with history set to zero. For repeat rewrites, the local cache stores the source type, turn references and a fingerprint of the displayed reply. It uses the fingerprint to check that the source record matches the transcript. The cache stores no draft text. When you ask to rewrite a GPT original again, the plugin uses the question from the turn where GPT wrote the draft and only the history preceding that turn.
+
+Re-editing a polished selection sends only the visible text of the version you chose, without the surrounding question or chat history, even when a comparison or local source record exists. The same body-only scope applies when you ask to shorten a previous reply that showed only the final text and no longer has a local source record. Codex includes the original question only if you supply the complete exchange or an independent record verifies both the question and the full reply, and it omits any other history. If you ask for the GPT draft and Codex cannot verify it, it asks you to point it out or quote it.
+
+Optional `history` for a whole reply comes from before its original turn and is sent in chronological order. An exchange consists of a user prompt (including follow-up messages within that turn) and Codex's final reply. History carries the text of completed exchanges, including captions on messages with attachments. It excludes the attachments themselves, progress updates, and tool output. User-created forks use their own transcript. A rollback removes the number of recent turns reported by the host. The target question and draft do not count toward the limit of 0–10 exchanges (default 2). With history at zero, an untrusted hook, no usable history, or a request to omit history for this rewrite, the ACP message omits `history`.
 
 OpenAI caps each `input_json.data` at 256 KiB of compact UTF-8 JSON, 32 container levels, and 10,000 values. The plugin puts the current turn’s style check material in one such field and asks one predicate question. Oversized inputs go directly to Gemini in full. The `gpt-6-luna` model card separately lists a context window of 1,050,000 tokens. [Decisions API reference](https://developers.openai.com/api/reference/resources/decisions/methods/create) · [GPT-6 Luna model card](https://developers.openai.com/api/docs/models/gpt-6-luna)
 
@@ -83,35 +89,10 @@ The plugin never invokes `agy -p` and writes no draft logs of its own. Codex ses
 | Failure Class | Handling |
 | --- | --- |
 | Unsupported Google authentication, missing agy, Node.js or host process tools | Keep the original. The plugin looks for agy in PATH and ~/.local/bin. |
-| Decisions unavailable, key invalid, response invalid, or input exceeds the provider limit | Continue to Gemini after local checks. Each turn makes its own routing decision. |
+| Decisions unavailable, key invalid, response invalid, or input exceeds the provider limit | Continue to Gemini with the original draft. Each turn makes its own routing decision. |
 | ACP startup failure, auth failure, missing selected model, or mid-stream model switch | The agent aborts the rewrite, terminates the process, and delivers the original draft. |
 | Slow or interrupted generation | Wait while the ACP process is running. On an explicit timeout, cancellation, disconnect or truncated result, discard incomplete output. A request is sent at most once. |
 | Project disabled mid-turn, updated user instructions, or cancellation | Re-checks project mode before sending text out. The agent discards the old candidate on new instructions. User cancellation ends the turn. If only the server cancels while the user waits, the plugin returns the original draft. |
-
-## Verification Status
-
-In a live local test, a synthetic conversation had 10 earlier exchanges totaling 16 KiB and a saved custom polishing prompt. OpenAI received one request with just `question`, `draft`, and `editor_prompt` as evidence, and returned HTTP 200. Gemini 4 Hydrogen then received all 10 exchanges over ACP and completed the rewrite.
-
-Run the offline test suite and synthetic report from the root of a full source checkout. The release archive ships both language versions of the evaluation guide. The test scripts, report generator, and sample data are available in the source checkout.
-
-```sh
-npm test
-node evaluation/report.mjs evaluation/example.jsonl
-```
-
-The Decisions tests use mock OpenAI responses to exercise the style threshold and API error handling. A simulated ACP server covers model changes, permission requests, interrupted replies and mixed session messages. The installer tests use a temporary Codex profile to install the packed archive, check hook registration, update the plugin and uninstall it.
-
-### Verified on macOS
-
-Using Node.js 22.16 and Antigravity CLI 1.5.12, the Codex agent selected `gemini-4-hydrogen` over ACP and requested a rewrite. The reply reported that local tests passed and production verification was still pending. The test environment had no Python on PATH and no OpenAI key. The Node.js helpers made no network requests.
-
-In a T3 Code chat using the Codex backend, a one-time Turbo request rewrote the preceding visible answer through Gemini 4 Hydrogen. The delivered message contained the rewrite and the original draft.
-
-### Checks still open
-
-- Exercise the Normal route in T3 Code both with and without Decisions, using authorized, de-identified samples. Compare the tool trace with the selected model, completed output, and process cleanup. Check the status and section order in the native final message and again after reopening the chat. In clients that support folding, verify that a new reply starts with the draft collapsed. Expand it and compare each body with its source.
-- Run Chinese drafts over 4 KiB in two chats simultaneously and check that each keeps its own text and session ID. Check fallback for an unavailable model, a permission request, cancellation, and a truncated stream.
-- Collect at least 200 delivered real samples across the calibration and blind splits. Use the blind split to measure preference rates, severe fact reversals, missed workflows, verbatim display match, and end-to-end latency. Current thresholds are initial defaults, and `evaluation/example.jsonl` contains synthetic records (`demo_only`). See the [evaluation specification](../evaluation/README.en.md) and [contribution guide](../CONTRIBUTING.en.md).
 
 ## Installation, Updates, and Uninstall
 
@@ -123,4 +104,4 @@ Both `setup` and `update` accept `--install-agy` to install the Google CLI when 
 
 The installer registers one local marketplace per Codex profile. Updates stage a verified snapshot, atomically switch the marketplace manifest to the new snapshot and refresh the native plugin cache. If the refresh fails, the installer restores the previous snapshot and enabled state. Codex checks the installed plugin’s contents when deciding hook trust. An update to a bundled prompt or setup guide can therefore require a new approval even when the hook command is unchanged. The installer and `doctor` read the current status from `hooks/list`.
 
-If you packed version `0.0.1-beta.5` locally, you can also run `npx --yes file:./kyun.si-codex-polish-0.0.1-beta.5.tgz uninstall` in the directory containing the archive. Uninstall removes the plugin and its marketplace, clears session pointers for the active Codex profile, and prints the backup path for any manually edited installation files. It keeps shared `agy` binaries and project `.codex` files.
+If you packed version `0.0.1-beta.6` locally, you can also run `npx --yes file:./kyun.si-codex-polish-0.0.1-beta.6.tgz uninstall` in the directory containing the archive. Uninstall removes the plugin and its marketplace and clears session pointers and prompt file selections for the active Codex profile. It keeps shared `agy` binaries and project `.codex` files. If your prompt file is outside the project or untracked by Git, select it again after reinstalling. The uninstaller prints the backup path for any manually edited installation files.

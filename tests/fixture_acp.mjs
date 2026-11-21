@@ -8,7 +8,7 @@ import { isMain, record } from '../plugins/codex-polish/skills/codex-polish/scri
 export const SESSION = 'fixture-session';
 export const PERMISSION_ID = 'fixture-permission';
 export const REPLY = ['我改了判断会话过期的逻辑。', '已有的会话还能不能用，我还没验证。'];
-const SCENARIOS = ['ok','permission','truncated','signed-out','auth-denied','no-hydrogen',
+const SCENARIOS = ['ok','permission','permission-then-text','truncated','signed-out','auth-denied','no-hydrogen',
   'model-drift','stalled','cancelled','refused','provider-error','interleaved','wrong-end-id','nontext'];
 
 export function selectOption(id, category, name, currentValue, choices) {
@@ -52,8 +52,12 @@ export class Fixture {
   permissionReply(message) {
     if (this.pending === null || message.id !== PERMISSION_ID) return;
     if ([{outcome:'cancelled'}, {outcome:'selected', optionId:'reject-once'}].some(
-      outcome => isDeepStrictEqual(outcome, message.result?.outcome))) this.stop('cancelled');
-    else {
+      outcome => isDeepStrictEqual(outcome, message.result?.outcome))) {
+      if (this.scenario === 'permission-then-text') {
+        this.update(SESSION, 'agent_message_chunk', {content:{type:'text', text:REPLY[1]}});
+        this.stop('end_turn');
+      } else this.stop('cancelled');
+    } else {
       this.error(this.pending, 'The fixture requires a denied or cancelled permission.');
       this.pending = null;
     }
@@ -64,7 +68,9 @@ export class Fixture {
       return this.error(id, 'Expected at least one text prompt block.');
     if (this.pending !== null) return this.error(id, 'A turn is already running.');
     this.pending = id;
-    if (this.scenario === 'permission') {
+    if (this.scenario === 'permission' || this.scenario === 'permission-then-text') {
+      if (this.scenario === 'permission-then-text')
+        this.update(SESSION, 'agent_message_chunk', {content:{type:'text', text:REPLY[0]}});
       this.emit({id:PERMISSION_ID, method:'session/request_permission', params:{
         sessionId:SESSION, toolCall:{toolCallId:'fixture-tool', title:'Simulated read', kind:'read'},
         options:[{optionId:'allow-once', name:'Allow', kind:'allow_once'}, {optionId:'reject-once', name:'Deny', kind:'reject_once'}],

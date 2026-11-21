@@ -71,8 +71,10 @@ nativeTest(
     const chinese = invoke(join(download, '安装回复润色.command'), []);
     assert.ok(chinese.includes('用一句话解释 DNS。'));
     assert.match(chinese, /未设置模式的项目默认自动润色/);
-    assert.match(chinese, /跳过 OpenAI.*这条用 Turbo.*这个项目的默认模式设成 Turbo/);
+    assert.match(chinese, /主动要求.*Turbo.*跳过 OpenAI/);
+    assert.ok(chinese.includes('返回结果 polish'));
     assert.match(chinese, /默认还会附带这份答复之前最多 2 轮问答/);
+    assert.match(chinese, /密钥或令牌，也会原样发出/);
     assert.match(chinese, /\/hooks.*信任.*UserPromptSubmit.*新开/);
     assert.ok(chinese.includes('复用你现有的 Antigravity 登录'));
     assert.ok(chinese.includes(join(snapshot(), GUIDE)));
@@ -82,8 +84,10 @@ nativeTest(
     const english = invoke(join(download, 'Install Codex Polish.command'), []);
     assert.ok(english.includes('Explain what DNS does in one sentence.'));
     assert.match(english, /without a saved mode default to automatic polishing/);
-    assert.match(english, /skip OpenAI once.*Use Turbo for this answer.*Make Turbo the default/);
+    assert.match(english, /polish or rewrite.*Turbo.*skips OpenAI/i);
+    assert.match(english, /Polish the result/i);
     assert.match(english, /up to two exchanges that preceded the draft/);
+    assert.match(english, /keys or tokens in the text are sent as written/);
     assert.match(english, /trust.*UserPromptSubmit.*\/hooks.*new chat/);
     const first = snapshot();
     assert.ok(first.startsWith(join(profile,'codex-polish','sources') + '/'));

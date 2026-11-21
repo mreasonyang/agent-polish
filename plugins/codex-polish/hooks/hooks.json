@@ -5,8 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v node >/dev/null 2>&1 && node \"${PLUGIN_ROOT}/hooks/preferences.mjs\" hook 2>/dev/null || :",
-            "timeout": 3
+            "command": "exec node \"${PLUGIN_ROOT}/hooks/preferences.mjs\" hook"
           }
         ]
       }

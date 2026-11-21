@@ -38,22 +38,59 @@ test('requires user provenance, prefers UI events and keeps only the final answe
   assert.deepEqual(read(), Array(2).fill({ user: q, assistant: a }));
 });
 
-test('skips host notices, attachments, credentials, controls and unattributed messages', t => {
+test('skips attachments and unattributed or host-generated messages based on provenance', t => {
   const { read, write } = fixture(t);
-  for (const unsafe of [user('Subagent completed: worker'), user('hello\n<environment_context>private</environment_context>'),
-    user('# Context from my IDE setup:\nprivate'), user('password=fixture-secret'), user('key\x1b[1m'),
-    event('user_message', { message: 'image', local_images: ['/my/path'] }), message('user', 'unattributed')]) {
-    write(start('one'), unsafe, final('answer'), finish('one', 'answer'), start('now'));
+  const host = message('user', '<environment_context>system input</environment_context>', {internal_chat_message_metadata_passthrough: {
+    content_item_kinds:['environments.environment_context'], content_item_metadata:[{provenance:{type:'harness'}}],
+  }});
+  for (const item of [host, message('user', 'unattributed'), event('user_message', { message: '', local_images: ['/my/path'] })]) {
+    write(start('one'), item, final('answer'), finish('one', 'answer'), start('now'));
     assert.deepEqual(read(), []);
+  }
+});
+
+test('text survives moderation metadata, extra provenance keys and mixed attachments without sending attachment data', t => {
+  const { read, write, file } = fixture(t);
+  const textWithAttachment = event('user_message', { message: 'caption', local_images: ['/private'], audio_references: ['private-audio'] });
+  const typedMixed = message('user', '', {
+    content: [{ type: 'input_image', image_url: 'private-image' }, { type: 'input_text', text: 'caption' }, { type: 'input_text', text: 'injected' }],
+    internal_chat_message_metadata_passthrough: {
+      turn_id: 'one', content_item_kinds: ['user.image', 'user.text', 'host.text'],
+      content_item_metadata: [{ provenance: { type: 'user' } }, { provenance: { type: 'user', client: 'desktop' }, extra: true }, { provenance: { type: 'harness' } }],
+    },
+  });
+  for (const input of [textWithAttachment, typedMixed]) {
+    const annotated = event('agent_message', { phase: 'final_answer', message: 'visible', moderation: { flagged: false } });
+    const mixedAnswer = message('assistant', '', { phase:'final_answer', content:[
+      { type:'output_text', text:'visible' }, { type:'image', data:'attachment-only' },
+    ]});
+    for (const finals of [[annotated], [annotated, mixedAnswer], [mixedAnswer, annotated]]) {
+      write(start('one'), input, ...finals, finish('one', 'visible'), start('now'));
+      assert.deepEqual(read(), [{ user: 'caption', assistant: 'visible' }]);
+      assert.deepEqual(readPreviousReply(file, 's', 'now'), { selection: 'visible' });
+    }
+  }
+});
+
+test('keeps an actual user’s text and the final answer regardless of what they quote', t => {
+  const { read, write, file } = fixture(t);
+  for (const literal of ['Subagent completed: worker', '<environment_context>an example</environment_context>',
+    '# Context from my IDE setup:\nexample', 'password=fixture-secret', 'key\x1b[1m']) {
+    for (const item of [user(literal), typed('one', literal)]) {
+      write(start('one'), item, final(literal), finish('one', literal), start('now'));
+      assert.deepEqual(read(), [{user:literal, assistant:literal}]);
+      assert.deepEqual(readPreviousReply(file, 's', 'now'), { selection: literal });
+    }
   }
 });
 
 test('takes recent completed turns in order without backfill', t => {
   const { read, write } = fixture(t);
-  write(...exchange('a', 'qA', 'aA'), ...exchange('b', 'qB', 'aB'), ...exchange('c', 'qC', 'token=secret'),
+  write(...exchange('a', 'qA', 'aA'), ...exchange('b', 'qB', 'aB'),
+    start('c'), event('user_message', {message:'qC', images:['attachment']}), final('aC'), finish('c', 'aC'),
     ...exchange('d', 'qD', 'aD'), start('aborted'), user('not answered'), event('turn_aborted', { turn_id: 'aborted' }), start('now'));
-  assert.deepEqual(read(3), [{ user: 'qB', assistant: 'aB' }, { user: 'qD', assistant: 'aD' }]);
-  assert.deepEqual(read(), [{ user: 'qD', assistant: 'aD' }]);
+  assert.deepEqual(read(3), ['B','C','D'].map(s => ({user:'q' + s, assistant:'a' + s})));
+  assert.deepEqual(read(), ['C','D'].map(s => ({user:'q' + s, assistant:'a' + s})));
 });
 
 test('reader caps history, CLI rejects values above ten', t => {
@@ -158,17 +195,32 @@ test('rollback and fork never cross thread history', t => {
   assert.deepEqual(read(), []);
   meta.payload.forked_from_id = 'other';
   write(...seen, start('now'));
+  assert.deepEqual(read(), [{user:'q', assistant:'answer'}]);
+  meta.payload.source = { subagent: {} };
+  write(...seen, start('now'));
   assert.deepEqual(read(), []);
 });
 
-test('previous rewrite uses the selected question and draft and only the turns before it', t => {
+test('successive rollbacks retain the surviving prefix, including text outside the former history window', t => {
+  const { read, write, file } = fixture(t);
+  const roll = num_turns => event('thread_rolled_back', { num_turns });
+  const rows = n => exchange(String(n), 'q' + n, 'a' + n);
+  write(...Array.from({length:15}, (_,i) => rows(i)).flat(), roll(10), ...rows(15), ...rows(16),
+    start('incomplete'), user('withdrawn'), event('turn_aborted', {turn_id:'incomplete',reason:'cancelled'}), roll(2),
+    ...rows(17), roll(3), ...rows(18), start('now'));
+  assert.deepEqual(read(10).map(x => x.assistant), ['a0','a1','a2','a3','a18']);
+  assert.deepEqual(readPreviousReply(file,'s','now',2,2), { selection: 'a3' });
+});
+
+test('a verified whole reply uses its question and draft and only the turns before it', t => {
   const { file, write } = fixture(t);
   const turns = Array.from({ length: 14 }, (_, i) => ({ user: 'question ' + i, assistant: 'answer ' + i }));
-  const previous = (count, turnsBack) => readPreviousReply(file, 's', 'now', count, turnsBack);
+  const lookupOrigin = turnIds => ({ origin: [...turnIds][0], literal: true, label: 'quoted' });
+  const previous = (count, turnsBack) => readPreviousReply(file, 's', 'now', count, turnsBack, { lookupOrigin });
   write(...turns.flatMap(({ user, assistant }, i) => exchange(String(i), user, assistant)), start('now'), user('Try again with Gemini.'));
-  assert.deepEqual(previous(0), { question: 'question 13', draft: 'answer 13', history: [] });
-  assert.deepEqual(previous(10, 3), { question: 'question 11', draft: 'answer 11', history: turns.slice(1, 11) });
-  assert.deepEqual(previous(10, 14), { question: 'question 0', draft: 'answer 0', history: [] });
+  assert.deepEqual(previous(0), { question: 'question 13', draft: 'answer 13', source_label: 'quoted', origin_turn_id: '13', history: [] });
+  assert.deepEqual(previous(10, 3), { question: 'question 11', draft: 'answer 11', source_label: 'quoted', origin_turn_id: '11', history: turns.slice(1, 11) });
+  assert.deepEqual(previous(10, 14), { question: 'question 0', draft: 'answer 0', source_label: 'quoted', origin_turn_id: '0', history: [] });
   assert.equal(previous(10, 15), null);
   assert.equal(previous(10, Number.MAX_SAFE_INTEGER), null);
   assert.equal(previous(2, 0), null);
@@ -188,8 +240,11 @@ test('previous rewrite extracts the displayed GPT original in either language, i
       const display = formatReply({ draft, candidate, display_language: lang }).display_text;
       write(...exchange('old', 'Earlier question.', 'Earlier answer.'), ...exchange('selected', 'Original question.', display),
         start('now'), user('Have Gemini rewrite the last reply.'));
-      assert.deepEqual(readPreviousReply(file, 's', 'now', 1), {
-        question: 'Original question.', draft, history: [{ user: 'Earlier question.', assistant: 'Earlier answer.' }],
+      assert.deepEqual(readPreviousReply(file, 's', 'now', 1), { selection: candidate });
+      assert.equal(readPreviousReply(file, 's', 'now', 1, 1, { requireGpt: true }), null);
+      const receipt = () => ({ label: 'gpt', origin: 'selected', literal: false });
+      assert.deepEqual(readPreviousReply(file, 's', 'now', 1, 1, { lookupOrigin: receipt }), {
+        question: 'Original question.', draft, source_label: 'gpt', origin_turn_id: 'selected', history: [{ user: 'Earlier question.', assistant: 'Earlier answer.' }],
       });
     }
   }
@@ -198,7 +253,28 @@ test('previous rewrite extracts the displayed GPT original in either language, i
 test('the next rewrite uses the original body after a Normal decision or a service failure', () => {
   const draft = 'The browser reuses a cached copy.\n';
   for (const notice of ['**未润色** · OpenAI 判断原稿已经清楚。', '**Polishing skipped** · Gemini was unavailable.']) {
-    assert.equal(originalReplyText(notice + '\n\n' + draft), draft);
+    assert.equal(originalReplyText(notice + ' <!-- codex-polish -->\n\n' + draft), draft);
+  }
+});
+
+test('a title inside an ordinary answer and ambiguous chart text both remain available for rewriting', t => {
+  const { file, write } = fixture(t);
+  const sentence = '**Gemini 润色版** 是界面里的标题。';
+  write(...exchange('one', 'What does the heading mean?', sentence), start('now'));
+  assert.deepEqual(readPreviousReply(file, 's', 'now'), { selection: sentence });
+  const full = '**Polished by Gemini**\n\nThis example has no disclosure.';
+  write(...exchange('one', 'Show me the wording.', full), start('now'));
+  assert.deepEqual(readPreviousReply(file, 's', 'now'), { selection: full });
+  const original = 'Here is the chart.\n\n\uE200visualize\uE202{"path":"/tmp/example.html"}\uE201';
+  const display = formatReply({ draft: original, candidate: 'See the chart below.', display_language: 'en' }).display_text;
+  write(...exchange('one', 'Show the chart.', display), start('now'));
+  const lookupOrigin = () => ({ origin: 'one', label: 'gpt', literal: false });
+  assert.equal(readPreviousReply(file, 's', 'now', 1, 1, { lookupOrigin }).draft, original);
+  assert.equal(readPreviousReply(file, 's', 'now', 1, 1, { lookupOrigin, requireGpt: true }).draft, original);
+  assert.deepEqual(readPreviousReply(file, 's', 'now', 1), { selection: 'See the chart below.' });
+  for (const originalText of [original + '\n&#xE200; &amp;#xE201; &#xE202;', original + '\n<details>\n&amp;amp;#xE200;']) {
+    const formatted = formatReply({draft:originalText, candidate:'Visible.', display_language:'zh'}).display_text;
+    assert.equal(originalReplyText(formatted), originalText);
   }
 });
 
@@ -212,7 +288,7 @@ test('the formatter labels user-selected source neutrally and preserves it for l
       assert.ok(!display_text.includes('GPT'));
       assert.equal(originalReplyText(display_text), draft);
       const same = formatReply({ ...input, candidate: draft });
-      assert.equal(same.display_text, `**${unchanged}**\n\n${draft}`);
+      assert.equal(same.display_text, `**${unchanged}** <!-- codex-polish -->\n\n${draft}`);
       assert.equal(originalReplyText(same.display_text), draft);
     }
   }
@@ -224,11 +300,10 @@ test('the formatter labels user-selected source neutrally and preserves it for l
 test('unavailable targets never silently select an older answer', t => {
   const { file, write, meta } = fixture(t);
   const before = exchange('earlier', 'Earlier question.', 'Earlier answer.');
-  const previous = (turnsBack = 1) => readPreviousReply(file, 's', 'now', 2, turnsBack);
+  const lookupOrigin = turnIds => ({ origin: [...turnIds][0], literal: true, label: 'quoted' });
+  const previous = (turnsBack = 1) => readPreviousReply(file, 's', 'now', 2, turnsBack, { lookupOrigin });
   for (const target of [
-    exchange('x', 'Question.', 'password=fixture-secret'),
-    exchange('x', 'Question.', '**Polished by Gemini**\n\nChanged copy, missing disclosure.'),
-    [start('x'), event('user_message', { message: 'Question.', images: ['attachment'] }), final('Reply.'), finish('x', 'Reply.')],
+    [start('x'), event('user_message', { message: '', images: ['attachment'] }), final('Reply.'), finish('x', 'Reply.')],
     [start('x'), message('user', 'Unattributed material.'), final('Reply.'), finish('x', 'Reply.')],
     [start('x'), user('Question.'), final('Reply.'), finish('x', 'Changed after completion.')],
     [start('x'), user('Question.'), final('Reply.'), finish('x', null)],
@@ -243,5 +318,5 @@ test('unavailable targets never silently select an older answer', t => {
   assert.equal(previous(), null);
   meta.payload.forked_from_id = 'other';
   write(...before, start('now'));
-  assert.equal(previous(), null);
+  assert.equal(previous().draft, 'Earlier answer.');
 });

@@ -1,6 +1,6 @@
 {
   "name": "@kyun.si/codex-polish",
-  "version": "0.0.1-beta.5",
+  "version": "0.0.1-beta.6",
   "license": "Apache-2.0",
   "description": "Codex plugin that rewrites replies with Gemini via Antigravity ACP · 通过 Antigravity ACP 调用 Gemini 改写 Codex 回复的插件",
   "os": [
@@ -22,7 +22,9 @@
     "SECURITY.md",
     "SECURITY.en.md",
     "CHANGELOG.md",
-    "docs/",
+    "docs/README.zh-CN.md",
+    "docs/technical.md",
+    "docs/technical.en.md",
     "evaluation/README.md",
     "evaluation/README.en.md"
   ],

@@ -186,7 +186,7 @@ export async function decide(args, stream, env = process.env, request = send, ca
     if (!canSend) {
       // Standalone judge calls also respect the project's opt-outs.
       const { projectSettings, decisionsSettings } = await import('../../../hooks/preferences.mjs');
-      if (projectSettings(directory)[0] === 'off') fail('project_mode');
+      if (projectSettings(directory)[0] !== 'auto') fail('project_mode');
       if (decisionsSettings(directory, rewriteMode).decisions_mode !== 'auto') fail('decision_route_changed');
     }
     const key = env.OPENAI_API_KEY;

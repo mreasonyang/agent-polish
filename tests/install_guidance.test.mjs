@@ -8,6 +8,7 @@ import { PassThrough } from 'node:stream';
 import { setImmediate } from 'node:timers/promises';
 import { chooseSetupModel, chooseSetupMode, configurationSteps, showSetupGuidance, doctor } from '../scripts/install.mjs';
 import { rewriteModeSettings } from '../plugins/codex-polish/hooks/rewrite_mode.mjs';
+import { catalog } from '../plugins/codex-polish/skills/codex-polish/scripts/acp_models.mjs';
 import { makeProject } from './hook_fixture.mjs';
 
 const checks = {
@@ -40,9 +41,18 @@ test('bilingual setup and doctor distinguish auth, project model, history, decis
     assert.doesNotMatch(withOpenAI, /meaning|原意/);
     const turbo = { rewrite_mode: 'turbo', mode: 'manual' };
     const turboSummary = summarize(turbo);
-    assert.match(turboSummary, lang === 'en' ? /Turbo skips the OpenAI check/ : /Turbo 会跳过 OpenAI 检查/);
+    assert.match(turboSummary, lang === 'en' ? /Requested rewrites use Turbo/ : /点名润色会用 Turbo/);
     assert.doesNotMatch(turboSummary, /Set up OpenAI Decisions|配置 OpenAI Decisions/);
-    assert.match(doctor({ ...data, ...turbo }), lang === 'en' ? /When to polish: only when asked\nRewrite mode: turbo/ : /润色时机：只在我要求时\n改写模式：turbo/);
+    const manualDoctor = doctor({ ...data, ...turbo });
+    assert.match(manualDoctor, lang === 'en' ? /When to polish: only when asked/ : /润色时机：只在我要求时/);
+    assert.match(manualDoctor, lang === 'en' ? /Automatic rewrite mode: turbo/ : /自动润色的改写模式：turbo/);
+    for (const mode of ['manual', 'off']) {
+      const saved = { mode, openai_key_configured: true, decisions_enabled: false };
+      for (const summary of [summarize(saved), doctor({ ...data, ...saved })]) {
+        assert.match(summary, lang === 'en' ? /configured OpenAI Decisions/ : /已配置的 OpenAI Decisions/);
+        assert.doesNotMatch(summary, /Set up OpenAI Decisions|「配置 OpenAI Decisions」/);
+      }
+    }
     const invalidMode = { rewrite_mode: null, blockers: ['rewrite_mode_invalid'] };
     assert.match(summarize(invalidMode), lang === 'en' ? /rewrite mode is invalid/ : /改写模式无效/);
     assert.doesNotMatch(summarize(invalidMode), /go straight to Gemini|直接交给 Gemini/);
@@ -57,6 +67,10 @@ test('bilingual setup and doctor distinguish auth, project model, history, decis
       ['agy_missing', 'setup --install-agy'],
       ['unsupported_node', 'Node.js 22.16'],
       ['unsupported_google_auth', 'CODEX_POLISH_AGY_AUTH'],
+      ['mode_invalid', 'codex-polish.mode'],
+      ['history_turns_invalid', 'codex-polish.history-turns'],
+      ['decisions_mode_invalid', 'codex-polish.decisions'],
+      ['editor_prompt_link_unbound', lang === 'en' ? 'prompt link' : '提示词链接'],
       ['gemini_model_invalid', lang === 'en' ? 'Choose a rewrite model' : '选择改写模型']
     ]) {
       const [lines, pages] = configurationSteps({ ...data, blockers: [code] });
@@ -151,18 +165,37 @@ test('model picker accepts arrows, looks up only on request and preserves provid
     const input = new PassThrough(), output = new PassThrough();
     input.setRawMode = enabled => { input.isRaw = enabled; };
     const discover = t.mock.fn(() => keys.length === 2 ? [] : [
-      { id: 'gemini-4-neon', name: 'Gemini 4 Neon' }, { id: 'gemini-4-argon', name: 'Gemini 4 Argon' }
+      { id: 'gemini-4-neon', name: 'Gemini 4 Neon' }, { id: 'gemini-4-argon', name: 'Gemini 4 Argon / Preview: (Auto)\x1b[9m' }
     ]);
     let display = '';
     output.on('data', bytes => { display += bytes.toString(); });
     const selection = chooseSetupModel(checks, lang, input, output, discover);
     for (const key of keys) { await setImmediate(); input.write(key); }
     assert.equal(await selection, expected);
+    if (expected === 'gemini-4-argon') {
+      assert.ok(display.includes('Gemini 4 Argon / Preview: (Auto)\\u001b[9m'));
+      assert.ok(!display.includes('\x1b[9m'));
+    }
     assert.equal(discover.mock.callCount(), calls);
     assert.match(display, /Gemini 4 Hydrogen/);
     assert.equal(!!input.isRaw, false);
     input.destroy(); output.destroy();
   }
+});
+
+test('account picker shows both IDs when provider labels differ only in surrounding whitespace', async () => {
+  const input = new PassThrough(), output = new PassThrough();
+  input.setRawMode = () => {};
+  let display = '';
+  output.on('data', bytes => { display += bytes.toString(); });
+  const choices = [{ value: 'gemini-first', name: 'Gemini Pro' }, { value: 'gemini-second', name: 'Gemini Pro ' }];
+  const discover = () => catalog([{ category: 'model', type: 'select', id: 'model', currentValue: 'gemini-first', options: choices }]).models;
+  const selection = chooseSetupModel(checks, 'en', input, output, discover);
+  for (const key of ['\x1b[B', '\r', '\x1b[B', '\r']) { await setImmediate(); input.write(key); }
+  assert.equal(await selection, 'gemini-second');
+  assert.ok(display.includes('Gemini Pro (gemini-first)'));
+  assert.ok(display.includes('Gemini Pro (gemini-second)'));
+  input.destroy(); output.destroy();
 });
 
 test('first setup from a subdirectory saves the model once for the whole repository', async t => {

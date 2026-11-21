@@ -47,8 +47,9 @@ export function languageSettings(cwd, env = process.env) {
   } catch {
     directory = '';
   }
-  const [saved] = readProjectSetting(directory, LANGUAGE_FILE, 16, { allowMissingLink: true });
-  const mode = saved === 'en' || saved === 'zh' ? saved : 'auto';
+  const [saved] = readProjectSetting(directory, LANGUAGE_FILE, 16);
+  const normalized = saved?.toLowerCase();
+  const mode = normalized === 'en' || normalized === 'zh' ? normalized : 'auto';
   return { language_mode: mode, ui_language: mode === 'auto' ? systemLanguage(env) : mode };
 }
 

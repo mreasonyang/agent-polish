@@ -122,7 +122,7 @@ export function removeProfileCache() {
     return withCache('write', db => {
       db.exec('BEGIN EXCLUSIVE');
       const objects = db.prepare('SELECT type, name FROM sqlite_master WHERE sql IS NOT NULL').all();
-      if (objects.some(row => row.type !== 'table' || row.name !== 'history_source')) return file;
+      if (objects.some(row => row.type !== 'table' || !['history_source', 'reply_origin', 'prompt_link'].includes(row.name))) return file;
       if (db.prepare('PRAGMA journal_mode').get().journal_mode !== 'delete') return file;
       fs.unlinkSync(file);
       return null;

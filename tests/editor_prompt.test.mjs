@@ -2,7 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { json, makeProject, mkfifo, plugin } from './hook_fixture.mjs';
+import { execFile, execFileSync } from 'node:child_process';
+import { promisify } from 'node:util';
+import { json, makeProject, mkfifo, plugin, preferences } from './hook_fixture.mjs';
 import { PROMPT_FILE, readBundledEditorRole, readEditorPrompt } from '../plugins/codex-polish/hooks/editor_prompt.mjs';
 
 const settingsFile = project => path.join(project, '.codex', PROMPT_FILE);
@@ -45,13 +47,27 @@ test('custom prompts keep literal UTF-8 bytes across CLI sessions and apply acro
   assert.equal(readEditorPrompt(project).source, 'default');
 });
 
+test('a saved custom prompt can be inspected when the automatic rewrite mode is invalid', t => {
+  const { project, call } = makeProject(t);
+  const text = 'Be concise.\n';
+  json(call(['set-prompt'], { input: text }));
+  fs.writeFileSync(path.join(project, '.codex/codex-polish.rewrite-mode'), 'typo');
+  assert.deepEqual(json(call(['prompt'])), { source: 'custom', text });
+  const explicit = json(call(['check', '--trigger', 'explicit']));
+  assert.equal(explicit.rewrite_mode, 'turbo');
+  assert.equal(explicit.prompt_source, 'custom');
+  assert.ok(json(call(['check', '--trigger', 'auto'])).blockers.includes('rewrite_mode_invalid'));
+  json(call(['set-prompt', '--reset']));
+  assert.notEqual(call(['prompt']).status, 0);
+});
+
 test('invalid save input preserves existing content and never echoes the prompt', t => {
   const { call, cwd } = makeProject(t);
-  const longPrompt = 'é'.repeat(32 * 1024);
+  const longPrompt = 'password=example-private-value\x1b[31m' + 'é'.repeat(32 * 1024);
   json(call(['set-prompt'], { input: longPrompt }));
   assert.equal(readEditorPrompt(cwd).text, longPrompt);
   const secret = 'password=example-private-value';
-  for (const input of ['', ' \n\t ', Buffer.from([0xff]), 'hide\x1b[31m', secret]) {
+  for (const input of ['', ' \n\t ', Buffer.from([0xff])]) {
     const result = call(['set-prompt'], { input });
     assert.notEqual(result.status, 0);
     assert.ok(!(result.stdout + result.stderr).includes('example-private-value'));
@@ -76,7 +92,7 @@ test('unsafe or corrupt settings block use without exposing their contents', t =
     assert.ok(status.blockers.includes('editor_prompt_invalid'));
     assert.ok(!JSON.stringify(status).includes(secret));
   };
-  for (const content of [Buffer.from([0xff]), ' \n', '', 'token=' + secret]) {
+  for (const content of [Buffer.from([0xff]), ' \n', '']) {
     fs.writeFileSync(file, content);
     invalid();
   }
@@ -85,13 +101,11 @@ test('unsafe or corrupt settings block use without exposing their contents', t =
   fs.linkSync(neighbor, file);
   invalid();
   fs.unlinkSync(file);
-  for (const create of [() => fs.symlinkSync(neighbor, file), () => mkfifo(file)]) {
-    create();
-    invalid();
-    assert.notEqual(call(['set-prompt'], { input: '替换' }).status, 0);
-    assert.notEqual(call(['set-prompt', '--reset']).status, 0);
-    fs.unlinkSync(file);
-  }
+  mkfifo(file);
+  invalid();
+  assert.notEqual(call(['set-prompt'], { input: '替换' }).status, 0);
+  assert.notEqual(call(['set-prompt', '--reset']).status, 0);
+  fs.unlinkSync(file);
   fs.rmdirSync(path.dirname(file));
   fs.writeFileSync(path.join(cwd, PROMPT_FILE), secret);
   fs.symlinkSync(cwd, path.dirname(file));
@@ -99,4 +113,95 @@ test('unsafe or corrupt settings block use without exposing their contents', t =
   assert.notEqual(call(['set-prompt'], { input: '替换' }).status, 0);
   assert.notEqual(call(['set-prompt', '--reset']).status, 0);
   assert.equal(fs.readFileSync(neighbor, 'utf8'), secret);
+});
+
+test('tracked project links work directly; other prompt targets must be chosen explicitly', t => {
+  const { home, project, cwd, call, check } = makeProject(t);
+  execFileSync('git', ['init', '-q', project]);
+  const tracked = path.join(project, 'editing.md');
+  const untracked = path.join(project, '.env');
+  const external = path.join(home, 'shared-prompt.md');
+  const link = settingsFile(project);
+  fs.writeFileSync(tracked, 'tracked');
+  fs.writeFileSync(untracked, 'untracked local file');
+  fs.writeFileSync(external, 'shared');
+  execFileSync('git', ['-C', project, 'add', '--', 'editing.md']);
+  fs.symlinkSync('../editing.md', link);
+  assert.equal(readEditorPrompt(cwd).text, 'tracked');
+  for (const source of [untracked, external]) {
+    fs.unlinkSync(link); fs.symlinkSync(source, link);
+    assert.ok(check().blockers.includes('editor_prompt_link_unbound'));
+    assert.match(call(['prompt']).stderr, /--link/);
+  }
+  json(call(['set-prompt', '--link', path.relative(cwd, external)]));
+  assert.equal(fs.realpathSync(link), external);
+  fs.writeFileSync(external, 'updated');
+  assert.equal(json(call(['prompt'])).text, 'updated');
+  fs.unlinkSync(link); fs.symlinkSync(untracked, link);
+  assert.ok(check().blockers.includes('editor_prompt_link_unbound'));
+  json(call(['set-prompt'], {input:'new local prompt'}));
+  assert.equal(fs.lstatSync(link).isFile(), true);
+  assert.equal(fs.readFileSync(untracked,'utf8'),'untracked local file');
+  json(call(['set-prompt', '--link', external]));
+  json(call(['set-prompt', '--reset']));
+  assert.ok(!fs.existsSync(link));
+  assert.equal(fs.readFileSync(external, 'utf8'), 'updated');
+  fs.symlinkSync(external, link);
+  assert.ok(check().blockers.includes('editor_prompt_link_unbound'));
+  fs.unlinkSync(link); fs.symlinkSync(path.join(home,'missing'),link);
+  assert.ok(check().blockers.includes('editor_prompt_invalid'));
+  fs.unlinkSync(link);
+  const fifo = path.join(project,'pipe');
+  mkfifo(fifo);
+  const invalid = call(['set-prompt', '--link', fifo]);
+  assert.notEqual(invalid.status, 0);
+  assert.match(invalid.stderr, /regular file containing nonempty UTF-8/);
+  assert.equal(fs.existsSync(link),false);
+});
+
+test('set-prompt links to a tracked file survive a move and a clone without a profile cache', t => {
+  const { home, project, env, call } = makeProject(t);
+  const cache = path.join(home, 'unavailable-cache');
+  fs.writeFileSync(cache, '');
+  const options = { env: { ...env, XDG_CACHE_HOME: cache } };
+  const git = (...args) => execFileSync('git', ['-C', project, ...args], { env });
+  git('init', '-q');
+  const filename = 'src/Editing notes.md';
+  fs.writeFileSync(path.join(project, filename), 'Use short sentences.');
+  git('add', '--', filename);
+  const saved = json(call(['set-prompt', '--link', 'Editing notes.md'], options));
+  assert.equal(fs.readlinkSync(saved.file), '../' + filename);
+  assert.equal(json(call(['prompt'], options)).text, 'Use short sentences.');
+  const untracked = path.join(project, 'untracked.md');
+  fs.writeFileSync(untracked, 'Local prompt');
+  assert.notEqual(call(['set-prompt', '--link', untracked], options).status, 0);
+  assert.equal(fs.readlinkSync(saved.file), '../' + filename);
+  git('add', '--', path.relative(project, saved.file));
+  git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', '-c', 'commit.gpgSign=false', 'commit', '-qm', 'Save prompt');
+  const moved = path.join(home, 'moved');
+  fs.renameSync(project, moved);
+  const clone = path.join(home, 'clone');
+  execFileSync('git', ['clone', '-q', moved, clone], { env });
+  for (const where of [moved, clone]) {
+    const text = 'Editing in ' + path.basename(where);
+    fs.writeFileSync(path.join(where, filename), text);
+    assert.deepEqual(json(call(['prompt'], { ...options, where })), { source: 'custom', text });
+  }
+});
+
+test('concurrent prompt choices in the same Codex profile remain scoped to each project', async t => {
+  const { home, project, call, env } = makeProject(t);
+  const neighbor = path.join(home, 'other-project');
+  fs.mkdirSync(neighbor);
+  const projects = [project, neighbor];
+  const targets = projects.map((_, i) => {
+    const target = path.join(home, 'shared-' + i + '.md');
+    fs.writeFileSync(target, 'Project ' + i);
+    return target;
+  });
+  await Promise.all(projects.map((where, i) =>
+    promisify(execFile)(process.execPath, [preferences, 'set-prompt', '--cwd', where, '--link', targets[i]], { env })));
+  for (const [i, where] of projects.entries()) assert.equal(json(call(['prompt'], { where })).text, 'Project ' + i);
+  json(call(['set-prompt', '--reset'], { where: neighbor }));
+  assert.equal(json(call(['prompt'], { where: project })).text, 'Project 0');
 });

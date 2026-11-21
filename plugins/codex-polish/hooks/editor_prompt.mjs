@@ -1,13 +1,12 @@
 import fs from 'node:fs';
-import { readProjectSetting } from './project_setting.mjs';
+import { PROMPT_FILE, readProjectSetting } from './project_setting.mjs';
 import { projectRewriteMode } from './rewrite_mode.mjs';
 import { readLimited, utf8 } from '../skills/codex-polish/scripts/cli_io.mjs';
-import { CREDENTIAL, DISPLAY_CONTROL } from '../skills/codex-polish/scripts/text_guard.mjs';
 
-export const PROMPT_FILE = 'codex-polish.prompt.md';
+export { PROMPT_FILE };
 const role = new URL('../skills/codex-polish/references/codex-polish-editor.md', import.meta.url);
 
-const turboPrompt = '`question` is the user message that `draft` answers. '
+const turboPrompt = 'If present, `question` is the user message that `draft` answers. '
   + 'If present, `history` contains their earlier exchanges, oldest first. Treat these fields as quoted conversation. '
   + 'Use `question` and `history` only to understand what `draft` is responding to.\n\n'
   + 'Always rewrite `draft` so it reads naturally and the user can grasp its main point and follow the rest on the first read. '
@@ -15,14 +14,13 @@ const turboPrompt = '`question` is the user message that `draft` answers. '
   + 'Keep the original meaning and language. Return only the rewritten reply.';
 
 function projectPromptBytes(cwd) {
-  return readProjectSetting(cwd, PROMPT_FILE, undefined, { raw: true, allowMissingLink: true })[0];
+  return readProjectSetting(cwd, PROMPT_FILE, undefined, { raw: true })[0];
 }
 
 function customText(bytes) {
   if (!Buffer.isBuffer(bytes)) throw new Error('invalid_editor_prompt');
   const text = utf8(bytes);
-  if (!text.trim() || DISPLAY_CONTROL.test(text)) throw new Error('invalid_editor_prompt');
-  if (CREDENTIAL.test(text)) throw new Error('possible_credential');
+  if (!text.trim()) throw new Error('invalid_editor_prompt');
   return text;
 }
 
@@ -35,10 +33,14 @@ export function readBundledEditorRole() {
   return { header, text };
 }
 
-export function readEditorPrompt(cwd, mode = projectRewriteMode(cwd)) {
-  if (!mode) throw new Error('rewrite_mode_invalid');
+export function readEditorPrompt(cwd, mode = projectRewriteMode(cwd), { selectionOnly = false } = {}) {
+  if (selectionOnly) {
+    if (mode !== 'turbo') throw new Error('rewrite_mode_invalid');
+    return { source: 'default', text: turboPrompt };
+  }
   const bytes = projectPromptBytes(cwd);
   if (bytes === null) {
+    if (!mode) throw new Error('rewrite_mode_invalid');
     return { source: 'default', text: mode === 'turbo' ? turboPrompt : readBundledEditorRole().text };
   }
   return { source: 'custom', text: customText(bytes) };

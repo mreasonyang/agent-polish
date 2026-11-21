@@ -1,85 +1,40 @@
 // Inspect one ACP frame. The current agent owns the connection and sends each request.
 import { parseArgs } from 'node:util';
+import { parseAcpFrame } from './acp_reader.mjs';
 import { validModelId } from '../../../hooks/preferences.mjs';
-import { CREDENTIAL } from './text_guard.mjs';
 import { isMain, readLimited, record, utf8 } from './cli_io.mjs';
 
 // Bound incoming ACP configuration frames, which carry only model and session metadata.
 export const MAX_CONFIG_FRAME_BYTES = 1024 * 1024;
 
-const GEMINI_NAME = /^Gemini(?= [a-z0-9])/i;
-const GEMINI_ID = /^gemini-[a-z0-9]/;
-const OTHER_MODEL = /(?:^|[^a-z0-9])(?:auto|automatic|router|routing|orchestrator|claude|anthropic|sonnet|opus|haiku|gpt|openai|llama|mistral|grok|deepseek|qwen)(?:$|[^a-z0-9]|[0-9])/i;
-
-function publicName(value, label) {
-  if (typeof label !== 'string' || !label || [...label].length > 128 || label !== label.trim()
-      || /[^\p{L}\p{N} ._+()（）-]/u.test(label) || CREDENTIAL.test(label) || CREDENTIAL.test(value)
-      || OTHER_MODEL.test(label) || OTHER_MODEL.test(value)) return null;
-  return GEMINI_ID.test(value) && GEMINI_NAME.test(label) ? label : null;
-}
-
-function selectValues(options) {
-  if (!Array.isArray(options) || !options.every(record)) throw new Error();
-  if (!options.some(option => 'options' in option)) return options;
-  return options.flatMap(group => {
-    if (typeof group.group !== 'string' || typeof group.name !== 'string'
-        || !Array.isArray(group.options) || 'value' in group) throw new Error();
-    return group.options;
-  });
-}
+// The provider's value selects the model. A label can be localized or renamed.
+const GEMINI_ID = /(?:^|[/:])gemini-[a-z0-9][^/]*$/i;
 
 export function catalog(options) {
-  if (!Array.isArray(options) || !options.every(record)) throw new Error();
-  const selectors = options.filter(option => option.category === 'model');
+  if (!Array.isArray(options)) throw new Error();
+  const selectors = options.filter(option => option?.category === 'model');
   if (selectors.length !== 1) throw new Error();
   const [selector] = selectors;
   const { id, currentValue } = selector;
-  if (selector.type !== 'select' || typeof selector.name !== 'string' || !selector.name || !validModelId(id) || CREDENTIAL.test(id)
-      || options.filter(option => option.id === id).length !== 1) throw new Error();
+  if (selector.type !== 'select' || typeof id !== 'string' || !id.trim() || typeof currentValue !== 'string'
+      || !Array.isArray(selector.options) || options.filter(option => option?.id === id).length !== 1) throw new Error();
   const seen = new Set();
   const models = [];
-  for (const item of selectValues(selector.options)) {
-    if (!record(item) || 'options' in item || typeof item.value !== 'string' || typeof item.name !== 'string' || seen.has(item.value))
-      throw new Error();
-    seen.add(item.value);
-    if (!validModelId(item.value)) continue;
-    const name = publicName(item.value, item.name);
-    if (name) models.push({ id: item.value, name });
+  const entries = selector.options.flatMap(item => Array.isArray(item?.options) ? item.options : [item]);
+  for (const entry of entries) {
+    if (!validModelId(entry?.value) || !GEMINI_ID.test(entry.value) || seen.has(entry.value)) continue;
+    seen.add(entry.value);
+    const name = (typeof entry.name === 'string' && entry.name.trim()) || entry.value;
+    models.push({ id: entry.value, name });
   }
-  if (!seen.has(currentValue)) throw new Error();
-  return { config_id: id, current_model: models.some(model => model.id === currentValue) ? currentValue : null, models };
+  return { config_id: id, current_model: seen.has(currentValue) ? currentValue : null, models };
 }
 
-function nextRewriteStep(model, target, responseId) {
+export function nextRewriteStep(model, target, responseId) {
   if (![3n, 4n].includes(responseId) || !model.models.some(entry => entry.id === target)) throw new Error();
   if (model.current_model === target) return { next: 'submit_prompt' };
   if (responseId === 4n) throw new Error();
   return { next: 'set_model', config_id: model.config_id, value: target };
-}
-
-function parseFrame(raw) {
-  // JSON.parse validates the grammar but normally drops duplicate fields. Scan the
-  // already validated text for keys, decoding escaped forms before comparing.
-  const frame = JSON.parse(raw, (key, value, context) => {
-    if (key !== 'id' || typeof value !== 'number') return value;
-    return /^-?\d+$/.test(context.source) ? BigInt(context.source) : null;
-  });
-  const objects = [];
-  for (const match of raw.matchAll(/"(?:[^"\\]|\\.)*"|[{}]/g)) {
-    const token = match[0];
-    if (token === '{') objects.push(new Set());
-    else if (token === '}') objects.pop();
-    else {
-      let end = match.index + token.length;
-      while (end < raw.length && ' \r\n\t'.includes(raw[end])) end++;
-      if (raw[end] !== ':') continue;
-      const key = JSON.parse(token);
-      const fields = objects.at(-1);
-      if (fields.has(key)) throw new Error();
-      fields.add(key);
-    }
-  }
-  return frame;
 }
 
 function frameOptions(frame, responseId, session) {
@@ -95,7 +50,7 @@ function frameOptions(frame, responseId, session) {
 }
 
 export function sessionCatalog(line, id) {
-  return catalog(frameOptions(parseFrame(line), id));
+  return catalog(frameOptions(parseAcpFrame(line, { bigintIds: true }), id));
 }
 
 if (isMain(import.meta.url)) {
@@ -108,7 +63,7 @@ if (isMain(import.meta.url)) {
       const id = values['response-id'];
       if ((id === undefined) === (values['update-session'] === undefined) || (id !== undefined && !/^[+-]?\d+$/.test(id)))
         throw new Error();
-      const frame = parseFrame(utf8(await readLimited(process.stdin, MAX_CONFIG_FRAME_BYTES)));
+      const frame = parseAcpFrame(utf8(await readLimited(process.stdin, MAX_CONFIG_FRAME_BYTES)), { bigintIds: true });
       const responseId = id === undefined ? undefined : BigInt(id);
       const options = frameOptions(frame, responseId, values['update-session']);
       const model = catalog(options);

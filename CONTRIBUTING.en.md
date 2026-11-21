@@ -7,7 +7,7 @@ For installation, see the [project README](README.md). For details on when the p
 ## Where to Make Changes
 
 - `scripts/install.mjs` and the `.command` launchers handle installation, updates, status checks, uninstallation, and local marketplace registration.
-- `plugins/codex-polish/` contains the plugin manifest, the `UserPromptSubmit` hook, and two skills. `codex-polish` checks rewrite eligibility locally, optionally asks OpenAI Decisions whether to edit the draft, runs rewrites through `agy acp`, and formats Gemini’s complete reply for display. `codex-polish-setup` manages `.codex/codex-polish.*` settings, runtime model discovery, diagnostics, and the [credential guide](plugins/codex-polish/skills/codex-polish-setup/references/credentials.en.md).
+- `plugins/codex-polish/` contains the plugin manifest, the `UserPromptSubmit` hook, and two skills. `codex-polish` sends the selected draft through `agy acp`, and formats Gemini’s complete reply for display. Explicit requests use Turbo. The optional OpenAI Decisions check applies only when the hook runs in Normal mode. `codex-polish-setup` manages `.codex/codex-polish.*` settings, runtime model discovery, diagnostics, and the [credential guide](plugins/codex-polish/skills/codex-polish-setup/references/credentials.en.md).
 - The full source tree includes the regression suite in `tests/` and the evaluation script and synthetic samples in `evaluation/`. See the [evaluation guide](evaluation/README.en.md).
 - When updating user-facing prompts or documentation, update both English and Chinese.
 
@@ -22,7 +22,7 @@ mkdir -p dist
 npm pack --ignore-scripts --pack-destination dist
 ```
 
-`npm pack` writes version `0.0.1-beta.5` of `@kyun.si/codex-polish` to `dist/kyun.si-codex-polish-0.0.1-beta.5.tgz`. Default tests need no API key. Native installer tests use a temporary Codex profile. The Decisions tests use mock responses to exercise the style check.
+`npm pack` writes version `0.0.1-beta.6` of `@kyun.si/codex-polish` to `dist/kyun.si-codex-polish-0.0.1-beta.6.tgz`. Default tests need no API key. Native installer tests use a temporary Codex profile. The Decisions tests use mock responses to exercise the style check.
 
 ## Reporting Bugs
 
@@ -36,11 +36,11 @@ Open a GitHub pull request with the reason for the change, steps to reproduce or
 
 ## Publishing a beta
 
-Set the version in both `package.json` and the plugin manifest to `X.Y.Z-beta.N`. Commit the change and push the matching Git tag. For example, to publish `0.0.1-beta.5`:
+Set the version in both `package.json` and the plugin manifest to `X.Y.Z-beta.N`. Commit the change and push the matching Git tag. For example, to publish `0.0.1-beta.6`:
 
 ```sh
-git tag v0.0.1-beta.5
-git push origin v0.0.1-beta.5
+git tag v0.0.1-beta.6
+git push origin v0.0.1-beta.6
 ```
 
 GitHub Actions tests the tagged code, publishes the package to npm with the `beta` tag, and creates a GitHub prerelease. If a step fails, run the publishing workflow again from the Actions tab and enter the existing tag.

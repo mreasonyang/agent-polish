@@ -96,9 +96,11 @@ test('standalone judge respects project-wide and OpenAI-specific opt-outs', asyn
   const { project, cwd } = makeProject(t);
   const mock = mockResponse(t);
   const modeFile = path.join(project, '.codex/codex-polish.mode');
-  fs.writeFileSync(modeFile, 'off');
-  assert.deepEqual(await cli(['judge', '--cwd', cwd], draft), failure('project_mode'));
-  fs.writeFileSync(modeFile, 'manual');
+  for (const mode of ['off', 'manual']) {
+    fs.writeFileSync(modeFile, mode);
+    assert.deepEqual(await cli(['judge', '--cwd', cwd], draft), failure('project_mode'));
+  }
+  fs.writeFileSync(modeFile, 'auto');
   fs.writeFileSync(path.join(project, '.codex/codex-polish.decisions'), 'off');
   assert.deepEqual(await cli(['judge', '--cwd', cwd], draft), failure('decision_route_changed'));
   assert.equal(mock.calls(), 0);
@@ -129,7 +131,7 @@ test('only validated evidence within the Decisions per-field limit reaches HTTPS
   const { cwd, project } = makeProject(t);
   const mock = mockResponse(t);
   const file = path.join(project, '.codex/codex-polish.prompt.md');
-  fs.writeFileSync(file, 'token=fixture-secret');
+  fs.writeFileSync(file, Buffer.from([0xff]));
   assert.deepEqual(await cli(['judge', '--cwd', cwd], draft), failure('editor_prompt_invalid'));
   assert.equal(mock.calls(), 0);
   const editor_prompt = 'Use short sentences.';
@@ -167,15 +169,10 @@ test('bad inputs and configuration send nothing', async () => {
   assert.equal(calls,0);
 });
 
-test('judge rejects caller-supplied history, credential-like text, and display controls before HTTPS', async t => {
+test('judge rejects caller-supplied history before HTTPS', async t => {
   const mock = mockResponse(t);
   for (const history of [[], [{user:'Earlier question', assistant:'Earlier answer'}]]) {
     assert.deepEqual(await cli(['judge'], {...draft, history}), failure('invalid_input'));
-  }
-  for (const name of Object.keys(draft)) {
-    for (const [value, reason] of [['token=fixture-secret', 'possible_credential'], ['text\u202e', 'display_control']]) {
-      assert.deepEqual(await cli(['judge'], {...draft, [name]:value}), failure(reason));
-    }
   }
   assert.equal(mock.calls(), 0);
 });

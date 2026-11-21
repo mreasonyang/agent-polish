@@ -37,6 +37,37 @@ export async function decide(args, stream) {
   return { ...f, installed, bin, agy, env, calls, script, invoke, judge, check, helper, logged };
 }
 
+test('the workflow maps ordinary requests for a polish and earlier-answer rewrites to the correct trigger and draft', () => {
+  const workflow = fs.readFileSync(path.join(plugin, 'skills/codex-polish/WORKFLOW.md'), 'utf8');
+  const lines = workflow.split('\n');
+  const explicit = lines.find(line => line.includes('返回结果 polish'));
+  assert.ok(explicit?.includes('--trigger explicit'));
+  assert.match(explicit, /Turbo/);
+  assert.match(explicit, /跳过 Decisions/);
+  const automatic = lines.find(line => line.includes('--trigger auto'));
+  assert.ok(automatic?.includes('UserPromptSubmit'));
+  assert.match(automatic, /普通提问/);
+  const earlier = lines.find(line => line.includes('上一条我没看懂，换个说法'));
+  assert.ok(earlier?.includes('--turns-back'));
+  const judgeCommands = lines.filter(line => line.includes('preferences.mjs decision judge'));
+  assert.equal(judgeCommands.length, 1);
+  assert.match(judgeCommands[0], /--trigger auto --route decisions --rewrite-mode normal/);
+  assert.ok(lines.some(line => line.includes('route=acp') && line.includes('不调用 `decision judge`')));
+  assert.doesNotMatch(workflow, /--trigger turbo\b/);
+});
+
+test('the CLI exposes auto and explicit as the only trigger choices', t => {
+  const { call } = makeProject(t);
+  for (const args of [['check'], ['decision', 'judge']]) {
+    const help = call([...args, '--help']);
+    assert.equal(help.status, 0);
+    assert.match(help.stdout, /--trigger \{auto,explicit\}/);
+    const obsolete = call([...args, '--trigger', 'turbo']);
+    assert.equal(obsolete.status, 2);
+    assert.equal(obsolete.stdout, '');
+  }
+});
+
 test('missing or invalid prerequisites never invoke a provider', t => {
   const { judge, agy, calls, env } = fixture(t);
   for (const [variable, value, expected] of [['CODEX_POLISH_AGY_AUTH', 'oauth-personal', 'unsupported_google_auth']]) {
@@ -66,11 +97,11 @@ test('opt-out and routing changes cannot silently call OpenAI', t => {
   const status = check({ OPENAI_API_KEY: 'bad key' });
   assert.deepEqual([status.decisions_mode, status.decisions_enabled, status.blockers], ['off', false, []]);
   assert.equal(judge()[1].route, 'acp');
-  assert.equal(judge('explicit', ['--route', 'decisions'])[1].reason, 'decision_route_changed');
+  assert.equal(judge('auto', ['--route', 'decisions'])[1].reason, 'decision_route_changed');
   invoke(['set-decisions', 'auto']);
-  assert.equal(judge('explicit', ['--route', 'acp'])[1].reason, 'decision_route_changed');
+  assert.equal(judge('auto', ['--route', 'acp'])[1].reason, 'decision_route_changed');
   assert.equal(fs.existsSync(calls), false);
-  assert.equal(judge('explicit', ['--route', 'decisions'])[1].route, 'decisions'); assert.deepEqual(logged(), ['judge']);
+  assert.equal(judge('auto', ['--route', 'decisions'])[1].route, 'decisions'); assert.deepEqual(logged(), ['judge']);
 });
 
 test('turbo always bypasses Decisions and returning to normal uses the saved policy immediately', t => {
@@ -111,39 +142,70 @@ test('decision detects strategy changes even when both modes use direct ACP', t 
   assert.equal(fs.existsSync(calls), false);
 });
 
-test('explicit one-turn Turbo bypasses Decisions and the next turn uses Normal', t => {
-  const { invoke, judge, check, calls, logged, mode } = fixture(t);
-  const strategy = path.join(path.dirname(mode), 'codex-polish.rewrite-mode');
-  const args = ['--route', 'acp', '--rewrite-mode', 'turbo', '--model', 'gemini-4-hydrogen'];
-  for (const triggerMode of ['auto', 'manual']) {
-    fs.writeFileSync(mode, triggerMode);
-    const status = invoke(['check', '--trigger', 'turbo'])[1];
-    assert.deepEqual([status.rewrite_mode, status.decisions_enabled, status.mode], ['turbo', false, triggerMode]);
-    assert.deepEqual(judge('turbo', args), [0, { action: 'rewrite', reason: 'direct_acp', route: 'acp' }]);
-    assert.equal(judge('turbo', ['--route', 'decisions'])[1].reason, 'decision_route_changed');
-    assert.equal(judge('explicit', args)[1].reason, 'rewrite_mode_changed');
+test('with an OpenAI key only ordinary Normal turns ask Decisions, even if it would keep the draft', t => {
+  const { invoke, judge, logged, mode, helper } = fixture(t);
+  fs.copyFileSync(path.join(plugin, 'skills/codex-polish/scripts/decisions.mjs'), helper);
+  const mockHTTPS = `
+    import fs from 'node:fs';
+    import https from 'node:https';
+    import { EventEmitter } from 'node:events';
+    import { Readable } from 'node:stream';
+    https.request = (url, options, respond) => {
+      fs.appendFileSync(process.env.FAULT_TEST_CALLS, options.method + ' ' + url + '\\n');
+      const req = new EventEmitter();
+      req.end = () => {
+        const answer = { type: 'predicate', name: 'needs_rewrite', probability: 0.1 };
+        const response = Readable.from([Buffer.from(JSON.stringify({ answers: [answer] }))]);
+        response.statusCode = 200;
+        response.headers = {};
+        respond(response);
+      };
+      return req;
+    };
+  `;
+  const setting = invoke(['set-rewrite-mode', 'normal'])[1].file;
+  const env = { NODE_OPTIONS: '--import=data:text/javascript,' + encodeURIComponent(mockHTTPS) };
+  const endpoint = 'POST https://api.openai.com/v1/decisions';
+  function ordinaryTurn() {
+    const status = invoke(['check', '--trigger', 'auto'], env)[1];
+    assert.deepEqual([status.rewrite_mode, status.decisions_enabled], ['normal', true]);
+    const args = ['--route', 'decisions', '--rewrite-mode', 'normal', '--model', status.gemini_model];
+    assert.deepEqual(judge('auto', args, env), [0, { action: 'keep', reason: 'already_clear', probability: 0.1, route: 'decisions' }]);
   }
-  assert.equal(fs.existsSync(calls), false);
-  assert.equal(fs.existsSync(strategy), false);
-  const normal = check();
-  assert.deepEqual([normal.rewrite_mode, normal.decisions_enabled], ['normal', true]);
-  assert.equal(judge('explicit', ['--rewrite-mode', 'normal'])[1].route, 'decisions');
-  assert.deepEqual(logged(), ['judge']);
+
+  ordinaryTurn();
+  for (const projectMode of ['auto', 'manual']) {
+    fs.writeFileSync(mode, projectMode);
+    const status = invoke(['check', '--trigger', 'explicit'], env)[1];
+    assert.deepEqual([status.rewrite_mode, status.decisions_enabled, status.mode], ['turbo', false, projectMode]);
+    const args = ['--route', 'acp', '--rewrite-mode', 'turbo', '--model', status.gemini_model];
+    assert.deepEqual(judge('explicit', args, env), [0, { action: 'rewrite', reason: 'direct_acp', route: 'acp' }]);
+    assert.equal(judge('explicit', ['--route', 'decisions'], env)[1].reason, 'decision_route_changed');
+    assert.equal(judge('explicit', ['--rewrite-mode', 'normal'], env)[1].reason, 'rewrite_mode_changed');
+    assert.deepEqual(logged(), [endpoint]);
+    assert.equal(fs.readFileSync(setting, 'utf8'), 'normal\n');
+  }
+  assert.equal(judge('auto')[1].reason, 'project_mode');
+  fs.writeFileSync(mode, 'auto');
+  ordinaryTurn();
+  assert.deepEqual(logged(), [endpoint, endpoint]);
 });
 
-test('one-turn Turbo honors local off, invalid settings, missing providers and model changes', t => {
+test('explicit requests honor the project switch and runtime checks independently of the automatic rewrite mode', t => {
   const { invoke, judge, calls, mode, agy } = fixture(t);
   const setting = invoke(['set-rewrite-mode', 'normal'])[1].file;
-  assert.equal(judge('turbo', ['--model', 'unselected-model'])[1].reason, 'gemini_model_changed');
+  assert.equal(judge('explicit', ['--model', 'unselected-model'])[1].reason, 'gemini_model_changed');
   assert.equal(fs.readFileSync(setting, 'utf8'), 'normal\n');
-  fs.writeFileSync(mode, 'off');
-  assert.equal(judge('turbo')[1].reason, 'project_mode');
+  for (const [value, reason] of [['off', 'project_mode'], ['broken', 'mode_invalid']]) {
+    fs.writeFileSync(mode, value);
+    assert.equal(judge('explicit')[1].reason, reason);
+  }
   fs.unlinkSync(mode);
   fs.writeFileSync(setting, 'broken');
-  assert.equal(judge('turbo')[1].reason, 'rewrite_mode_invalid');
-  fs.unlinkSync(setting);
+  assert.equal(judge('auto')[1].reason, 'rewrite_mode_invalid');
+  assert.equal(judge('explicit')[1].route, 'acp');
   fs.unlinkSync(agy);
-  assert.equal(judge('turbo')[1].reason, 'agy_missing');
+  assert.equal(judge('explicit')[1].reason, 'agy_missing');
   assert.equal(fs.existsSync(calls), false);
 });
 
@@ -225,7 +287,7 @@ test('a project change while stdin is being read prevents the OpenAI request', t
 
 test('input and local-policy failures keep the draft without disabling later turns', t => {
   const { judge } = fixture(t);
-  for (const reason of ['possible_credential', 'invalid_input', 'display_control', 'editor_prompt_invalid', 'decision_route_changed', 'rewrite_mode_invalid']) {
+  for (const reason of ['invalid_input', 'editor_prompt_invalid', 'decision_route_changed', 'rewrite_mode_invalid']) {
     const expected = { action: 'keep', reason };
     assert.deepEqual(judge('auto', [], { FAULT_TEST_RESPONSE: JSON.stringify(expected) }), [1, expected]);
   }
@@ -240,15 +302,18 @@ test('unrecognized helper output cannot be delivered or recorded', t => {
   }
 });
 
-test('an OpenAI outage leaves subsequent auto hooks available; missing Node stays silent', t => {
+test('an OpenAI outage leaves subsequent auto hooks available; missing Node reports a hook error', t => {
   const { installed, env, cwd, bin, judge, invoke } = fixture(t);
   const command = JSON.parse(fs.readFileSync(path.join(installed, 'hooks/hooks.json'))).hooks.UserPromptSubmit[0].hooks[0].command;
   const settings = { ...env, LANG: 'en_US.UTF-8', LC_ALL: 'en_US.UTF-8', PLUGIN_ROOT: installed };
+  const runHook = () => spawnSync('/bin/sh', ['-c', command], { env: settings, encoding: 'utf8', input: JSON.stringify({ hook_event_name: 'UserPromptSubmit', cwd }) });
   const hook = () => {
-    const p = spawnSync('/bin/sh', ['-c', command], { env: settings, encoding: 'utf8', input: JSON.stringify({ hook_event_name: 'UserPromptSubmit', cwd }) });
+    const p = runHook();
     assert.equal(p.status, 0); assert.equal(p.stderr, ''); return p.stdout;
   };
-  assert.equal(hook(), ''); fs.symlinkSync(process.execPath, path.join(bin, 'node'));
+  const missing = runHook();
+  assert.notEqual(missing.status, 0); assert.match(missing.stderr, /node/);
+  fs.symlinkSync(process.execPath, path.join(bin, 'node'));
   const workflow = JSON.stringify(path.join(installed, 'skills/codex-polish/WORKFLOW.md'));
   const ready = () => assert.ok(JSON.parse(hook()).hookSpecificOutput.additionalContext.includes(workflow));
   ready();

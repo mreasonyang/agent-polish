@@ -657,18 +657,18 @@ async function setup(root, store, run, setEnabled, action) {
   const lines = [
     status,
     tr(
-      '未设置模式的项目默认自动润色，已保存的模式继续生效。使用默认的普通改写模式并开启风格检查时，OpenAI 根据本轮问题和草稿原文判断要不要润色。Google 收到待改的答复、它所回答的问题，以及你这次提出的改写要求。默认还会附带这份答复之前最多 2 轮问答。',
-      'Projects without a saved mode default to automatic polishing. Saved modes still apply. In normal rewrite mode (the default), the optional OpenAI style check uses your current question and draft as written. Gemini receives the selected draft, its question, any editing directions you give for this rewrite and, by default, up to two exchanges that preceded the draft.',
+      '未设置模式的项目默认自动润色，已保存的模式继续生效。自动润色使用普通模式（默认）并运行风格检查时，OpenAI 根据本轮问题和草稿原文判断要不要润色。润色整条回复时，Google 收到待改的答复、它所回答的问题，以及你这次提出的改写要求。默认还会附带这份答复之前最多 2 轮问答。发送的文字里如果有密钥或令牌，也会原样发出。',
+      'Projects without a saved mode default to automatic polishing. Saved modes still apply. For automatic polishing in Normal mode (the default), the optional OpenAI style check uses your current question and draft as written. For a whole reply, Gemini receives the selected draft, its question, any editing directions you give for this rewrite and, by default, up to two exchanges that preceded the draft. Any keys or tokens in the text are sent as written.',
       lang
     ),
     tr(
-      '如果你写了自己的润色提示词，插件会把它和草稿一起发给 Google。开了 OpenAI 检查的话，OpenAI 只在判断草稿要不要改时用到这段提示词。',
-      'If you set a custom polishing prompt, it is also sent to Google when rewriting. If the OpenAI style check is on, it also uses that prompt to decide whether the draft needs editing.',
+      '如果你写了自己的润色提示词，插件会把它和草稿一起发给 Google。要求只发送一段原文时，Gemini 只收到这段文字，使用内置 Turbo 提示词。开启 OpenAI 风格检查时，OpenAI 也会使用项目提示词判断整份草稿是否需要改写。',
+      'If you set a custom polishing prompt, it is also sent to Google when rewriting. If you ask to send only a passage, Gemini receives just that text with the built-in Turbo prompt. The optional OpenAI style check also uses the project prompt when checking a whole draft.',
       lang
     ),
     tr(
-      '想改触发时机，可以说「只在我要求时润色」或「关闭回复润色」。想跳过 OpenAI，可以说「这条用 Turbo」或「让 Gemini 重写上一条」。希望以后都这样，可以说「把这个项目的默认模式设成 Turbo」。',
-      'To change when polishing runs, say “Only polish when I ask” or “Turn off Codex Polish”. To skip OpenAI once, say “Use Turbo for this answer” or “Have Gemini rewrite your last reply”. To keep using Turbo, say “Make Turbo the default for this project”.',
+      '想改触发时机，可以说「只在我要求时润色」或「关闭回复润色」。主动要求润色或改写时，Turbo 会跳过 OpenAI。例如可以说「返回结果 polish」或「重写上一条」。想让自动润色也用 Turbo，可以说「把这个项目的默认模式设成 Turbo」。',
+      'To change when polishing runs, say “Only polish when I ask” or “Turn off Codex Polish”. Asking for a polish or rewrite uses Turbo and skips OpenAI. Try “Polish the result” or “Rewrite your last answer”. To use Turbo for automatic polishing as well, say “Make Turbo the default for this project”.',
       lang
     )
   ];
@@ -881,8 +881,8 @@ function readChecks(cwd = process.cwd()) {
 function saveSetupMode(mode, cwd) {
   const result = projectPreference(['set-rewrite-mode', mode], cwd);
   if (result.status !== 0 || result.error || JSON.parse(result.stdout).rewrite_mode !== mode)
-    throw fail(`插件已安装，但没能将改写模式保存到 ${cwd}。请检查项目的写入权限。`,
-      `The plugin is installed, but the rewrite mode could not be saved in ${cwd}. Check the project’s write permissions.`);
+    throw fail(`插件已安装，但没能将自动润色的改写模式保存到 ${cwd}。请检查项目的写入权限。`,
+      `The plugin is installed, but the automatic rewrite mode could not be saved in ${cwd}. Check the project’s write permissions.`);
 }
 async function runBootstrap(script, target, options) {
   const proc = spawn('/bin/bash', [script, '--dir', target], { ...options, stdio: 'ignore', detached: true });
@@ -970,34 +970,59 @@ export async function installAgy() {
   });
 }
 function decisionsSummary(checks, lang) {
+  if (checks.mode === 'manual' || checks.mode === 'off') {
+    const current = checks.mode === 'manual'
+      ? tr('点名润色会用 Turbo，直接交给 Gemini。', 'Requested rewrites use Turbo and go straight to Gemini.', lang)
+      : tr('项目已关闭润色。', 'Polishing is off for this project.', lang);
+    if (checks.rewrite_mode === 'normal' && checks.decisions_mode === 'auto' && checks.openai_key_configured && !checks.openai_key_malformed)
+      return current + tr('切回自动润色后，Normal 会使用已配置的 OpenAI Decisions。',
+        ' Switching to automatic polishing will use your configured OpenAI Decisions check in Normal mode.', lang);
+    return current;
+  }
   if (checks.rewrite_mode === 'turbo')
     return tr(
-      'Turbo 会跳过 OpenAI 检查，把每份符合条件的草稿直接交给 Gemini。可在项目里说「恢复普通模式」。',
-      'Turbo skips the OpenAI check and sends each eligible draft directly to Gemini. Say “Switch back to normal mode” to restore the normal workflow.',
+      '自动润色时，Turbo 会跳过 OpenAI 检查，把草稿直接交给 Gemini。可在项目里说「恢复普通模式」。',
+      'For automatic polishing, Turbo skips the OpenAI check and sends each draft directly to Gemini. Say “Switch back to normal mode” to restore Normal for automatic polishing.',
       lang
     );
   if (checks.decisions_mode === 'off')
     return tr(
-      'OpenAI 风格检查已关闭，草稿会直接交给 Gemini 润色。',
-      'The OpenAI style check is off. Drafts go straight to Gemini.',
+      '自动润色的 OpenAI 风格检查已关闭，草稿会直接交给 Gemini 润色。',
+      'The OpenAI style check for automatic polishing is off. Drafts go straight to Gemini.',
       lang
     );
   if (checks.openai_key_malformed)
-    return tr('OPENAI_API_KEY 格式有误，草稿将直接交给 Gemini。要启用 OpenAI 检查，请重新复制密钥。',
-      'OPENAI_API_KEY has an invalid format. Drafts go straight to Gemini. Copy the key again to enable the OpenAI check.', lang);
+    return tr('OPENAI_API_KEY 格式有误，自动润色时草稿将直接交给 Gemini。要启用 OpenAI 检查，请重新复制密钥。',
+      'OPENAI_API_KEY has an invalid format. Drafts go straight to Gemini during automatic polishing. Copy the key again to enable the OpenAI check.', lang);
   if (checks.decisions_enabled)
     return tr(
-      '已启用 OpenAI Decisions。OpenAI 只用本轮问题、草稿和已设置的自定义润色提示词判断是否需要改写。',
-      'OpenAI Decisions is on. OpenAI uses only the current question, draft, and any custom polishing prompt to decide whether to rewrite.',
+      '自动润色已启用 OpenAI Decisions。OpenAI 只用本轮问题、草稿和已设置的自定义润色提示词判断是否需要改写。',
+      'OpenAI Decisions is on for automatic polishing. OpenAI uses only the current question, draft, and any custom polishing prompt to decide whether to rewrite.',
       lang
     );
   return tr(
-    '草稿会直接交给 Gemini 润色。想先让 OpenAI 判断草稿是否需要润色，可以在 Codex 里说「配置 OpenAI Decisions」。',
-    'Drafts go straight to Gemini. To have OpenAI check whether they need editing first, tell Codex “Set up OpenAI Decisions”.',
+    '自动润色时，草稿会直接交给 Gemini。想先让 OpenAI 判断草稿是否需要润色，可以在 Codex 里说「配置 OpenAI Decisions」。',
+    'Drafts go straight to Gemini during automatic polishing. To have OpenAI check whether they need editing first, tell Codex “Set up OpenAI Decisions”.',
     lang
   );
 }
 const issues = {
+  mode_invalid: [
+    '项目的 codex-polish.mode 无效。请设为 auto、manual 或 off。',
+    'Invalid codex-polish.mode. Choose auto, manual or off.'
+  ],
+  history_turns_invalid: [
+    '项目的 codex-polish.history-turns 无效。请填写 0 到 10 的整数。',
+    'Invalid codex-polish.history-turns. Choose a whole number from 0 to 10.'
+  ],
+  decisions_mode_invalid: [
+    '项目的 codex-polish.decisions 无效。请设为 auto（有密钥时使用 OpenAI）或 off。',
+    'Invalid codex-polish.decisions. Choose auto (use OpenAI when a key is available) or off.'
+  ],
+  editor_prompt_link_unbound: [
+    '项目的提示词链接尚未绑定。要使用该文件，请在 Codex 里指定它为本项目的润色提示词文件。',
+    'The prompt link has no saved target for this project. Tell Codex which file to use as the project polishing prompt.'
+  ],
   gemini_key_missing: [
     '你选了用 API 密钥登录 Google。去 Google AI Studio 点 Create API key，然后把密钥设为 GEMINI_API_KEY。',
     'You chose Google API key sign-in. Select Create API key in Google AI Studio, then set GEMINI_API_KEY.',
@@ -1023,8 +1048,8 @@ const issues = {
     'Unset CODEX_POLISH_AGY_AUTH to use the default Antigravity sign-in (existing-session).'
   ],
   rewrite_mode_invalid: [
-    '这个项目的改写模式无效。请在 Codex 里说「恢复普通模式」或「切换到 Turbo 模式」。',
-    'The project rewrite mode is invalid. Ask Codex to “Switch back to normal mode” or “Switch to turbo mode”.'
+    '这个项目的自动润色改写模式无效。点名润色仍使用 Turbo。要恢复自动润色，请在 Codex 里说「恢复普通模式」或「切换到 Turbo 模式」。',
+    'The automatic rewrite mode is invalid. Explicit requests still use Turbo. To restore automatic polishing, ask Codex to “Switch back to normal mode” or “Switch to turbo mode”.'
   ],
   gemini_model_invalid: [
     '这个项目的改写模型设置无效。请在 Codex 里说「选择改写模型」。',
@@ -1054,7 +1079,7 @@ export function configurationSteps(checks) {
     [issues, pages] = setupIssues(checks, lang);
   const lines = [
     issues.length
-      ? tr('开始改写前，先完成下面的设置。', 'Finish these steps before your first rewrite.', lang)
+      ? tr('以下本地设置需要处理。', 'The following local settings need attention.', lang)
       : tr('本地配置检查都通过了。', 'Your local setup checks out.', lang),
     ...issues
   ];
@@ -1074,7 +1099,7 @@ export function configurationSteps(checks) {
         lang
       )
     );
-  if (checks.rewrite_mode) lines.push(decisionsSummary(checks, lang));
+  if (checks.rewrite_mode && checks.decisions_mode !== null) lines.push(decisionsSummary(checks, lang));
   lines.push(
     tr(
       '在项目里新开一个 Codex 对话，说「配置回复润色」就能查看或修改设置。',
@@ -1096,7 +1121,7 @@ export function configurationSteps(checks) {
       'Rewriting is off in this project. To try it, say “Switch to on-demand rewrites”.'
     ]
   };
-  lines.push(tr(...examples[checks.mode], lang));
+  if (examples[checks.mode]) lines.push(tr(...examples[checks.mode], lang));
   return [lines, pages];
 }
 async function ask(prompt) {
@@ -1148,7 +1173,9 @@ async function chooseOption(title, options, lang, input = process.stdin, output 
   function draw() {
     for (const [index, option] of options.entries()) {
       clearLine(output, 0);
-      output.write((selected === index ? '❯ ● ' : '  ○ ') + option.name);
+      // A provider label is display text, including any literal terminal controls.
+      const label = option.name.replace(/\p{Cc}/gu, char => '\\u' + char.charCodeAt(0).toString(16).padStart(4, '0'));
+      output.write((selected === index ? '❯ ● ' : '  ○ ') + label);
       if (index < options.length - 1) output.write('\r\n');
     }
   }
@@ -1186,8 +1213,8 @@ async function chooseOption(title, options, lang, input = process.stdin, output 
 }
 export function chooseSetupMode(project, lang, input, output) {
   const title = tr(
-    `为这个项目选择改写模式：${project}\nNormal（默认）：按需润色，可先用 OpenAI 判断。\nTurbo：跳过 OpenAI，将每条可润色的回复直接交给 Gemini。`,
-    `Choose a rewrite mode for ${project}\nNormal (default): Polish as needed, with an optional OpenAI check.\nTurbo: Skip OpenAI and send every eligible reply directly to Gemini.`, lang);
+    `为这个项目选择自动润色时的改写模式：${project}\nNormal（默认）：可选 OpenAI 检查，未启用时由 Gemini 按需润色并可保留清晰原稿。\nTurbo：跳过 OpenAI 检查，直接请 Gemini 改写草稿。`,
+    `Choose the automatic rewrite mode for ${project}\nNormal (default): Optional OpenAI check, otherwise Gemini polishes and can keep clear text.\nTurbo: Skip OpenAI and have Gemini rewrite the draft directly.`, lang);
   return chooseOption(title, [{ id: 'normal', name: 'Normal' }, { id: 'turbo', name: 'Turbo' }], lang, input, output);
 }
 
@@ -1198,11 +1225,11 @@ export async function discoverSetupModels(checks) {
     const task = [
       'Discover the Gemini models available to this account. This is a metadata lookup. Do not send a prompt to Gemini.',
       'Use your own execution tools to directly hold and drive the official agy acp process. Do not run an ACP client script.',
-      'Follow the startup, authentication, session/new (id 3) and cleanup steps in ' + JSON.stringify(join(skill, 'references/acp.md')) + '.',
-      'Use the current temporary directory as the private workspace, and the bundled default editor role.',
+      'Follow the catalog steps in ' + JSON.stringify(join(skill, 'references/acp.md')) + '.',
       'The official agy executable is ' + JSON.stringify(checks.agy_path) + ' and the authentication mode is ' + JSON.stringify(checks.google_auth_method) + '.',
-      'When starting the official process, pipe its stdout through tee acp-frames.jsonl in the current working directory.',
-      'The installer reads the actual session/new response from that file. Never create or modify that file yourself, delete it, or write any model list. Close the session and stop after session/new. If the lookup fails, stop.'
+      'Run the workspace preparer ' + JSON.stringify(join(skill, 'scripts/acp_workspace.mjs')) +
+        ' using node, with --catalog, the supplied --agy-path and --auth, and --catalog-log ' + JSON.stringify(join(workspace, 'acp-frames.jsonl')) + '.',
+      'Execute its start options unchanged. Execute each send.exec in your host tools, then read the same session for the next event. On catalog, finish and stop. The passive decoder records the actual session/new response for the installer. Do not write the catalog file yourself. If lookup fails, stop.'
     ].join('\n');
     const child = spawn('codex', ['exec', '--ephemeral', '--skip-git-repo-check', '-C', workspace,
       '-c', 'plugins."codex-polish@codex-polish-local".enabled=false', task], { cwd: workspace, stdio: 'ignore' });
@@ -1282,8 +1309,8 @@ export async function showSetupGuidance({
     if (selected) {
       await saveRewriteMode(selected, project);
       checks = check(project);
-      console.log(tr(`已为这个项目保存 ${selected === 'turbo' ? 'Turbo' : 'Normal'} 模式。`,
-        `Saved ${selected === 'turbo' ? 'Turbo' : 'Normal'} mode for this project.`, lang));
+      console.log(tr(`已为这个项目的自动润色保存 ${selected === 'turbo' ? 'Turbo' : 'Normal'} 模式。`,
+        `Saved ${selected === 'turbo' ? 'Turbo' : 'Normal'} for automatic polishing in this project.`, lang));
     }
   }
   if (installDependency && checks.blockers.includes('agy_unsupported')) {
@@ -1360,22 +1387,22 @@ export function doctor(checks = readChecks()) {
   const lang = checks.ui_language,
     modes = { manual: ['只在我要求时', 'only when asked'], auto: ['自动改写', 'automatic'], off: ['已关闭', 'off'] };
   const lines = [
-    tr('润色时机：', 'When to polish: ', lang) + tr(...modes[checks.mode], lang),
-    tr('改写模式：', 'Rewrite mode: ', lang) + (checks.rewrite_mode || tr('设置无效', 'invalid setting', lang)),
+    tr('润色时机：', 'When to polish: ', lang) + tr(...(modes[checks.mode] ?? ['设置无效', 'invalid setting']), lang),
+    tr('自动润色的改写模式：', 'Automatic rewrite mode: ', lang) + (checks.rewrite_mode || tr('设置无效', 'invalid setting', lang)),
     tr('项目改写模型：', 'Rewrite model: ', lang) + (checks.gemini_model || tr('设置无效', 'invalid setting', lang))
   ];
-  if (checks.rewrite_mode) lines.push(decisionsSummary(checks, lang));
+  if (checks.rewrite_mode && checks.decisions_mode !== null) lines.push(decisionsSummary(checks, lang));
   const turns = checks.history_turns;
-  lines.push(
+  if (turns !== null) lines.push(
     turns
       ? tr(
-          `Gemini 改写时最多带上最近 ${turns} 轮完整问答，本轮问题和草稿另算。`,
-          `Gemini receives up to ${turns} earlier completed exchanges when it rewrites, plus the current question and draft.`,
+          `对于整条回复，Gemini 改写时最多带上最近 ${turns} 轮完整问答，原问题和草稿另算。`,
+          `For a whole reply, Gemini receives up to ${turns} earlier completed exchanges along with the original question and draft.`,
           lang
         )
       : tr(
           '历史记录设为 0，Gemini 改写时不附带以前的问答。',
-          'History is off. Gemini rewrites use only the current turn and any custom polishing prompt.',
+          'History is off. Gemini rewrites omit additional exchanges.',
           lang
         )
   );
@@ -1415,8 +1442,8 @@ export function doctor(checks = readChecks()) {
   if (checks.blockers.length)
     lines.unshift(
       tr(
-        '现在会先原样保留草稿。完成下面的设置后就可以使用改写了。',
-        'Codex Polish is leaving your drafts as-is for now. Finish these steps, then try again.',
+        '以下设置需要处理。',
+        'The following settings need attention.',
         lang
       ),
       ...setupIssues(checks, lang)[0]

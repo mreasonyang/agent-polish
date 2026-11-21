@@ -18,7 +18,7 @@ function tool(command) {
   }
   return { command, args: [] };
 }
-const canRun = ['codex', 'npm', 'npx', 'tar'].every(name => {
+const canRun = ['codex', 'npm', 'npx', ...(windows ? [] : ['tar'])].every(name => {
   const bin = tool(name);
   return bin && spawnSync(bin.command, [...bin.args, '--version'], { stdio: 'ignore' }).status === 0;
 });
@@ -28,7 +28,7 @@ const exampleEn = 'Explain what DNS does in one sentence, then polish your reply
 const exampleZh = '用一句话解释 DNS，再把你的回复润色一下。';
 
 function isolated(t) {
-  const base = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), 'codex-polish-native-')));
+  const base = fs.realpathSync.native(fs.mkdtempSync(join(tmpdir(), 'codex-polish-native-')));
   t.after(() => fs.rmSync(base, { recursive: true, force: true }));
   const home = join(base, 'Home'),
     profile = join(base, 'Test Profile');
@@ -77,9 +77,15 @@ nativeTest(
     const [pack] = JSON.parse(
       invoke('npm', ['pack', '--ignore-scripts', '--json', '--pack-destination', base], { cwd: ROOT })
     );
-    invoke('tar', ['-xzf', pack.filename]);
-    const download = join(base, '下载的插件');
-    fs.renameSync(join(base, 'package'), download);
+    const extraction = join(base, '下载的插件');
+    let download = extraction;
+    if (windows) {
+      invoke('npm', ['install', '--no-save', '--ignore-scripts', '--prefix', extraction, join(base, pack.filename)]);
+      download = join(extraction, 'node_modules', pack.name);
+    } else {
+      invoke('tar', ['-xzf', pack.filename]);
+      fs.renameSync(join(base, 'package'), download);
+    }
     const script = join(download, 'scripts/install.mjs');
     env.LC_ALL = 'zh_CN.UTF-8';
     const chinese = windows ? invoke(process.execPath, [script, 'setup']) : invoke(join(download, '安装回复润色.command'), []);

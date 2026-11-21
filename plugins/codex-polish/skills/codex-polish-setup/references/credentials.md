@@ -63,6 +63,13 @@ export CODEX_POLISH_AGY_AUTH=gemini-api-key
 printf 'Gemini API key（隐藏输入）：'; IFS= read -r -s GEMINI_API_KEY </dev/tty && export GEMINI_API_KEY; printf '\n'
 ```
 
+Windows PowerShell 用户在启动 Codex 的同一终端运行下面这两条命令，在隐藏提示处粘贴密钥：
+
+```powershell
+$env:CODEX_POLISH_AGY_AUTH = 'gemini-api-key'
+$env:GEMINI_API_KEY = [System.Net.NetworkCredential]::new('', (Read-Host 'Gemini API key' -AsSecureString)).Password
+```
+
 用企业身份时，设置 `CODEX_POLISH_AGY_AUTH=agent-platform`，并由管理员给运行环境配好 Application Default Credentials（ADC）、Google Cloud 项目和区域。这三种方式都通过同一个官方 `agy acp` 进程提交改写。[Antigravity ACP 认证](https://antigravity.google/docs/ide/extensions/acp#authentication)
 
 更换身份后，新开项目聊天，说 **“选择改写模型”**。成功列出模型表示当前账号已连通，这一步只读取模型列表。

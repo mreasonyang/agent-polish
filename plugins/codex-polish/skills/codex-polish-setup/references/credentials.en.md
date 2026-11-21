@@ -53,7 +53,7 @@ Only use one of these if you want a specific Google identity. Each uses the same
 | Identity | How to set up the environment that launches Codex |
 | --- | --- |
 | Existing sign-in (default) | Leave `CODEX_POLISH_AGY_AUTH` unset, or set it to `existing-session`. Open `agy` if the account needs to sign in again. |
-| Google AI Studio API key | Set `CODEX_POLISH_AGY_AUTH=gemini-api-key` and pass `GEMINI_API_KEY` through a password manager or a hidden terminal prompt as above. Create the key in Google AI Studio. [Google AI Studio keys](https://aistudio.google.com/apikey) |
+| Google AI Studio API key | Set `CODEX_POLISH_AGY_AUTH=gemini-api-key` (`$env:CODEX_POLISH_AGY_AUTH = 'gemini-api-key'` in Windows PowerShell) and pass `GEMINI_API_KEY` through a password manager or a hidden terminal prompt as above (`$env:GEMINI_API_KEY = [System.Net.NetworkCredential]::new('', (Read-Host 'Gemini API key' -AsSecureString)).Password` in PowerShell). Create the key in Google AI Studio. [Google AI Studio keys](https://aistudio.google.com/apikey) |
 | Managed enterprise identity | Set `CODEX_POLISH_AGY_AUTH=agent-platform`. Your admin can set up Google Application Default Credentials, the project, and the location for that runtime. [Google’s ACP authentication guide](https://antigravity.google/docs/ide/extensions/acp#authentication) |
 
 After changing the runtime environment, start a fresh session and say **“Choose a rewrite model.”** A successful model lookup checks both the connection and access to that account’s models without sending a draft.

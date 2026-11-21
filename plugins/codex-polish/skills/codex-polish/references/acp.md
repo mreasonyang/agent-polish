@@ -26,7 +26,7 @@ node "<本技能>/scripts/acp_workspace.mjs" --cwd "<原项目>" --trigger "<aut
 | `error` | 保留原稿，按 `stage` 和 `reason` 说明失败在哪一步。若工具已报告沙箱限制联网或访问登录凭据，向用户说明这项限制。 |
 | `closed` | 官方会话已关闭。已取得的交付结果仍然有效。 |
 
-`send` 会依次提示初始化、按需认证、创建会话、按需选模。默认 `existing-session` 复用 `agy` 登录，显式 API 身份使用所选认证方法；思考档位沿用账号当前设置。遇到服务端的工具或权限请求，`send` 提供本次请求的拒绝响应。**每一帧都用本轮返回的宿主命令发送。对官方进程句柄，`write_stdin` 只做空读或发送 Ctrl-C。** 勿自行改用普通管道或终端输入，否则进程可能立即退出，或长文被终端截断。
+`send` 会依次提示初始化、按需认证、创建会话、按需选模。默认 `existing-session` 复用 `agy` 登录，显式 API 身份使用所选认证方法；思考档位沿用账号当前设置。遇到服务端的工具或权限请求，`send` 提供本次请求的拒绝响应。**每一帧都用本轮返回的宿主命令发送。对 `start` 进程句柄，`write_stdin` 只做空读；仅在 macOS 和 Linux 需要中断退出时才向 `start` 的终端句柄（`tty: true`）发送 Ctrl-C，切勿对 Windows 的非 TTY `start` 句柄发 Ctrl-C。** 勿自行改用普通管道或终端输入，否则进程可能立即退出，或长文被终端截断。
 
 ## 3. 提交改写
 
@@ -38,12 +38,12 @@ node "<本技能>/scripts/acp_workspace.mjs" --cwd "<原项目>" --trigger "<aut
 
 ## 4. 结束与交付
 
-读完最终 Markdown（含长回复的最后一页）就直接交付。宿主命令会自行回收子进程和本轮目录。**正常结束无需再调工具**。宿主报告句柄已经退出时，已收到的结果仍然有效。
+读完最终 Markdown（含长回复的最后一页）或收到 `catalog` 后，宿主命令会自行回收子进程和本轮目录。**正常进行到 `delivery`（或读完 `answer_pages` 最后一页）和 `catalog` 时无需再调工具或发中断**。宿主报告句柄已经退出时，已收到的结果仍然有效。
 
-若用户在生成时取消，Windows 上原样执行 `submit.cancel`。若进程仍在运行，再执行 `submit.stop`；等待建立会话期间可用最近的 `send.stop` 结束本轮。macOS 或 Linux 上有可用会话时先向 FIFO 发送一次 `{"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"<本轮 ACP sessionId>"}}`，随后结束进程。连接中断时只处理已确认的结果。
+若用户在生成时取消，Windows 上原样执行 `submit.cancel`，若进程仍在运行再执行 `submit.stop`（等待建立会话期间取消则执行最近的 `send.stop`，切勿对 Windows 非 TTY 句柄发 Ctrl-C）。macOS 或 Linux 上有可用会话时，先向准备脚本返回结果里的 `fifo` 路径写入一行 `{"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"<本轮 ACP sessionId>"}}`，再对 `start` 的终端句柄发送 Ctrl-C 结束进程。连接中断时只处理已确认的结果。
 
 ## 只看模型或检查连接
 
-使用 `node "<本技能>/scripts/acp_workspace.mjs" --catalog --agy-path "<agy_path>" --auth "<google_auth_method>"` 准备内置角色。仍然原样执行 `start` 和每条 `send.exec`。查询模型到 `catalog` 为止，连接测试可在初始化成功后结束，都不提交草稿。安装器会单独提供 `--catalog-log` 的绝对路径，以便核对真实返回的模型列表。
+使用 `node "<本技能>/scripts/acp_workspace.mjs" --catalog --agy-path "<agy_path>" --auth "<google_auth_method>"` 准备内置角色。仍然原样执行 `start` 和每条 `send.exec`，都不提交草稿。查询模型运行到 `catalog` 为止，收到 `catalog` 后进程与临时目录会自动回收（若返回 `catalog.finish` 也可执行以立即关闭会话）。若只测试 `initialize` 握手并在收到下一步提示后提前退出（未继续到 `catalog`），Windows 上用 `exec_command` 原样执行最近一条 `send.stop`，不要对非 TTY 的 `start` 句柄发 Ctrl-C；macOS 和 Linux 上对 `start` 的终端句柄发送 Ctrl-C 触发回收。安装器会单独提供 `--catalog-log` 的绝对路径，以便核对真实返回的模型列表。
 
 [Google ACP 与认证](https://antigravity.google/docs/ide/extensions/acp) · [ACP 传输](https://agentclientprotocol.com/protocol/v1/transports) · [会话配置](https://agentclientprotocol.com/protocol/v1/session-config-options) · [生成与取消](https://agentclientprotocol.com/protocol/v1/prompt-turn)

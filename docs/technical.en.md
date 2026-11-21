@@ -31,9 +31,15 @@ When `.codex/codex-polish.language` is `auto`, chat prompts match the user's cur
 In chat, say “Show the polishing prompt”, “Set this project's polishing prompt to: Lead with the conclusion, then give the evidence”, or “Restore the default polishing prompt”. You can also run these commands locally from the root of a source checkout. Replace `/path/to/project` with the target project directory. The setter saves standard input verbatim, including line breaks and surrounding spaces. The reader returns the effective `text` and its `source` (`default` or `custom`). With no custom prompt, the reader shows the project’s automatic mode prompt, and explicit requests use the built-in Turbo prompt. A custom prompt supplies Gemini’s editing role for Normal and Turbo. A request to send only the selected text uses the built-in Turbo role instead. The role file’s header configures the ACP session and tool access. Its body contains only that text.
 
 ```sh
-node plugins/codex-polish/hooks/preferences.mjs prompt --cwd /path/to/project
-node plugins/codex-polish/hooks/preferences.mjs set-prompt --cwd /path/to/project < my-prompt.md
-node plugins/codex-polish/hooks/preferences.mjs set-prompt --reset --cwd /path/to/project
+node plugins/codex-polish/hooks/preferences.mjs prompt --cwd "/path/to/project"
+node plugins/codex-polish/hooks/preferences.mjs set-prompt --cwd "/path/to/project" < "my-prompt.md"
+node plugins/codex-polish/hooks/preferences.mjs set-prompt --reset --cwd "/path/to/project"
+```
+
+To import a prompt file once in Windows PowerShell while preserving UTF-8 text, CRLF line endings, surrounding whitespace, and the presence or absence of a trailing newline, pass the file's raw bytes to `set-prompt` over standard input with Node:
+
+```powershell
+node -e "child_process.execFileSync(process.execPath, ['plugins/codex-polish/hooks/preferences.mjs', 'set-prompt', '--cwd', process.argv[1]], { input: fs.readFileSync(process.argv[2]), stdio: ['pipe', 'inherit', 'inherit'] })" "C:\path\to\project" "C:\path\to\my-prompt.md"
 ```
 
 You can edit the project prompt file directly or link it to a prompt tracked by Git in the same project. The setup command stores a relative reference for a tracked project file. On Windows this is a regular file, so the command works without permission to create symbolic links. Commit the link to share it across clones. To use a shared prompt elsewhere or an untracked file, name the file in chat or run `node plugins/codex-polish/hooks/preferences.mjs set-prompt --link /path/to/prompt.md --cwd /path/to/project`. The file must contain valid UTF-8 and at least one non-whitespace character. Replacing the prompt or restoring the default changes only the project link.

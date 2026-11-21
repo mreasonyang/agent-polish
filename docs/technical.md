@@ -31,9 +31,15 @@ Git 项目的设置保存在最近的仓库根目录的 `.codex/`。同一仓库
 可以在聊天中说“查看润色提示词”“把项目润色提示词设为：先写结论，再讲依据。”或“恢复默认润色提示词”。也可以在源码根目录执行下面的本地命令，将 `/path/to/project` 换成目标项目的路径。`set-prompt` 从标准输入逐字保存文本，包括换行和首尾空格。`prompt` 返回当前生效的文本 `text` 及其来源 `source`（`default` 或 `custom`）。没有自定义提示词时，该命令显示自动润色所选模式的内置提示词，点名润色时则使用 Turbo 的内置提示词。设定自定义提示词后，普通和 Turbo 模式都以 `text` 原文作为 Gemini 的角色提示词。明确要求只发送选中文字时，使用内置 Turbo 角色。角色文件头部配置 ACP 会话与工具权限，正文只有这段原文。
 
 ```sh
-node plugins/codex-polish/hooks/preferences.mjs prompt --cwd /path/to/project
-node plugins/codex-polish/hooks/preferences.mjs set-prompt --cwd /path/to/project < my-prompt.md
-node plugins/codex-polish/hooks/preferences.mjs set-prompt --reset --cwd /path/to/project
+node plugins/codex-polish/hooks/preferences.mjs prompt --cwd "/path/to/project"
+node plugins/codex-polish/hooks/preferences.mjs set-prompt --cwd "/path/to/project" < "my-prompt.md"
+node plugins/codex-polish/hooks/preferences.mjs set-prompt --reset --cwd "/path/to/project"
+```
+
+在 Windows PowerShell 中从文件一次性导入提示词时，用 Node 将文件原始字节直接传给 `set-prompt` 的标准输入，以完整保留 UTF-8 中文、CRLF、首尾空白以及末尾有无换行：
+
+```powershell
+node -e "child_process.execFileSync(process.execPath, ['plugins/codex-polish/hooks/preferences.mjs', 'set-prompt', '--cwd', process.argv[1]], { input: fs.readFileSync(process.argv[2]), stdio: ['pipe', 'inherit', 'inherit'] })" "C:\path\to\project" "C:\path\to\my-prompt.md"
 ```
 
 可以直接编辑项目提示词文件，也可以链接到同项目 Git 跟踪的提示词。设置命令为仓库内已跟踪的文件保存相对路径。Windows 使用普通文件记录该路径，无需创建符号链接的权限。提交后在其他克隆中也能使用。若要共用项目外的提示词，或使用未跟踪的文件，在聊天里指定那个文件，或运行 `node plugins/codex-polish/hooks/preferences.mjs set-prompt --link /path/to/prompt.md --cwd /path/to/project`。文件需为非空白 UTF-8 文本。改用文字或恢复默认只会替换或移除项目里的链接。

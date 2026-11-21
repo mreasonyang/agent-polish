@@ -2,6 +2,14 @@
 
 [中文使用说明](docs/README.zh-CN.md) · [English README](README.md)
 
+## 0.0.2
+
+- 终端工具截断 ACP 输出时，可以从原字节位置重读。确认 Gemini 模型和思考等级后，原稿只发送一次。
+- 卸载会清除旧版遗留的空锁文件和空插件目录。同一配置下的安装、更新和卸载仍然互斥。
+
+- When the terminal tool clips ACP output, Codex can reread it from the same byte offset. It sends the draft only once, after confirming the Gemini model and thinking level.
+- Uninstall removes empty lock files left by older versions and cleans up empty plugin directories. Install, update and uninstall operations for the same profile still run one at a time.
+
 ## 0.0.1
 
 - 首个正式版。运行 `npx @kyun.si/codex-polish setup` 安装；Windows PowerShell 请用 `npx.cmd @kyun.si/codex-polish setup`。

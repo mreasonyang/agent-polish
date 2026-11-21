@@ -90,7 +90,7 @@ Google 为默认模型 `gemini-4-hydrogen` 的 Gemini API 公布了 1,048,576 to
 
 ## 认证与故障处理
 
-Codex agent 用宿主进程工具直接启动官方 `agy acp`，向同一进程发送每条请求并读取响应。本地脚本只准备角色、组装原稿和解析已收到的回复。在 Windows 仅有终端工具时，agent 将 agy 的标准输出重定向到本轮专用的临时文件，以保留原始 JSON。正常退出或取消时会删除该文件；宿主被强制关闭可能留下它。[ACP 操作步骤](../plugins/codex-polish/skills/codex-polish/references/acp.md)
+Codex agent 用宿主进程工具直接启动官方 `agy acp` 并逐条发送请求。在 macOS、Linux 和 Windows 上，若宿主只提供终端工具，agent 会将 agy 的标准输出写入本轮专用的私有临时文件。读取时如果工具截掉了一页，agent 可以从同一位置重读。模型设置附带的可用命令列表会被忽略，agent 收到模型和思考等级的确认后才发送原稿。会话结束时会删除临时文件，宿主被强制关闭可能留下它。[ACP 操作步骤](../plugins/codex-polish/skills/codex-polish/references/acp.md)
 
 插件要求官方 Antigravity CLI（`agy`）1.2.1 或更高版本，先在 Codex 的 `PATH` 中查找 `agy`，再查 Google 的默认安装目录，Windows 上是 `%LOCALAPPDATA%\agy\bin`，macOS 和 Linux 上是 `~/.local/bin`。默认通过 `agy acp` 复用本机已有登录，无需配置 Gemini API 密钥，也从不调用 `agy -p`。旧配置如需沿用 AI Studio 密钥可设 `CODEX_POLISH_AGY_AUTH=gemini-api-key`，企业环境可设 `agent-platform`。凭据必须配置在运行 Codex 的机器和对应系统用户下，详见 [首次配置指南](../plugins/codex-polish/skills/codex-polish-setup/references/credentials.md)。
 

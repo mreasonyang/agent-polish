@@ -34,10 +34,16 @@ test('Codex owns the provider stdin and stdout across model selection and a long
   const processId = 'fixture';
   const ttyReady = 'fixture_ready';
   const draft = '中文 &\t𠮷\r\n'.repeat(2500);
-  const providerScript = 'import {Fixture,serveFixture} from ' + JSON.stringify(fixtureUrl) +
-    '; process.stderr.write("fixture_ready\\n"); await serveFixture(new Fixture("unchanged"));';
+  const providerScript = `import { Fixture, SESSION, serveFixture } from ${JSON.stringify(fixtureUrl)};
+    const fixture = new Fixture('unchanged');
+    process.stderr.write('fixture_ready\\n');
+    await serveFixture(fixture, frame => {
+      if (frame.id === 4) fixture.update(SESSION, 'available_commands_update', {
+        availableCommands: [{ name: 'example', description: 'x'.repeat(1024 * 1024 + 1) }]
+      });
+    });`;
   rpc(1, 'initialize', { clientInfo: { name: 'codex-polish-test', version: '1' }, capabilities: { experimentalApi: true } });
-  let stage = 'starting', sessionId, text = '', writeId = 20;
+  let stage = 'starting', sessionId, text = '', writeId = 20, promptCount = 0, commandListSeen = false;
   const stdout = new TextDecoder();
   let carry = '', stderr = '';
   function send(id, method, params) {
@@ -46,17 +52,23 @@ test('Codex owns the provider stdin and stdout across model selection and a long
   }
   function handle(frame) {
     assert.ok(!frame.error, JSON.stringify(frame.error));
-    if (frame.id === 1) {
+    if (frame.method === 'session/update' && frame.params.update.sessionUpdate === 'available_commands_update') {
+      assert.equal(frame.params.sessionId, sessionId);
+      assert.ok(frame.params.update.availableCommands[0].description.length > 1024 * 1024);
+      commandListSeen = true;
+    } else if (frame.id === 1) {
       assert.equal(frame.result.protocolVersion, 1);
       send(3, 'session/new', { cwd: dir, mcpServers: [] });
     } else if (frame.id === 3) {
       sessionId = frame.result.sessionId;
       send(4, 'session/set_config_option', { sessionId, configId: 'model', value: 'gemini-4-hydrogen' });
     } else if (frame.id === 4) {
+      assert.equal(commandListSeen, true);
       assert.equal(frame.result.configOptions.find(o => o.id === 'model').currentValue, 'gemini-4-hydrogen');
       send(5, 'session/set_config_option', { sessionId, configId: 'thought_level', value: 'medium' });
     } else if (frame.id === 5) {
       assert.equal(frame.result.configOptions.find(o => o.id === 'thought_level').currentValue, 'medium');
+      promptCount++;
       send(6, 'session/prompt', { sessionId, prompt: [{ type: 'text', text: JSON.stringify({ draft }) }] });
     } else if (frame.method === 'session/update' && frame.params.sessionId === sessionId &&
         frame.params.update.sessionUpdate === 'agent_message_chunk') {
@@ -74,7 +86,7 @@ test('Codex owns the provider stdin and stdout across model selection and a long
     if (message.id === 1) {
       server.stdin.write('{"method":"initialized"}\n');
       rpc(2, 'command/exec', { command: [process.execPath, '--input-type=module', '-e', providerScript],
-        cwd: dir, processId, tty: false, streamStdin: true, streamStdoutStderr: true, timeoutMs: 20_000,
+        cwd: dir, processId, tty: false, streamStdin: true, streamStdoutStderr: true, disableOutputCap: true, timeoutMs: 20_000,
         sandboxPolicy: { type: 'dangerFullAccess' } });
     } else if (message.method === 'command/exec/outputDelta') {
       assert.equal(message.params.processId, processId);
@@ -97,5 +109,6 @@ test('Codex owns the provider stdin and stdout across model selection and a long
     }
   }
   assert.equal(stage, 'complete', stderr);
+  assert.equal(promptCount, 1);
   assert.equal(carry + stdout.decode(), '');
 });

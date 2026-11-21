@@ -35,7 +35,7 @@
    - 为假时使用 `route=acp`，直接进入第 2 步。所有主动请求都走这条路径，不调用 `decision judge`。
    - 为真时才运行 `node …/hooks/preferences.mjs decision judge --cwd "<本轮工作目录>" --trigger auto --route decisions --rewrite-mode normal --model <check.gemini_model> --thinking-level <check.gemini_thinking_level>`。标准输入传原始 `question` 和 `draft`，OpenAI 只接收这两项和当前 Codex 配置保存的自定义提示词。概率大于 50% 时继续，平局保留原稿。返回 `action: "rewrite"` 时用返回的 `route` 进入第 2 步，包括 `reason: "decision_unavailable"`。返回 `action: "keep"` 且 `reason: "already_clear"` 时，走下文的 `--kept` 流程，只交付原稿。其他停止原因按实际情况使用 `--skipped`。
 2. 按 [ACP 操作步骤](references/acp.md)，由当前 Codex agent 在本轮临时目录直接启动官方 `agy acp`。用宿主工具持有该进程的输入输出，完成握手并确认已保存的模型和思考等级。插件的本地工具负责准备编辑角色、组装原稿或解析 agent 已收到的回复。
-3. agent 向该进程直接发送一次完整的 `session/prompt`。收到对应的 `end_turn` 后，将本轮原始输出和原稿交给 `acp_answer.mjs` 排版，并传本轮实际触发方式 `--trigger auto` 或 `--trigger explicit`。自动 Turbo 仍用 `auto`。中文常规展示用 `zh`，英文用 `en`。用户明确只看正文或要求严格输出格式时，给 `acp_answer.mjs` 加 `--body-only`。来源不明的可见原文标记为 `quoted`。结束本次进程并清理临时角色目录。若读取不完整或请求状态不明，保留原稿，同一轮不重发。
+3. agent 向该进程直接发送一次完整的 `session/prompt`。收到对应的 `end_turn` 后，将本轮原始输出和原稿交给 `acp_answer.mjs` 排版，并传本轮实际触发方式 `--trigger auto` 或 `--trigger explicit`。自动 Turbo 仍用 `auto`。中文常规展示用 `zh`，英文用 `en`。用户明确只看正文或要求严格输出格式时，给 `acp_answer.mjs` 加 `--body-only`。来源不明的可见原文标记为 `quoted`。工具输出被截断时，按 ACP 步骤从原位置重读。只有在无法恢复完整结果时才交付原稿。结束本次进程并清理临时目录。
 
 ## 在最终消息中交付
 
@@ -44,6 +44,6 @@
 - Gemini 改动文字时，直接从改稿正文开始。底部的“Gemini 改写 · 查看 GPT 原稿”或“Rewritten by Gemini · View original GPT draft”可展开原稿。选段或可见引文则用“Gemini 改写 · 查看原文”或“Rewritten by Gemini · View original text”。
 - Gemini 原样返回时，自动触发只显示原稿。主动请求则显示一份原稿，并附一句 `Gemini 返回了原稿。` 或 `Gemini returned the original draft.`。选段或引文相应使用 `Gemini 返回了原文。` 或 `Gemini returned the original text.`。这些句子按普通文本显示。
 - Decisions 返回 `already_clear` 时，运行 `node …/scripts/format_reply.mjs --render --kept --cwd "<本轮工作目录>"`，输入 `{draft}`。原样交付 stdout。此命令保留可用的原稿来源记录，只输出原稿。
-- 发送前因故停止或 ACP 未能返回完整正文时，用 `node …/scripts/format_reply.mjs --render --skipped --cwd "<本轮工作目录>"`，输入 `{draft, reason, display_language}`。用显示语言把已知原因写成一句独立的话，例如“这次没能调用 Gemini，下面是原稿。”工具先显示这句话，再显示原稿。若排版工具也不可用，按相同格式交付。
+- 失败时用 `node …/scripts/format_reply.mjs --render --skipped --cwd "<本轮工作目录>"`，输入 `{draft, reason, display_language}`。按实际进度说明原因。例如，发送前无法确认模型时说“没能确认 Gemini 的模型设置，原稿尚未发送。”已提交但未收到完整结果时说“已提交给 Gemini，但没收到完整改稿。”发送状态不明时说明无法确认是否送达。工具先显示这句话，再显示原稿。若排版工具也不可用，按相同格式交付。
 
 按轮次取原稿时，给排版命令加 `--turns-back N` 并传 `question`。两种选区和直接引用的可见原文加 `--selection`。用户指定严格格式或只看正文时，成功改写用 `acp_answer.mjs --body-only`；直接调用 `format_reply.mjs` 时省略 `display_language`。用户取消就结束，要求变更时按最新要求处理。同一轮改写只发送一次。

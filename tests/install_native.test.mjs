@@ -113,6 +113,7 @@ nativeTest(
     checkInstallMessage(invoke(process.execPath, [script, 'update']), pack.version, /更新/, 'zh');
     assert.doesNotMatch(chinese, /GEMINI_API_KEY|aistudio.google.com/);
     assert.match(invoke(process.execPath, [script, 'uninstall']), /已卸载/);
+    assert.equal(fs.existsSync(join(profile, NAME)), false);
     env.LC_ALL = 'en_US.UTF-8';
     const englishSetup = () => windows ? invoke(process.execPath, [script, 'setup']) : invoke(join(download, 'Install Codex Polish.command'), []);
     checkInstallMessage(englishSetup(), pack.version, /\binstalled\b/i, 'en');
@@ -172,9 +173,34 @@ nativeTest(
     );
     assert.deepEqual(rows(), []);
     assert.equal(snapshot(), undefined);
+    assert.equal(fs.existsSync(join(profile, NAME)), false);
     for (const p of [first, changed, cache]) assert.ok(!fs.existsSync(p), p);
   }
 );
+nativeTest('uninstall cleans 0.0.1 locks after deregistration, preserves agy and can be repeated', t => {
+  const { profile, env, local } = isolated(t);
+  const pluginHome = join(profile, NAME);
+  const sources = join(pluginHome, 'sources');
+  fs.mkdirSync(sources, { recursive: true });
+  fs.writeFileSync(join(sources, '.installer.sqlite'), '');
+  const agyDir = windows ? join(env.LOCALAPPDATA, 'agy', 'bin') : join(env.HOME, '.local', 'bin');
+  const agy = join(agyDir, windows ? 'agy.exe' : 'agy');
+  const agyLock = join(agyDir, '.codex-polish-agy.sqlite');
+  fs.mkdirSync(agyDir, { recursive: true });
+  fs.writeFileSync(agy, 'independently installed CLI', { mode: 0o755 });
+  fs.writeFileSync(agyLock, '');
+  const unrelated = join(profile, 'other-plugin', 'notes.txt');
+  fs.mkdirSync(dirname(unrelated));
+  fs.writeFileSync(unrelated, 'keep me');
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    assert.match(local('uninstall'), /uninstalled/i);
+    assert.equal(fs.existsSync(pluginHome), false);
+    assert.equal(fs.existsSync(agyLock), false);
+    assert.equal(fs.readFileSync(agy, 'utf8'), 'independently installed CLI');
+    assert.equal(fs.readFileSync(unrelated, 'utf8'), 'keep me');
+  }
+});
 nativeTest('settings are shared across directories and uninstall removes all plugin preferences', (t) => {
   const { base, profile, env, invoke, snapshot, local } = isolated(t);
   env.OPENAI_API_KEY = 'unrelated-key-from-another-tool';
@@ -220,7 +246,8 @@ nativeTest('settings are shared across directories and uninstall removes all plu
   ];
   for (const file of removed) assert.ok(fs.existsSync(file), file);
   fs.mkdirSync(join(first, '.codex'));
-  const unrelated = [join(first, '.codex', 'instructions.md'), join(settings, 'my notes')];
+  const sources = join(profile, NAME, 'sources');
+  const unrelated = [join(first, '.codex', 'instructions.md'), join(settings, 'my notes'), join(sources, 'my notes')];
   for (const file of unrelated) fs.writeFileSync(file, 'keep me');
   const ledger = join(profile, 'codex-polish', 'owned-settings.sqlite');
   assert.equal(fs.existsSync(ledger), false);
@@ -228,6 +255,7 @@ nativeTest('settings are shared across directories and uninstall removes all plu
   for (let attempt = 0; attempt < 2; attempt++) {
     assert.match(local('uninstall'), attempt === 0 ? /已卸载/ : /uninstalled/i);
     assert.equal(fs.existsSync(join(profile, 'codex-polish', 'credentials')), false);
+    assert.deepEqual(fs.readdirSync(sources), ['my notes']);
     for (const file of removed) assert.equal(fs.existsSync(file), false, file);
     for (const file of unrelated) assert.equal(fs.readFileSync(file, 'utf8'), 'keep me');
   }
@@ -365,8 +393,9 @@ for (const [stage, action] of [
     fs.unlinkSync(join(product, 'retired-file'));
     fs.writeFileSync(join(product, 'revision'), 'updated');
     install('update', stage);
+    const pluginHome = join(profile, NAME);
     const journals = () =>
-      fs.readdirSync(join(profile,'codex-polish'), { recursive: true }).filter((path) => path.endsWith('.pending-update.json'));
+      fs.readdirSync(pluginHome, { recursive: true }).filter((path) => path.endsWith('.pending-update.json'));
     assert.equal(journals().length, 1);
     let version = receipt.version;
     if (action === 'update') {
@@ -375,13 +404,14 @@ for (const [stage, action] of [
       fs.writeFileSync(manifest, JSON.stringify({ ...JSON.parse(fs.readFileSync(manifest)), version }));
     }
     install(action);
-    assert.equal(journals().length, 0);
     assert.ok(!fs.existsSync(join(profile, 'codex-polish-backups')), 'intact pre- and post-update caches need no backup');
     if (action === 'uninstall') {
+      assert.equal(fs.existsSync(pluginHome), false);
       assert.deepEqual(rows(), []);
       assert.ok(!fs.existsSync(receipt.installedPath));
       assert.ok(!fs.readFileSync(join(profile, 'config.toml'), 'utf8').includes(PLUGIN_ID));
     } else {
+      assert.equal(journals().length, 0);
       assert.deepEqual(
         rows().map((r) => [r.pluginId, r.version, r.enabled]),
         [[PLUGIN_ID, version, false]]

@@ -1,4 +1,4 @@
-// Stage only the editor role. The Codex agent owns the provider process and its streams.
+// Prepare private files for the editor role and terminal output. The agent owns the provider.
 import fs from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join } from 'node:path';
@@ -11,9 +11,10 @@ import { editorRole } from './editor_role.mjs';
 const roleDirectory = '.agents/agents/codex-polish-editor';
 const roleFile = roleDirectory + '/agent.md';
 const roleDirectories = ['.agents', '.agents/agents', roleDirectory];
-const windowsOutput = 'provider-output.jsonl';
+const outputFile = 'provider-output.jsonl';
+const maxPageBytes = 8192;
 const windows = process.platform === 'win32';
-const entries = ['.', ...roleDirectories, roleFile, ...(windows ? [windowsOutput] : [])];
+const entries = ['.', ...roleDirectories, roleFile, outputFile];
 const stockRole = new URL('../references/codex-polish-editor.md', import.meta.url);
 
 function fileId(stat) {
@@ -49,7 +50,7 @@ function removeOwnedEntries(workspace, owners) {
       try {
         process.chdir(dirname(path));
         if (identity('.') !== parent || identity(basename(path)) !== owners[entries.indexOf(name)]) continue;
-        if (name === roleFile || name === windowsOutput) fs.unlinkSync(basename(path));
+        if (name === roleFile || name === outputFile) fs.unlinkSync(basename(path));
         else fs.rmdirSync(basename(path));
       } catch (error) {
         if (!['ENOENT', 'ENOTDIR', 'ELOOP', 'ENOTEMPTY', 'EEXIST'].includes(error.code)) throw error;
@@ -70,19 +71,19 @@ export function dispose(workspace, cleanupToken) {
   removeOwnedEntries(workspace, recordedOwners(cleanupToken));
 }
 
-// The terminal on Windows draws a screen. Read the provider's redirected UTF-8 bytes
-// from its private regular output file without opening or writing a provider stream.
-export function readOutput(workspace, cleanupToken, offset) {
-  if (!windows || !Number.isSafeInteger(offset) || offset < 0) throw Error('invalid_output_offset');
+// Positional reads let the host retry a clipped tool result at the same byte offset.
+export function readOutput(workspace, cleanupToken, offset, pageBytes = maxPageBytes) {
+  if (!Number.isSafeInteger(offset) || offset < 0) throw Error('invalid_output_offset');
+  if (!Number.isInteger(pageBytes) || pageBytes < 4 || pageBytes > maxPageBytes) throw Error('invalid_page_size');
   checkLocation(workspace);
   const owners = recordedOwners(cleanupToken);
   if (identity(workspace) !== owners[0]) throw Error('workspace_changed');
-  const fd = openRegular(join(workspace, windowsOutput));
+  const fd = openRegular(join(workspace, outputFile));
   try {
     const info = fs.fstatSync(fd, { bigint: true });
-    if (fileId(info) !== owners[entries.indexOf(windowsOutput)] || info.nlink !== 1n || BigInt(offset) > info.size)
+    if (fileId(info) !== owners[entries.indexOf(outputFile)] || info.nlink !== 1n || BigInt(offset) > info.size)
       throw Error('output_changed');
-    const bytes = Buffer.alloc(8192);
+    const bytes = Buffer.alloc(pageBytes);
     const count = fs.readSync(fd, bytes, 0, bytes.length, offset);
     // The next call rereads an incomplete final UTF-8 character.
     const text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes.subarray(0, count), { stream: true });
@@ -115,8 +116,8 @@ export function prepareWorkspace({ cwd, trigger, selectionOnly = false, catalog 
       owners.push(identity(path));
     }
     const editor_role_file = createFile(roleFile, role);
-    const output = windows ? { output_file: createFile(windowsOutput) } : {};
-    return { workspace, editor_role_file, ...output, cleanup_token: owners.join(',') };
+    const output_file = createFile(outputFile);
+    return { workspace, editor_role_file, output_file, cleanup_token: owners.join(',') };
   } catch (error) {
     removeOwnedEntries(workspace, owners);
     throw error;
@@ -127,8 +128,10 @@ if (isMain(import.meta.url)) {
   try {
     if (process.argv[2] === '--dispose' && process.argv.length === 5) {
       dispose(process.argv[3], process.argv[4]);
-    } else if (process.argv[2] === '--read-output' && process.argv.length === 6 && /^\d+$/.test(process.argv[5])) {
-      console.log(JSON.stringify(readOutput(process.argv[3], process.argv[4], Number(process.argv[5]))));
+    } else if (process.argv[2] === '--read-output') {
+      const [workspace, token, ...numbers] = process.argv.slice(3);
+      if (numbers.length < 1 || numbers.length > 2 || !numbers.every(value => /^\d+$/.test(value))) throw Error('invalid_options');
+      console.log(JSON.stringify(readOutput(workspace, token, ...numbers.map(Number))));
     } else {
       const { values } = parseArgs({ options: {
         cwd: { type: 'string' }, trigger: { type: 'string' }, 'selection-only': { type: 'boolean' }, catalog: { type: 'boolean' },

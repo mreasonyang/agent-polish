@@ -5,14 +5,15 @@ import { basename, dirname, isAbsolute, join, normalize, resolve } from 'node:pa
 import { homedir, tmpdir } from 'node:os';
 import { createHash, randomUUID } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
-import { on } from 'node:events';
+import { on, once } from 'node:events';
+import { createServer } from 'node:net';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { clearLine, createInterface, cursorTo, emitKeypressEvents, moveCursor } from 'node:readline';
 import { createInterface as createPrompt } from 'node:readline/promises';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { isDeepStrictEqual } from 'node:util';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { executable, windows, agyDirectory, windowsSystemTool, openRegular, sameEntry } from '../plugins/codex-polish/hooks/platform.mjs';
 import { language, languageSettings, tr } from '../plugins/codex-polish/hooks/ui_locale.mjs';
 import { DEFAULT_GEMINI_MODEL, DEFAULT_THINKING_LEVEL, DECISIONS_FILE, MODE_FILE, PROFILE_PREFERENCE_FILES, findAgy, runtimeStatus, saveModelSelection, triggerMode } from '../plugins/codex-polish/hooks/preferences.mjs';
@@ -866,54 +867,112 @@ async function uninstall(store, run) {
   activateSnapshot(store, null);
   return cleanUninstallData(store);
 }
-// An exclusive SQLite transaction serializes installers on both supported
-// platforms. The OS releases it immediately if the process is interrupted.
-// Keep the native handle live even when a caller awaits a promise whose
-// resolver has been discarded. V8 can collect the suspended async stack.
-const heldLocks = new Set();
-export async function withLock(file, action) {
-  const entry = statMaybe(file);
-  if (entry && (!entry.isFile() || entry.nlink !== 1)) throw fail('锁文件路径异常。', 'Unexpected lock file.');
-  const { DatabaseSync } = sqliteModule();
-  const db = new DatabaseSync(file);
-  heldLocks.add(db);
-  try {
+// Lock a directory that outlives the installation. The OS releases the handle on exit.
+export async function withLock(directory, action) {
+  if (process.platform === 'darwin') {
+    // Darwin's O_EXLOCK from <sys/fcntl.h> is not exported by node:fs.
+    const O_EXLOCK = 0x20;
+    let fd;
     for (;;) {
       try {
-        db.exec('BEGIN EXCLUSIVE');
+        fd = fs.openSync(directory, O_RDONLY | O_DIRECTORY | O_EXLOCK | fs.constants.O_NONBLOCK);
         break;
       } catch (error) {
-        if (error.errcode !== 5 && error.errcode !== 6) throw error;
+        if (error.code !== 'EAGAIN') throw error;
         await sleep(50);
       }
     }
-    return await action();
+    try { return await action(); }
+    finally { fs.closeSync(fd); }
+  }
+
+  // Both namespaces are kernel objects. No socket pathname or TCP port is used.
+  const entry = fs.statSync(directory, { bigint: true });
+  const name = `codex-polish-lock-${entry.dev}-${entry.ino}`;
+  const address = windows ? '\\\\.\\pipe\\' + name : '\0' + name;
+  const server = createServer(socket => socket.destroy());
+  for (;;) {
+    try {
+      const listening = once(server, 'listening');
+      server.listen({ path: address, exclusive: true });
+      await listening;
+      break;
+    } catch (error) {
+      if (error.code !== 'EADDRINUSE') throw error;
+      await sleep(50);
+    }
+  }
+  try { return await action(); }
+  finally { await new Promise(resolve => server.close(resolve)); }
+}
+
+// A previous installer may still hold its SQLite lock. Only a regular, empty,
+// single-link file with the original identity is eligible for removal.
+async function withExistingLock(file, action, remove) {
+  const entry = fs.lstatSync(file, { bigint: true, throwIfNoEntry: false });
+  if (!entry?.isFile() || entry.size !== 0n || entry.nlink !== 1n) return action();
+  const { DatabaseSync } = sqliteModule();
+  const url = pathToFileURL(file);
+  url.searchParams.set('mode', 'rw');
+  const db = new DatabaseSync(url.href);
+  let result;
+  try {
+    try { db.exec('BEGIN EXCLUSIVE'); }
+    catch (error) {
+      if (![5, 6].includes(error.errcode)) throw error;
+      throw fail('另一个安装程序正在运行，请等它结束后再试。', 'Another installer is running. Try again after it finishes.');
+    }
+    result = await action();
   } finally {
-    heldLocks.delete(db);
     db.close();
   }
-}
-export async function manage(action, root, store, run = codex, setEnabled = writeEnabled) {
-  fs.mkdirSync(store, { recursive: true, mode: 0o700 });
-  // Windows can expand 8.3 names and casing in a realpath. Inspect each
-  // named directory so those aliases work and junctions stay excluded.
-  let ordinary = isAbsolute(store);
-  for (let dir = store; ordinary && dir !== dirname(dir); dir = dirname(dir))
-    ordinary = fs.lstatSync(dir).isDirectory();
-  if (!ordinary) {
-    throw fail(
-      '快照目录路径异常，请检查后再试。',
-      'Unexpected snapshot directory. Check this path before trying again.'
-    );
+  if (remove) {
+    const current = fs.lstatSync(file, { bigint: true, throwIfNoEntry: false });
+    if (current?.isFile() && current.size === 0n && current.nlink === 1n && sameEntry(entry, current)) fs.unlinkSync(file);
   }
-  return withLock(join(store, '.installer.sqlite'), async () => {
-    if (action === 'uninstall') {
+  return result;
+}
+
+function removeEmptyDirectory(directory) {
+  try { fs.rmdirSync(directory); }
+  catch (error) {
+    if (!['ENOENT', 'ENOTEMPTY', 'EEXIST'].includes(error.code)) throw error;
+  }
+}
+
+export async function manage(action, root, store, run = codex, setEnabled = writeEnabled) {
+  const profileStore = store === snapshotStore();
+  const anchor = profileStore ? codexProfile() : dirname(store);
+  fs.mkdirSync(anchor, { recursive: true, mode: 0o700 });
+  const result = await withLock(anchor, async () => {
+    fs.mkdirSync(store, { recursive: true, mode: 0o700 });
+    // Windows can expand 8.3 names and casing in a realpath. Inspect each
+    // named directory so those aliases work and junctions stay excluded.
+    let ordinary = isAbsolute(store);
+    for (let dir = store; ordinary && dir !== dirname(dir); dir = dirname(dir))
+      ordinary = fs.lstatSync(dir).isDirectory();
+    if (!ordinary) {
+      throw fail('快照目录路径异常，请检查后再试。', 'Unexpected snapshot directory. Check this path before trying again.');
+    }
+    const remove = action === 'uninstall';
+    const status = await withExistingLock(join(store, '.installer.sqlite'), async () => {
+      if (!remove) return setup(root, store, run, setEnabled, action);
       const message = await uninstall(store, run);
       finishPending(store);
       return [message, false];
+    }, remove);
+    if (remove) {
+      removeEmptyDirectory(store);
+      if (profileStore) removeEmptyDirectory(dirname(store));
     }
-    return setup(root, store, run, setEnabled, action);
+    return status;
   });
+  if (action === 'uninstall' && profileStore) {
+    const target = agyDirectory();
+    const file = join(target, '.codex-polish-agy.sqlite');
+    if (statMaybe(file)) await withLock(target, () => withExistingLock(file, () => {}, true));
+  }
+  return result;
 }
 function readChecks() {
   return { ...runtimeStatus(), ...languageSettings() };
@@ -999,7 +1058,7 @@ function supportedAgy(binary) {
 export async function installAgy() {
   const target = agyDirectory();
   fs.mkdirSync(target, { recursive: true });
-  await withLock(join(target, '.codex-polish-agy.sqlite'), async () => {
+  await withLock(target, () => withExistingLock(join(target, '.codex-polish-agy.sqlite'), async () => {
     const existing = findAgy();
     if (existing) {
       if (supportedAgy(existing)) return;
@@ -1024,7 +1083,7 @@ export async function installAgy() {
     } finally {
       fs.rmSync(temp, { recursive: true, force: true });
     }
-  });
+  }, true));
 }
 function decisionsSummary(checks, lang) {
   if (checks.mode === 'manual' || checks.mode === 'off') {

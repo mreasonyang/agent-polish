@@ -341,7 +341,7 @@ test('cache refuses linked ancestors and linked backup folder', (t) => {
   }
 });
 test('OS releases profile lock on process death and serializes independent installers', async (t) => {
-  const path = join(temp(t), 'installer.sqlite');
+  const path = temp(t);
   const module = new URL('../scripts/install.mjs', import.meta.url).href;
   const code = `import {withLock} from ${JSON.stringify(module)};
     await withLock(process.argv[1],async()=>{console.log('locked');await new Promise(()=>{setInterval(()=>{},1000);});});`;
@@ -359,6 +359,56 @@ test('OS releases profile lock on process death and serializes independent insta
   child.kill('SIGKILL');
   await contender;
   assert.equal(acquired, true);
+  assert.deepEqual(fs.readdirSync(path), []);
+});
+
+test('queued installers keep one lock across removal and recreation of the source directory', { timeout: 20_000 }, async t => {
+  const profile = temp(t);
+  const script = new URL('../scripts/install.mjs', import.meta.url).href;
+  const worker = `import { withLock } from ${JSON.stringify(script)};
+    import fs from 'node:fs';
+    import { join } from 'node:path';
+    import { setTimeout as sleep } from 'node:timers/promises';
+    const [profile, operation] = process.argv.slice(1);
+    const sources = join(profile, 'sources');
+    const marker = join(profile, 'in-progress');
+    await withLock(profile, async () => {
+      fs.mkdirSync(marker); // Fails if another worker has entered.
+      if (operation === 'uninstall') fs.rmSync(sources, { recursive: true, force: true });
+      else fs.mkdirSync(sources, { recursive: true });
+      await sleep(40);
+      fs.rmdirSync(marker);
+    });`;
+  const operations = ['uninstall', 'setup', 'uninstall', 'setup', 'update'];
+  await Promise.all(operations.map(async operation => {
+    const child = spawn(process.execPath, ['--input-type=module', '-e', worker, profile, operation],
+      { stdio: ['ignore', 'ignore', 'pipe'] });
+    const done = once(child, 'close');
+    let error = '';
+    child.stderr.on('data', data => { error += data; });
+    assert.equal((await done)[0], 0, error);
+  }));
+  const entries = fs.readdirSync(profile);
+  assert.ok(entries.every(name => name === 'sources'), entries.join(', '));
+  await assert.rejects(withLock(profile, async () => { throw new Error('failed action'); }), /failed action/);
+  await withLock(profile, async () => {});
+});
+
+test('an active 0.0.1 SQLite installer blocks uninstall before any changes', async t => {
+  const { state, store, call } = fixture(t);
+  await call('setup');
+  const file = join(store, '.installer.sqlite');
+  const { DatabaseSync } = process.getBuiltinModule('node:sqlite');
+  const holder = new DatabaseSync(file);
+  try {
+    holder.exec('BEGIN EXCLUSIVE');
+    state.commands.length = 0;
+    await assert.rejects(call('uninstall'), SetupError);
+    assert.deepEqual(state.commands, []);
+    assert.ok(fs.existsSync(file));
+  } finally { holder.close(); }
+  await call('uninstall');
+  assert.equal(fs.existsSync(store), false);
 });
 test('missing Codex returns localized actionable errors; invalid CLI flags exit 2 before mutations', (t) => {
   const base = temp(t),

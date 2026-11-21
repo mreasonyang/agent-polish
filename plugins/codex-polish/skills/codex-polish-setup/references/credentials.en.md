@@ -8,8 +8,8 @@ You can also say **“Set up Codex Polish”** in a project chat to pick a mode,
 
 ## Use your Antigravity sign-in
 
-1. Install the plugin on the machine that runs Codex, using the same system account. It looks for `agy` on the Codex process’s PATH and then at `~/.local/bin/agy`. On a first install from Finder or an interactive terminal, you can accept the offer to install Google’s official CLI or skip it. For an unattended install or to add the CLI later, run `npx @kyun.si/codex-polish@beta setup --install-agy`. From a source checkout, use `node scripts/install.mjs setup --install-agy`. You can also install it directly from Google. [Antigravity installation guide](https://antigravity.google/docs/getting-started/?tab=cli)
-2. The plugin uses your existing Antigravity sign-in. If Antigravity requests authentication, run `agy` in your terminal and sign in. If your shell can’t find the installed CLI, open `~/.local/bin/agy` directly.
+1. Install the plugin on the machine that runs Codex, using the same system account. It looks for `agy` on the Codex process’s PATH and then in Google’s default directory (`%LOCALAPPDATA%\agy\bin` on Windows, `~/.local/bin` on macOS and Linux). On a first install from Finder or an interactive terminal, you can accept the offer to install Google’s official CLI or skip it. For an unattended install or to add the CLI later, run `npx @kyun.si/codex-polish@beta setup --install-agy`. From a source checkout, use `node scripts/install.mjs setup --install-agy`. You can also install it directly from Google. [Antigravity installation guide](https://antigravity.google/docs/getting-started/?tab=cli)
+2. The plugin uses your existing Antigravity sign-in. If Antigravity requests authentication, run `agy` in your terminal and sign in. If your shell can’t find the installed CLI, run `& "$env:LOCALAPPDATA\agy\bin\agy.exe"` in Windows PowerShell or `~/.local/bin/agy` on macOS or Linux.
 3. Projects default to automatic polishing. When you ask to rewrite a whole answer, Google receives that draft, the question it answers and any directions for this rewrite. The plugin sends the text as written, including any code, commands, paths or credentials in it. If the project has a custom polishing prompt, Google also receives it. By default it also includes up to two exchanges from before the original answer. When you select a passage, the question and chat history stay local. Say “Only send this passage to Gemini” to send just the passage with the built-in Turbo prompt. In Codex **Settings → Hooks** (`/hooks` in the CLI), trust the plugin’s `UserPromptSubmit` hook. Start a fresh project chat and ask **“Explain what DNS does in one sentence.”**
 
 Say **“Only polish when I ask”** for manual mode or **“Turn off Codex Polish”** to disable polishing. “Polish this reply” uses Turbo and sends the draft directly to Gemini. Before you trust the hook, the request omits earlier exchanges. The default setup works without API keys. If Codex runs on a remote machine, follow these steps there.
@@ -30,6 +30,12 @@ For automatic polishing in Normal mode, when `OPENAI_API_KEY` is set, the plugin
    IFS= read -r -s OPENAI_API_KEY </dev/tty
    printf '\n'
    export OPENAI_API_KEY
+   ```
+
+   In Windows PowerShell, use this hidden prompt instead.
+
+   ```powershell
+   $env:OPENAI_API_KEY = [System.Net.NetworkCredential]::new('', (Read-Host 'OpenAI API key' -AsSecureString)).Password
    ```
 
 3. Start `codex` from that same terminal. In the project, say **“Use the OpenAI style check when a key is available.”** Then say **“Check Codex Polish setup.”** The local check confirms the setting and can catch a missing or malformed key. API access and quota are checked on a real request. [OpenAI billing](https://platform.openai.com/account/billing/overview)

@@ -6,6 +6,7 @@ import { parseArgs } from 'node:util';
 import { projectRoot, readProjectSetting, accessProjectSetting } from './project_setting.mjs';
 import { PROMPT_FILE, readEditorPrompt, readPromptInput } from './editor_prompt.mjs';
 import { REWRITE_MODES, REWRITE_MODE_FILE, REWRITE_TRIGGERS, projectRewriteMode, rewriteModeSettings } from './rewrite_mode.mjs';
+import { readHostLine, utf8 } from '../skills/codex-polish/scripts/cli_io.mjs';
 import { LANGUAGES, LANGUAGE_FILE, language, languageSettings, tr } from './ui_locale.mjs';
 import { cacheScope, withCache } from './recovery.mjs';
 
@@ -201,13 +202,14 @@ export function runtimeStatus(cwd, mode, trigger, { selectionOnly = false, noHis
   return { ...status, blockers };
 }
 
-async function runOpenaiDecision(cwd, pinned) {
+async function runOpenaiDecision(cwd, pinned, hostInput) {
   // Run the one request in this process so cancelling the host command also cancels HTTPS.
   let output;
   let policy;
   try {
     const { decide } = await import('../skills/codex-polish/scripts/decisions.mjs');
-    output = await decide(['judge', '--cwd', cwd], process.stdin, process.env, undefined, () => {
+    const input = hostInput ? [await readHostLine()] : process.stdin;
+    output = await decide(['judge', '--cwd', cwd], input, process.env, undefined, () => {
       policy = workflowPolicy(cwd, pinned);
       return policy.action === 'accept';
     });
@@ -249,7 +251,7 @@ async function judgeDraft(args) {
   if (policy.action === 'keep') return [policy, 0];
   const { route } = policy;
   const [result, code] = route === 'decisions'
-    ? await runOpenaiDecision(args.cwd, { ...pinned, route })
+    ? await runOpenaiDecision(args.cwd, { ...pinned, route }, args['host-input'])
     : [{ action: 'rewrite', reason: 'direct_acp' }, 0];
   if (code) return [result, code];
   result.route = route;
@@ -328,6 +330,7 @@ async function main(args) {
   const options = {};
   if (commands[command][0]) options.cwd = { type: 'string' };
   if (command === 'set-model' || command === 'set-prompt') options.reset = { type: 'boolean' };
+  if (command === 'set-prompt' || command === 'decision') options['host-input'] = { type: 'boolean' };
   if (command === 'set-prompt') options.link = { type: 'string' };
   if (command === 'decision' || command === 'check') options.trigger = { type: 'string' };
   if (command === 'check') options['selection-only'] = { type: 'boolean' };
@@ -435,7 +438,13 @@ async function main(args) {
         let data;
         if (values.reset) data = null;
         else {
-          try { data = await readPromptInput(process.stdin); }
+          try {
+            if (values['host-input']) {
+              const prompt = JSON.parse(utf8(await readHostLine()));
+              if (typeof prompt !== 'string') throw new Error('invalid_prompt');
+              data = await readPromptInput([Buffer.from(prompt)]);
+            } else data = await readPromptInput(process.stdin);
+          }
           catch {
             throw new RangeError(t('请输入非空的 UTF-8 文本。', 'Enter nonempty UTF-8 text.'));
           }

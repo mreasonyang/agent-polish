@@ -19,13 +19,13 @@ If Gemini returns the original wording, you see it once. If the rewrite fails, y
 
 ## Quick start
 
-Requires **macOS or Linux**, **Node.js 22.16+**, a [Codex CLI](https://developers.openai.com/codex/cli/) with plugin support, and `agy` 1.2.1+. No API key is needed—it reuses your Antigravity sign-in.
+Requires **Windows, macOS, or Linux**, **Node.js 22.16+**, a [Codex CLI](https://developers.openai.com/codex/cli/) with plugin support, and `agy` 1.2.1+. No API key is needed—it reuses your Antigravity sign-in.
 
 ```sh
 npx @kyun.si/codex-polish@beta setup
 ```
 
-Run the command in your project directory. Interactive setup offers to install `agy` if needed and lets you choose how automatic polishing works. With the built-in prompt, **Normal** (default) can keep a clear draft as written. **Turbo** asks Gemini to rewrite each draft. With T3 Code, select the Codex backend and install the plugin on the machine running it. [Other installation options](docs/technical.en.md#installation-updates-and-uninstall)
+Run the command in your project directory. On Windows, use PowerShell and run `npx.cmd @kyun.si/codex-polish@beta setup`. Interactive setup offers to install `agy` if needed and lets you choose how automatic polishing works. With the built-in prompt, **Normal** (default) can keep a clear draft as written. **Turbo** asks Gemini to rewrite each draft. With T3 Code, select the Codex backend and install the plugin on the machine running it. [Other installation options](docs/technical.en.md#installation-updates-and-uninstall)
 
 - **Before trusting the hook:** Ask **“Why does a cache hit still take time? Polish the answer.”** Asking for a polish uses Turbo. Gemini receives the draft without earlier exchanges.
 - **Automatic mode (default):** Trust `UserPromptSubmit` in Codex **Settings → Hooks** (`/hooks` in the CLI) and start a **new chat**. Codex then runs the polishing workflow on ordinary questions and can include recent exchanges.

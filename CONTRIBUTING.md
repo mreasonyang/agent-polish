@@ -12,16 +12,16 @@
 
 ## 本地测试与打包
 
-在完整源码的根目录运行以下命令。需要 macOS 或 Linux 和 Node.js 22.16 或更新版本。打包需要 npm，原生安装测试还会用到 Codex CLI、npx 和 tar。[获取完整源码](https://github.com/mreasonyang/codex-polish)
+在完整源码的根目录运行以下命令。支持 Windows、macOS 和 Linux，需要 Node.js 22.16 或更新版本。在 Windows 上先运行 `npm install --no-save --no-package-lock node-pty@1.1.0` 安装控制台测试用的依赖。打包需要 npm，原生安装测试还会用到 Codex CLI、npx 和 tar。[获取完整源码](https://github.com/mreasonyang/codex-polish)
 
 ```sh
 npm test
 node evaluation/report.mjs evaluation/example.jsonl
-mkdir -p dist
+node -e "require('node:fs').mkdirSync('dist', { recursive: true })"
 npm pack --ignore-scripts --pack-destination dist
 ```
 
-`npm pack` 会把 `@kyun.si/codex-polish` 的 `0.0.1-beta.6` 版打包为 `dist/kyun.si-codex-polish-0.0.1-beta.6.tgz`。默认测试无需 API 密钥，原生安装测试会使用临时 Codex 配置。Decisions 测试使用模拟响应验证风格判定。
+`npm pack` 会把 `@kyun.si/codex-polish` 的 `0.0.1-beta.7` 版打包为 `dist/kyun.si-codex-polish-0.0.1-beta.7.tgz`。默认测试无需 API 密钥，原生安装测试会使用临时 Codex 配置。Decisions 测试使用模拟响应验证风格判定。
 
 ## 反馈问题
 
@@ -35,11 +35,11 @@ npm pack --ignore-scripts --pack-destination dist
 
 ## 发布 beta
 
-将 `package.json` 和插件清单中的版本一同改为 `X.Y.Z-beta.N`，提交后推送同名 Git 标签。例如发布 `0.0.1-beta.6` 时运行：
+将 `package.json` 和插件清单中的版本一同改为 `X.Y.Z-beta.N`，提交后推送同名 Git 标签。例如发布 `0.0.1-beta.7` 时运行：
 
 ```sh
-git tag v0.0.1-beta.6
-git push origin v0.0.1-beta.6
+git tag v0.0.1-beta.7
+git push origin v0.0.1-beta.7
 ```
 
 GitHub Actions 会测试这个标签的代码，将安装包发布到 npm 的 `beta` 标签，并创建 GitHub 预发布版。如果某一步失败，可以在 Actions 中选择发布工作流，用已有标签重试。

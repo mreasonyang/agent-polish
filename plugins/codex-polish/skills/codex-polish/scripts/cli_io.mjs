@@ -27,3 +27,31 @@ export function utf8(bytes) {
 export function record(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
+
+// A PTY has no record-preserving EOF. Disable editing/echo before announcing readiness.
+// ConPTY can encode the Enter key as CR. Serialized JSON escapes embedded line breaks.
+export async function readInputLine(stream, terminal = false, keepOpen = false) {
+  const chunks = [];
+  for await (const bytes of stream.iterator({ destroyOnReturn: !keepOpen })) {
+    let end = bytes.indexOf(10);
+    if (terminal && end < 0) end = bytes.indexOf(13);
+    if (end < 0) { chunks.push(bytes); continue; }
+    if (end !== bytes.length - 1) throw Error('invalid_input');
+    chunks.push(bytes.subarray(0, end));
+    return Buffer.concat(chunks);
+  }
+  throw Error('invalid_input');
+}
+
+export async function readHostLine(stream = process.stdin) {
+  const raw = stream.isTTY && !stream.isRaw;
+  if (raw) stream.setRawMode(true);
+  try {
+    process.stdout.write('input_ready\n');
+    return await readInputLine(stream, stream.isTTY, true);
+  } finally {
+    if (raw) stream.setRawMode(false);
+    stream.pause();
+    stream.unref?.();
+  }
+}

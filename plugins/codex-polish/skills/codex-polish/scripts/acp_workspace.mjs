@@ -7,10 +7,14 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { validModelId } from '../../../hooks/preferences.mjs';
 import { isMain } from './cli_io.mjs';
+import { checkPrivatePath, encode, powershell, psArg, secureDirectory } from './acp_windows_io.mjs';
 import { editorRole } from './editor_role.mjs';
 
 const self = fileURLToPath(import.meta.url);
 const terminal = fileURLToPath(new URL('acp_terminal.sh', import.meta.url));
+const windowsHost = fileURLToPath(new URL('acp_windows_host.cs', import.meta.url));
+const windowsRelay = fileURLToPath(new URL('acp_windows.mjs', import.meta.url));
+const windows = process.platform === 'win32';
 const observer = fileURLToPath(new URL('acp_observe.mjs', import.meta.url));
 const stockRole = new URL('../references/codex-polish-editor.md', import.meta.url);
 const roleDirectory = '.agents/agents/codex-polish-editor';
@@ -104,7 +108,7 @@ function writeWithProducer(token, producer, args) {
 
 // Compare the staged directory and every ancestor before touching known entries.
 // rmdir leaves directories containing files owned by the provider or another job.
-function dispose(workspace, owners) {
+export function dispose(workspace, owners) {
   if (dirname(workspace) !== fs.realpathSync(tmpdir()) || !/^codex-polish-acp-[A-Za-z0-9]{6}$/.test(basename(workspace))) return;
   const intact = new Set();
   for (const [index, name] of paths.entries()) {
@@ -140,11 +144,22 @@ function dispose(workspace, owners) {
   }
 }
 
+export function claimWindowsWorkspace(directory, owners) {
+  if (dirname(directory) !== fs.realpathSync(tmpdir()) || identity(statEntry(directory)) !== owners[0]) throw Error('invalid_workspace');
+  for (const [index, name] of paths.entries()) {
+    if (!owners[index]) continue;
+    const stat = statEntry(join(directory, name));
+    if (stat?.isSymbolicLink() || identity(stat) !== owners[index]) throw Error('workspace_changed');
+  }
+  fs.linkSync(join(directory, '.acp-owner'), join(directory, '.acp-live'));
+}
+
 function catalogDestination(file) {
   if (!isAbsolute(file)) throw new Error('invalid_catalog_log');
   const directory = fs.realpathSync(dirname(file));
   const info = fs.statSync(directory);
-  if (!info.isDirectory() || info.uid !== process.getuid() || (info.mode & 0o077)) throw new Error('invalid_catalog_log');
+  if (windows) checkPrivatePath(directory);
+  else if (!info.isDirectory() || info.uid !== process.getuid() || (info.mode & 0o077)) throw new Error('invalid_catalog_log');
   const destination = join(directory, basename(file));
   if (fs.lstatSync(destination, { throwIfNoEntry: false })) throw new Error('invalid_catalog_log');
   return destination;
@@ -152,7 +167,7 @@ function catalogDestination(file) {
 
 export function prepareWorkspace({ agyPath, cwd, trigger, selectionOnly, selection, turnsBack, noHistory,
   auth, model, route, rewriteMode, display, quotedSource, catalog, catalogLog }) {
-  if (!agyPath || !isAbsolute(agyPath) || basename(agyPath) !== 'agy' || !fs.statSync(agyPath).isFile()) throw new Error('invalid_agy_path');
+  if (!agyPath || !isAbsolute(agyPath) || (windows ? basename(agyPath).toLowerCase() !== 'agy.exe' : basename(agyPath) !== 'agy') || !fs.statSync(agyPath).isFile()) throw new Error('invalid_agy_path');
   fs.accessSync(agyPath, fs.constants.X_OK);
   if (!authMethods.includes(auth)) throw new Error('invalid_auth');
   if (catalog ? (cwd || trigger || selectionOnly || selection || noHistory || turnsBack !== undefined || model || route || rewriteMode || display !== undefined || quotedSource) :
@@ -163,10 +178,11 @@ export function prepareWorkspace({ agyPath, cwd, trigger, selectionOnly, selecti
       [Boolean(selection), Boolean(selectionOnly), turnsBack !== undefined].filter(Boolean).length > 1 ||
       (quotedSource && turnsBack !== undefined) || ((selection || selectionOnly || turnsBack !== undefined) && trigger !== 'explicit'))
     throw new Error('invalid_target');
+  const log = catalogLog === undefined ? undefined : catalogDestination(catalogLog);
   const observeArgs = ['--auth', auth];
   if (catalog) {
     observeArgs.push('--catalog');
-    if (catalogLog !== undefined) observeArgs.push('--catalog-log', catalogDestination(catalogLog));
+    if (log !== undefined) observeArgs.push('--catalog-log', log);
   } else {
     observeArgs.push('--model', model, '--display', display);
     if (quotedSource) observeArgs.push('--quoted-source');
@@ -177,6 +193,7 @@ export function prepareWorkspace({ agyPath, cwd, trigger, selectionOnly, selecti
   const record = name => { owners[paths.indexOf(name)] = identity(statEntry(join(workspace, name))); };
   try {
     record('.');
+    if (windows) secureDirectory(workspace);
     for (const dir of ['.agents', '.agents/agents', roleDirectory]) {
       fs.mkdirSync(join(workspace, dir), { mode: 0o700 });
       record(dir);
@@ -186,11 +203,11 @@ export function prepareWorkspace({ agyPath, cwd, trigger, selectionOnly, selecti
     finally { fs.closeSync(roleFd); }
     const pipes = ['.acp-in', '.acp-out'];
     if (!catalog) pipes.push('.acp-display');
-    for (const fifo of pipes) {
+    for (const fifo of windows ? [] : pipes) {
       execFileSync('/usr/bin/mkfifo', ['-m', '600', join(workspace, fifo)], { stdio: 'ignore' });
       record(fifo);
     }
-    for (const name of ['.acp-owner', '.acp-jobs']) {
+    for (const name of windows ? ['.acp-owner'] : ['.acp-owner', '.acp-jobs']) {
       fs.closeSync(fs.openSync(join(workspace, name), 'wx', 0o600));
       record(name);
     }
@@ -198,14 +215,28 @@ export function prepareWorkspace({ agyPath, cwd, trigger, selectionOnly, selecti
     if (!catalog) tokenPaths.push('.acp-display');
     const token = tokenPaths.map(name => owners[paths.indexOf(name)]).join(',');
     observeArgs.push('--workspace-token', token);
+    let payloadArgs;
     if (!catalog) {
-      const payloadArgs = ['--cwd', cwd, '--editor-role-file', join(workspace, roleFile), '--trigger', trigger,
+      payloadArgs = ['--cwd', cwd, '--editor-role-file', join(workspace, roleFile), '--trigger', trigger,
         '--route', route, '--rewrite-mode', rewriteMode, '--model', model];
       if (selectionOnly) payloadArgs.push('--selection-only');
       if (selection) payloadArgs.push('--selection');
       if (noHistory) payloadArgs.push('--no-history');
       if (turnsBack !== undefined) payloadArgs.push('--turns-back', String(turnsBack));
       observeArgs.push('--payload-args', JSON.stringify(payloadArgs));
+    }
+    if (windows) {
+      const settings = encode({ directory: workspace, owners, auth, model, catalogOnly: catalog, log,
+        payloadArgs, display, quotedSource });
+      const cmd = [
+        "$ErrorActionPreference = 'Stop'",
+        'Add-Type -Path ' + psArg(windowsHost),
+        'exit [CodexPolishAcpHost]::Run(' + [agyPath, 'acp --agent codex-polish-editor --sandbox', process.execPath,
+          windowsRelay, settings, workspace].map(psArg).join(', ') + ')',
+      ].join('\n');
+      return { workspace, editor_role_file: join(workspace, roleFile),
+        start: { cmd, workdir: dirname(workspace), shell: powershell, login: false, tty: true,
+          yield_time_ms: 250, max_output_tokens: 32768 } };
     }
     const cmd = [
       `[ . -ef ${quote(workspace)} ] || exit 1`,

@@ -51,16 +51,16 @@ async function readDisplay(stream, scope) {
   throw Error('missing_display_material');
 }
 
-export async function observe(input, { auth, model, catalogOnly, log, directory, token, payloadArgs, display, quotedSource, onDrained }, emit) {
+export async function observe(input, { auth, model, catalogOnly, log, directory, token, payloadArgs, display, quotedSource, onDrained, transport }, emit) {
   if (catalogOnly ? (display !== undefined || quotedSource) : (!['zh', 'en', 'body-only'].includes(display) || !Array.isArray(payloadArgs)))
     throw Error('invalid_display_scope');
   const scope = catalogOnly ? null : displayScope(payloadArgs);
-  const displayInput = scope && new Socket({ fd: openDisplayInput(token), readable: true, writable: false });
+  const displayInput = scope && !transport && new Socket({ fd: openDisplayInput(token), readable: true, writable: false });
   // Start draining before offering submit. The producer finishes this local copy before it writes ACP.
-  const material = displayInput && readDisplay(displayInput, scope).catch(() => null);
+  const material = transport ? transport.material : displayInput && readDisplay(displayInput, scope).catch(() => null);
   const command = args => [process.execPath, workspaceTool, '--write', token, ...args].map(quote).join(' ');
   const host = { workdir: directory, login: false, shell: '/bin/sh' };
-  const write = frame => ({ ...host, cmd: command(['frame', JSON.stringify({ jsonrpc: '2.0', ...frame })]) });
+  const write = frame => transport ? transport.write({ jsonrpc: '2.0', ...frame }) : ({ ...host, cmd: command(['frame', JSON.stringify({ jsonrpc: '2.0', ...frame })]) });
   const request = (id, method, params) => ({ event: 'send', exec: write({ id, method, params }) });
   let pending = 1;
   let state = null;
@@ -98,7 +98,10 @@ export async function observe(input, { auth, model, catalogOnly, log, directory,
       return emit(request(4, 'session/set_config_option', { sessionId, configId: step.config_id, value: step.value }));
     }
     pending = null;
-    const producer = command(['prompt', ...payloadArgs, '--submit', '--session-id', sessionId]);
+    const args = [...payloadArgs, '--submit', '--session-id', sessionId];
+    if (transport) return emit({ event: 'submit', sessionId, model, exec: transport.submit(args),
+      cancel: write({ method: 'session/cancel', params: { sessionId } }) });
+    const producer = command(['prompt', ...args]);
     emit({ event: 'submit', sessionId, model, exec: { ...host, tty: true, yield_time_ms: 250,
       cmd: "stty -icanon -echo -ixon -icrnl min 1 time 0 && printf 'input_ready\\n' && exec " + producer } });
   }
@@ -140,7 +143,7 @@ export async function observe(input, { auth, model, catalogOnly, log, directory,
     for await (const piece of framePieces(input)) {
       if (failed || (finished && !catalogOnly)) continue;
       if (pending === null && sessionId && !finished && !submitted) {
-        submitted = submittedPrompt(token) === sessionId;
+        submitted = (transport ? transport.submitted() : submittedPrompt(token)) === sessionId;
         if (submitted) pending = 6;
       }
       const decoded = readACP(state, piece, { pendingId: pending, sessionId });

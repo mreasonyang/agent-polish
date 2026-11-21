@@ -2,6 +2,11 @@
 
 [中文使用说明](docs/README.zh-CN.md) · [English README](README.md)
 
+## 0.0.1-beta.7
+
+- Windows 用户可以从 PowerShell 安装、更新和卸载插件。Codex 通过本机的 `agy.exe acp` 改写回复，可以使用自动钩子、选择模型和取回长回复。
+- Windows users can install, update, or uninstall from PowerShell. Codex uses the native `agy.exe acp` for rewrites, including automatic polishing, model selection, and paged delivery for long replies.
+
 ## 0.0.1-beta.6
 
 - 修复了自动润色时 ACP 消息被截断或多条消息被当成一条读取的问题。收到完整回复时直接排好最终消息，长回复可分页取回，交付前无需手动清理。

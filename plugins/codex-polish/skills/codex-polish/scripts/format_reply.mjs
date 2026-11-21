@@ -3,7 +3,7 @@ import { parseArgs } from 'node:util';
 import { isCurrentTurn } from '../../../hooks/history.mjs';
 import { historySource } from '../../../hooks/preferences.mjs';
 import { rememberReplyOrigin } from '../../../hooks/reply_origin.mjs';
-import { isMain, readLimited, utf8 } from './cli_io.mjs';
+import { isMain, readHostLine, readLimited, utf8 } from './cli_io.mjs';
 import { previousReply } from './previous_reply.mjs';
 import { formatReply, STATUS_MARK } from './reply_display.mjs';
 export { formatReply, originalReplyText } from './reply_display.mjs';
@@ -53,12 +53,12 @@ export function delivery(payload, { cwd, selection, skipped, turnsBack }) {
 if (isMain(import.meta.url)) {
   try {
     const { values } = parseArgs({ options: {
-      cwd: { type: 'string' }, selection: { type: 'boolean' }, 'turns-back': { type: 'string' }, skipped: { type: 'boolean' }, render: { type: 'boolean' },
+      'host-input': { type: 'boolean' }, cwd: { type: 'string' }, selection: { type: 'boolean' }, 'turns-back': { type: 'string' }, skipped: { type: 'boolean' }, render: { type: 'boolean' },
     } });
     const back = values['turns-back'];
     if ((values.cwd !== undefined && !isAbsolute(values.cwd)) || (back !== undefined &&
         (values.selection || !values.cwd || !/^[1-9]\d*$/.test(back) || !Number.isSafeInteger(Number(back))))) throw new Error('invalid arguments');
-    const payload = JSON.parse(utf8(await readLimited(process.stdin)));
+    const payload = JSON.parse(utf8(values['host-input'] ? await readHostLine() : await readLimited(process.stdin)));
     const result = delivery(payload, { ...values, turnsBack: Number(back) || undefined });
     if (values.render) process.stdout.write(result.display_text ?? result.text);
     else console.log(JSON.stringify(result));

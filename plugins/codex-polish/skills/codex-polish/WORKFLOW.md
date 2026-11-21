@@ -29,13 +29,13 @@
 
 ## 判定与改写
 
-脚本从标准输入读取 UTF-8 JSON，输出 JSON。使用宿主的安全 stdin。只有 shell 可用时，用 JSON 序列化器生成单行 JSON，再用单引号 heredoc 分隔符送入脚本。不要把正文当作 shell 代码执行，不写草稿到项目文件。检查退出状态、完整结果和返回字段，失败时保留原稿。
+脚本从标准输入读取 UTF-8 JSON，输出 JSON。使用宿主的安全 stdin。只有宿主终端可用时，给 `decision judge` 和 `format_reply.mjs` 加 `--host-input`，使用 `tty: true` 启动。等 `input_ready` 后，用 `write_stdin` 发送 `JSON.stringify(材料) + "\n"`。若命令直接返回判定结果，按该结果继续。不要把正文当作 shell 代码执行，不写草稿到项目文件。检查退出状态、完整结果和返回字段，失败时保留原稿。
 
 1. 选好原稿后，按本轮的 `check.decisions_enabled` 选择路由。问题、草稿、选区和本次编辑要求均使用原文。
    - 为假时使用 `route=acp`，直接进入第 2 步。所有主动请求都走这条路径，不调用 `decision judge`。
    - 为真时才运行 `node …/hooks/preferences.mjs decision judge --cwd "<原项目目录>" --trigger auto --route decisions --rewrite-mode normal --model <check.gemini_model>`。标准输入传原始 `question` 和 `draft`，OpenAI 只接收这两项和项目已设置的自定义提示词。概率大于 50% 时继续，平局保留原稿。返回 `action: "rewrite"` 时用返回的 `route` 进入第 2 步，包括 `reason: "decision_unavailable"`。返回 `already_clear` 时交付原稿，说明 OpenAI 判断无需润色。其他停止原因按实际情况交代。
 2. 阅读 [ACP 操作步骤](references/acp.md)。**当前 agent 是 ACP 客户端**。在原项目上为本轮运行 `scripts/acp_workspace.mjs --cwd "<原项目>" --trigger "<本轮触发方式>" --agy-path "<check.agy_path>" --auth "<check.google_auth_method>" --model "<check.gemini_model>" --route "<上一步选定的 route>" --rewrite-mode "<check.rewrite_mode>" --display "<zh、en 或 body-only>"`，并带上本轮范围参数（如 `--no-history`、`--turns-back N`、`--selection` 或 `--selection-only`）。中文答复用 `zh`，英文答复用 `en`，其他语言按当前界面语言选。只有用户要求只看正文或指定严格格式时才用 `body-only`。整条答复取自当前可见文字且无法核实为 GPT 原稿时加 `--quoted-source`。选段和按轮查找的答复由工具标注来源。
-   - 用宿主 `exec_command` 原样执行返回的 `start`，保存其进程句柄。每条 `send.exec` 也由当前 agent 原样执行。只从命名管道写协议，空读同一进程句柄查看下一步。
+   - 用宿主 `exec_command` 原样执行返回的 `start`，保存其进程句柄。每条 `send.exec` 也由当前 agent 原样执行。空读同一进程句柄查看下一步。
    - 见到 `submit` 后，原样执行 `submit.exec`，待 `input_ready` 后向这个**材料输入句柄**发送一行已序列化的原稿 JSON 和行末换行。写完后继续空读原 ACP 句柄。`delivery.markdown` 就是最终消息，直接原样发送。见到 `answer_pages` 时依次读完各页，原样拼接每页的 `text` 后发送。收到完整结果后，本轮的工具操作到此结束。
    - 若得到 `error` 或进程在取得完整结果前退出，保留本轮选定的原稿并说明原因。同一轮不重发。
 3. 工具在本次 `end_turn` 后完成排版。保留最终 Markdown 的空行、标题和可折叠原稿。宿主自动结束进程，交付无需关闭句柄、检查进程或清理文件。

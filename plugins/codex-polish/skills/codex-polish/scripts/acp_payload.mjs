@@ -1,5 +1,6 @@
 // Format one ACP prompt for the current agent to send over its open session.
 import { parseArgs } from 'node:util';
+import { exchange, decode } from './acp_windows_io.mjs';
 import { Socket } from 'node:net';
 import { claimPrompt, openDisplayOutput } from './acp_workspace.mjs';
 import { projectHistoryTurns, historySource, workflowPolicy } from '../../../hooks/preferences.mjs';
@@ -7,22 +8,9 @@ import { readHistory } from '../../../hooks/history.mjs';
 import { lookupReplyOrigin } from '../../../hooks/reply_origin.mjs';
 import { effectiveRewriteMode } from '../../../hooks/rewrite_mode.mjs';
 import { previousReply } from './previous_reply.mjs';
-import { isMain, readLimited, record, utf8 } from './cli_io.mjs';
+import { isMain, readHostLine, readInputLine, readLimited, record, utf8 } from './cli_io.mjs';
 import { primaryMaterial, projectMaterial, selectedMaterial, validateSourceText } from './rewrite_material.mjs';
 import { checkStagedEditorRole } from './editor_role.mjs';
-
-// The host can send a large JSON record in several writes. A terminal's EOF is not a data delimiter.
-async function readInputLine(stream) {
-  const parts = [];
-  for await (const bytes of stream) {
-    const end = bytes.indexOf(10);
-    if (end < 0) { parts.push(bytes); continue; }
-    if (end !== bytes.length - 1) throw new Error('invalid_input');
-    parts.push(bytes.subarray(0, end));
-    return Buffer.concat(parts);
-  }
-  throw new Error('invalid_input');
-}
 
 async function sendRecord(stream, value) {
   const data = Buffer.from(JSON.stringify(value) + '\n');
@@ -98,7 +86,8 @@ export async function promptFrame(payload, cwd, options = {}) {
 
 if (isMain(import.meta.url)) {
   try {
-    const { values } = parseArgs({ options: {
+    const windows = process.argv[2] === '--windows-submit';
+    const { values } = parseArgs({ args: windows ? decode(process.argv[4]) : process.argv.slice(2), options: {
       cwd: { type: 'string' }, 'no-history': { type: 'boolean' }, 'turns-back': { type: 'string' },
       selection: { type: 'boolean' }, 'selection-only': { type: 'boolean' }, submit: { type: 'boolean' },
       'session-id': { type: 'string' },
@@ -110,7 +99,7 @@ if (isMain(import.meta.url)) {
     else {
       if (!values['editor-role-file']) throw new Error('missing_editor_role');
       if (Boolean(values.submit) !== Boolean(values['session-id'])) throw new Error('invalid_options');
-      const payload = JSON.parse(utf8(values.submit ? await readInputLine(process.stdin) : await readLimited(process.stdin)));
+      const payload = JSON.parse(utf8(windows ? await readHostLine() : values.submit ? await readInputLine(process.stdin) : await readLimited(process.stdin)));
       if (values.submit) {
         if (!record(payload) || Object.hasOwn(payload, 'sessionId')) throw new Error('invalid_input');
         payload.sessionId = values['session-id'];
@@ -121,16 +110,21 @@ if (isMain(import.meta.url)) {
         editorRoleFile: values['editor-role-file'], rewriteMode: values['rewrite-mode'],
         trigger: values.trigger, route: values.route, model: values.model,
       });
-      // Only the session ID goes to disk. Open collection after validation and allow one submission.
+      // The local display copy travels in memory. Claim the one submission after validation.
       if (values.submit) {
-        const token = process.env.CODEX_POLISH_WRITE_TOKEN;
-        claimPrompt(token, frame.params.sessionId);
         const local = { draft: values.selection || values['selection-only'] ? payload.selection : payload.draft };
         if (payload.question !== undefined) local.question = payload.question;
-        const display = new Socket({ fd: openDisplayOutput(token), readable: false, writable: true });
-        try { await sendRecord(display, local); }
-        finally { display.destroy(); }
-        await sendRecord(process.stdout, frame);
+        if (windows) {
+          const ack = await exchange(process.argv[3], { frame, original: local }, 32);
+          if (ack !== true) throw Error('acp_write_failed');
+        } else {
+          const token = process.env.CODEX_POLISH_WRITE_TOKEN;
+          claimPrompt(token, frame.params.sessionId);
+          const display = new Socket({ fd: openDisplayOutput(token), readable: false, writable: true });
+          try { await sendRecord(display, local); }
+          finally { display.destroy(); }
+          await sendRecord(process.stdout, frame);
+        }
       } else console.log(JSON.stringify(frame));
     }
   } catch { process.exitCode = 1; }

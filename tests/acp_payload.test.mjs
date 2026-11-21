@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { closeSync, constants, mkdirSync, openSync, readFileSync, readSync, rmSync, writeFileSync, unlinkSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { json, run, temporary } from './hook_fixture.mjs';
 import { prepareWorkspace } from '../plugins/codex-polish/skills/codex-polish/scripts/acp_workspace.mjs';
@@ -83,8 +83,12 @@ function setup(t) {
   mkdirSync(project);
   const bin = join(root, 'bin');
   mkdirSync(bin);
-  writeFileSync(join(bin, 'agy'), '#!/bin/sh\nexit 1\n', { mode: 0o700 });
-  const env = {PATH:bin+':/usr/bin:/bin',HOME:root,CODEX_HOME:join(root,'codex'),CODEX_THREAD_ID:session,XDG_CACHE_HOME:join(root,'cache')};
+  const agy = process.platform === 'win32' ? 'agy.exe' : 'agy';
+  // The payload policy checks availability but never starts the provider.
+  writeFileSync(join(bin, agy), '', { mode: 0o700 });
+  const env = {PATH:[bin,dirname(process.execPath)].join(delimiter),HOME:root,USERPROFILE:root,
+    CODEX_HOME:join(root,'codex'),CODEX_THREAD_ID:session,XDG_CACHE_HOME:join(root,'cache')};
+  if (process.platform === 'win32') env.SystemRoot = process.env.SystemRoot;
   const transcript = join(env.CODEX_HOME, 'sessions/2026/11/19', 'rollout-2026-11-19T11-30-00-'+session+'.jsonl');
   function cli(script, args, data) {
     return run(script, args, {env,input:JSON.stringify(data)});
@@ -489,7 +493,9 @@ function submission(t, ctx, scope, flags) {
       '--trigger', settings.trigger, '--model', settings.model, ...flags], JSON.stringify(data) + '\n') };
 }
 
-test('local display receives the exact earlier question and draft while only ACP gets history and directions', t => {
+const fifoTest = process.platform === 'win32' ? test.skip : test;
+
+fifoTest('local display receives the exact earlier question and draft while only ACP gets history and directions', t => {
   const ctx = setup(t);
   const earlier = ['Earlier context', 'Earlier response'];
   const targeted = ['  Which version?\r\n', '  Version two.\n'];
@@ -507,7 +513,7 @@ test('local display receives the exact earlier question and draft while only ACP
   assert.throws(pipe.readProvider, { code: 'EAGAIN' });
 });
 
-test('selected and quoted originals keep all display fields out of the ACP frame', t => {
+fifoTest('selected and quoted originals keep all display fields out of the ACP frame', t => {
   const ctx = setup(t);
   const pipe = submission(t, ctx, { selection: true, quotedSource: true, display: 'body-only' }, ['--selection']);
   const data = { selection: 'Only this paragraph.\r\n', rewrite_request: 'Keep the quotation.' };
@@ -519,7 +525,7 @@ test('selected and quoted originals keep all display fields out of the ACP frame
   ] });
 });
 
-test('a substituted display pipe prevents submission without writing to the replacement', t => {
+fifoTest('a substituted display pipe prevents submission without writing to the replacement', t => {
   const ctx = setup(t);
   const pipe = submission(t, ctx, {}, []);
   const local = join(pipe.workspace, '.acp-display');

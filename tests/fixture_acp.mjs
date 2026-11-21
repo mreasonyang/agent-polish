@@ -62,8 +62,6 @@ export class Fixture {
   prompt(id, params) {
     if (!Array.isArray(params.prompt) || !params.prompt.some(block => block?.type === 'text' && block.text))
       return this.error(id, 'Expected at least one text prompt block.');
-    if (this.model === 'gemini-4-hydrogen' && this.thinking !== 'low')
-      return this.error(id, 'Select Low for this model before sending the prompt.');
     if (this.pending !== null) return this.error(id, 'A turn is already running.');
     this.pending = id;
     if (this.scenario === 'permission') {

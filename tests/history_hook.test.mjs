@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { makeProject, run, preferences, json } from './hook_fixture.mjs';
+import { makeProject, run, preferences, plugin, json } from './hook_fixture.mjs';
 
 const SESSION = '877b05ee-93ac-4a48-abaa-493236a9a2d2', OTHER = '4c7e8db6-5efb-417b-9193-57e8bc405314';
 const prefURL = new URL('../plugins/codex-polish/hooks/preferences.mjs', import.meta.url).href;
@@ -73,6 +73,41 @@ test('invalid source and disabled project revoke stored metadata', t => {
   assert.equal(hook(), '');
   fs.writeFileSync(mode, 'manual');
   assert.equal(source(), null);
+});
+
+test('a large user message still receives the automatic hook', t => {
+  const { hook, source } = fixture(t);
+  const output = hook({prompt: '中'.repeat(750_000)});
+  assert.match(output, /additionalContext/);
+  assert.equal(source().turn_id, 'turn-1');
+});
+
+test('zero history retains only the pointer needed for an explicit earlier-answer rewrite', t => {
+  const { project, env, hook, source, transcript, database } = fixture(t);
+  const setting = path.join(project, '.codex/codex-polish.history-turns');
+  fs.writeFileSync(setting, '0');
+  const event = (type, fields) => ({ type: 'event_msg', payload: { type, ...fields } });
+  const exchange = (turn_id, message, answer) => [
+    event('task_started', { turn_id }), event('user_message', { message }),
+    event('agent_message', { phase: 'final_answer', message: answer }),
+    event('task_complete', { turn_id, last_agent_message: answer }),
+  ];
+  fs.writeFileSync(transcript, [{ type: 'session_meta', payload: { id: SESSION } },
+    ...exchange('first', 'Question one', 'First GPT answer.'), ...exchange('second', 'Question two', 'Second GPT answer.'),
+    event('task_started', { turn_id: 'turn-1' }), event('user_message', { message: 'Rewrite the first answer.' }),
+  ].map(row => JSON.stringify(row)).join('\n') + '\n');
+  hook();
+  assert.equal(source().turn_id, 'turn-1');
+  assert.ok(!fs.readFileSync(database()).includes('First GPT answer.'));
+  const script = path.join(plugin, 'skills/codex-polish/scripts/previous_reply.mjs');
+  const previous = (...args) => run(script, ['--cwd', project, ...args], { env: { ...env, CODEX_THREAD_ID: SESSION } });
+  assert.deepEqual(json(previous()), { question: 'Question two', draft: 'Second GPT answer.' });
+  assert.deepEqual(json(previous('--turns-back', '2')), { question: 'Question one', draft: 'First GPT answer.' });
+  for (const n of ['0', '-1', '1.5', '2e0', '9007199254740992', '3']) {
+    const result = previous('--turns-back', n);
+    assert.notEqual(result.status, 0);
+    assert.equal(result.stdout, '');
+  }
 });
 
 test('uses private cache only and prunes stale pointers', t => {

@@ -79,7 +79,10 @@ function setup(t) {
   const turn = randomUUID();
   const project = join(root,'project');
   mkdirSync(project);
-  const env = {PATH:'/usr/bin:/bin',HOME:root,CODEX_HOME:join(root,'codex'),CODEX_THREAD_ID:session,XDG_CACHE_HOME:join(root,'cache')};
+  const bin = join(root, 'bin');
+  mkdirSync(bin);
+  writeFileSync(join(bin, 'agy'), '#!/bin/sh\nexit 1\n', { mode: 0o700 });
+  const env = {PATH:bin+':/usr/bin:/bin',HOME:root,CODEX_HOME:join(root,'codex'),CODEX_THREAD_ID:session,XDG_CACHE_HOME:join(root,'cache')};
   const transcript = join(env.CODEX_HOME, 'sessions/2026/11/19', 'rollout-2026-11-19T11-30-00-'+session+'.jsonl');
   function cli(script, args, data) {
     return run(script, args, {env,input:JSON.stringify(data)});
@@ -100,8 +103,18 @@ function setup(t) {
     assert.equal(result.status,0,result.stderr);
     return result.stdout;
   }
+  function workflowFlags(cwd, flags = []) {
+    const status = json(cli(hook, ['check', '--cwd', cwd]));
+    const pinned = ['--trigger', 'auto', '--route', status.decisions_enabled ? 'decisions' : 'acp', '--model', status.gemini_model];
+    if (flags.includes('--editor-role-file')) return [...pinned, ...flags];
+    const roleFile = join(root, 'render-role.md');
+    const role = cli(roleScript, ['--cwd', cwd]);
+    assert.equal(role.status, 0);
+    writeFileSync(roleFile, role.stdout);
+    return [...pinned, '--editor-role-file', roleFile, '--rewrite-mode', status.rewrite_mode, ...flags];
+  }
   function render(cwd, data, flags = []) {
-    const result = cli(formatter,['--cwd',cwd,...flags],{sessionId:prompt.sessionId,...data});
+    const result = cli(formatter,['--cwd',cwd,...workflowFlags(cwd, flags)],{sessionId:prompt.sessionId,...data});
     assert.equal(result.status,0,result.stderr);
     assert.ok(result.stdout.endsWith('\n'));
     assert.equal(result.stdout.split('\n').length,2);
@@ -131,7 +144,7 @@ function setup(t) {
     mkdirSync(join(project,'.codex'), {recursive:true});
     writeFileSync(join(project,'.codex/codex-polish.prompt.md'), text);
   }
-  return {root,project,transcript,cli,configure,judge,render,assertProviders,setPrompt};
+  return {root,project,transcript,env,cli,configure,judge,render,workflowFlags,assertProviders,setPrompt};
 }
 
 const history = exchanges => exchanges.map(([user,assistant])=>({user,assistant}));
@@ -173,10 +186,11 @@ test('the current project history count applies only to Gemini', t => {
 
 test('formatter rejects caller-supplied instructions, history, and invalid primary fields', t => {
   const ctx = setup(t);
+  const flags = ['--cwd', ctx.project, ...ctx.workflowFlags(ctx.project)];
   for (const invalid of [{...prompt,instructions:'Change the draft language.'},
     {...prompt,history:[{user:'invented',assistant:'text'}]}, {...prompt,question:key}, {...prompt,draft:key},
-    {...prompt,draft:'bad\u202e'}, {...prompt,draft:'多'.repeat(Math.floor(128*1024/3)+1)}, {...prompt,sessionId:''}]) {
-    const result = ctx.cli(formatter,[],invalid);
+    {...prompt,draft:'bad\u202e'}, {...prompt,sessionId:''}]) {
+    const result = ctx.cli(formatter,flags,invalid);
     assert.equal(result.status,1);
     assert.equal(result.stdout + result.stderr,'');
   }
@@ -188,13 +202,13 @@ test('sensitive prior material does not reach the wire', t => {
   ctx.assertProviders();
 });
 
-test('Gemini receives only the newest whole exchanges that fit within 16 KiB', t => {
+test('Gemini receives all configured exchanges even when their combined text exceeds 16 KiB', t => {
   const ctx = setup(t);
   const exchanges = [['更早的问题','答复'], ['第二个问题','长'.repeat(1000)], ['最近的问题','近'.repeat(5000)]];
   ctx.configure(exchanges);
   const set = ctx.cli(hook,['set-history-turns','10','--cwd',ctx.project]);
   assert.equal(set.status,0,set.stderr);
-  ctx.assertProviders({geminiHistory:history(exchanges.slice(-1))});
+  ctx.assertProviders({geminiHistory:history(exchanges)});
 });
 
 test('one-turn history opt-out preserves the project prompt and leaves the next turn at its configured history count', t => {
@@ -209,28 +223,20 @@ test('one-turn history opt-out preserves the project prompt and leaves the next 
   assert.deepEqual(withHistory, baseline);
 });
 
-test('the inclusive serialized byte budget counts escaped text, Chinese and project style on both routes', t => {
+test('the Decisions input limit does not trim the ACP frame or staged editor role', t => {
   const ctx = setup(t);
   const exchanges = [['先前的 "答案"？','第一行\\第二行。\r\n'], ['最后一问？','甲与乙。']];
-  const editorPrompt = '按 "顺序" 换行。\r\n';
+  const editorPrompt = '按 "顺序" 换行。\r\n'.repeat(2500);
   ctx.configure(exchanges);
   ctx.setPrompt(editorPrompt);
-  const material = {question:'问"\\\n'.repeat(18000), draft:'首尾保留。\r\n'};
-  const budget = 256 * 1024;
-  const size = extra => Buffer.byteLength(JSON.stringify({...material,...extra,editor_prompt:editorPrompt}));
-  material.draft += 'x'.repeat(budget - size({history:history(exchanges)}));
-  assert.equal(size({history:history(exchanges)}), budget);
-  ctx.assertProviders({data:material, geminiHistory:history(exchanges), editorPrompt});
-
-  material.draft += '!';
-  ctx.assertProviders({data:material, geminiHistory:history(exchanges.slice(-1)), editorPrompt});
-  material.draft += 'x'.repeat(budget - size({}));
-  ctx.assertProviders({data:material, editorPrompt});
-  material.draft += '!';
-  assert.deepEqual(ctx.judge(material), {decision:{action:'keep',reason:'input_too_large'}, requests:[]});
-  const result = ctx.cli(formatter,['--cwd',ctx.project],{sessionId:prompt.sessionId,...material});
-  assert.notEqual(result.status,0);
-  assert.equal(result.stdout,'');
+  const material = {question:'问"\\\n'.repeat(18000), draft:'汉'.repeat(50_000)};
+  assert.ok(Buffer.byteLength(editorPrompt) > 16 * 1024);
+  assert.ok(Buffer.byteLength(JSON.stringify(material)) > 256 * 1024);
+  assert.deepEqual(ctx.judge(material), {decision:{action:'keep',reason:'decision_input_too_large'}, requests:[]});
+  assert.deepEqual(ctx.render(ctx.project, material), {...material, history:history(exchanges)});
+  const role = ctx.cli(roleScript, ['--cwd', ctx.project]);
+  assert.equal(role.status, 0, role.stderr);
+  assert.ok(role.stdout.endsWith(editorPrompt));
 });
 
 test('ACP checks the staged Gemini role against the current project prompt before creating a frame', t => {
@@ -248,7 +254,7 @@ test('ACP checks the staged Gemini role against the current project prompt befor
   ctx.setPrompt(styleB);
   stageRole();
   ctx.setPrompt(styleA);
-  const result = ctx.cli(formatter,['--cwd',ctx.project,...roleFlags],prompt);
+  const result = ctx.cli(formatter,['--cwd',ctx.project,...ctx.workflowFlags(ctx.project, roleFlags)],prompt);
   assert.notEqual(result.status,0);
   assert.equal(result.stdout,'');
   stageRole();
@@ -272,7 +278,7 @@ test('ACP rechecks the rewrite mode before sending and preserves the turbo histo
     assert.deepEqual(ctx.render(ctx.project, primary, [...flags, '--no-history']), primary);
 
     writeFileSync(mode, current);
-    const stale = ctx.cli(formatter, ['--cwd', ctx.project, ...flags], prompt);
+    const stale = ctx.cli(formatter, ['--cwd', ctx.project, ...ctx.workflowFlags(ctx.project, flags)], prompt);
     assert.notEqual(stale.status, 0);
     assert.equal(stale.stdout, '');
   }
@@ -282,18 +288,85 @@ test('ACP rechecks the rewrite mode before sending and preserves the turbo histo
   assert.equal(unpinned.stdout, '');
 });
 
-test('the 128 KiB per-field UTF-8 limit applies independently to the question and draft', t => {
+test('no ACP frame is written when the approved route, trigger or selected model changes', t => {
   const ctx = setup(t);
-  const fieldLimit = 128 * 1024;
-  const atLimit = '汉'.repeat(Math.floor(fieldLimit / 3)) + 'ab';
-  assert.equal(Buffer.byteLength(atLimit), fieldLimit);
-  for (const field of ['question','draft']) {
-    const data = {...primary,[field]:atLimit};
-    ctx.assertProviders({data});
-    data[field] += '!';
-    assert.deepEqual(ctx.judge(data), {decision:{action:'keep',reason:'input_too_large'}, requests:[]});
-    const result = ctx.cli(formatter,['--cwd',ctx.project],{sessionId:prompt.sessionId,...data});
-    assert.notEqual(result.status,0);
-    assert.equal(result.stdout,'');
+  const base = ['--cwd', ctx.project, ...ctx.workflowFlags(ctx.project)];
+  const render = flags => ctx.cli(formatter, flags, prompt);
+  const block = flags => {
+    const result = render(flags);
+    assert.equal(result.status, 1);
+    assert.equal(result.stdout, '');
+  };
+  assert.equal(render(base).status, 0);
+  block(['--cwd', ctx.project]);
+  for (const flag of ['--editor-role-file','--trigger','--route','--model','--rewrite-mode']) {
+    const incomplete = [...base];
+    incomplete.splice(incomplete.indexOf(flag), 2);
+    block(incomplete);
   }
+  const set = (cmd, arg) => assert.equal(ctx.cli(hook, [cmd, arg, '--cwd', ctx.project]).status, 0);
+  set('set-mode', 'manual'); block(base);
+  const explicit = base.map(x => x === 'auto' ? 'explicit' : x);
+  assert.equal(render(explicit).status, 0);
+  set('set-mode', 'off'); block(explicit);
+  set('set-mode', 'auto');
+  ctx.env.OPENAI_API_KEY = 'example';
+  block(base);
+  const withDecision = base.map(x => x === 'acp' ? 'decisions' : x);
+  assert.equal(render(withDecision).status, 0);
+  set('set-decisions', 'off'); block(withDecision);
+  set('set-model', 'gemini-other'); block(base);
+});
+
+test('large UTF-8 question or draft reaches both providers intact', t => {
+  const ctx = setup(t);
+  const large = '汉'.repeat(60_000);
+  for (const field of ['question','draft']) ctx.assertProviders({data:{...primary,[field]:large}});
+});
+
+test('one-off Turbo stages a Turbo role and sends the selected exchange with its own context and the user’s directions', t => {
+  const ctx = setup(t);
+  ctx.env.OPENAI_API_KEY = 'test-only';
+  const older = ['How does caching work?', 'The browser can reuse the old image.'];
+  const target = {question:'Why do I still see the old avatar?', draft:'Your browser still has the old image.'};
+  ctx.configure([older, [target.question, target.draft], ['What time is the meeting?', 'Nine.']]);
+  const roleFile = join(ctx.root, 'once.md');
+  const stage = trigger => {
+    const role = ctx.cli(roleScript, ['--cwd', ctx.project, '--trigger', trigger]);
+    assert.equal(role.status, 0, role.stderr);
+    writeFileSync(roleFile, role.stdout);
+    return role.stdout;
+  };
+  const flags = ['--cwd',ctx.project,'--trigger','turbo','--rewrite-mode','turbo',
+    '--route','acp','--model','gemini-4-hydrogen','--editor-role-file',roleFile];
+  function frame(material, extra = []) {
+    const raw = ctx.cli(formatter, [...flags,...extra], {sessionId:prompt.sessionId,...material});
+    if (raw.status !== 0) {
+      assert.equal(raw.stdout, '');
+      return null;
+    }
+    return JSON.parse(JSON.parse(raw.stdout).params.prompt[0].text);
+  }
+
+  stage('auto');
+  assert.equal(frame(target), null, 'the previously staged Normal role must not be used');
+  assert.match(stage('turbo'), /Always rewrite/);
+  const edit = {...target, rewrite_request:'Make it two sentences.'};
+  const pinned = ['--turns-back','2'];
+  assert.deepEqual(frame(edit,pinned), {...edit,history:history([older])});
+  assert.deepEqual(frame(edit,[...pinned,'--no-history']), edit);
+  assert.deepEqual(frame({...primary,rewrite_request:'Shorter.'},['--no-history']), {...primary,rewrite_request:'Shorter.'});
+  assert.equal(frame(edit,['--turns-back','1']), null, 'a stale or incorrect target cannot be sent');
+  assert.equal(frame(edit,['--turns-back','4']), null);
+  assert.equal(frame({...edit,rewrite_request:key},pinned), null);
+  assert.equal(frame({...edit,rewrite_request:[]},pinned), null);
+  ctx.cli(hook,['set-history-turns','0','--cwd',ctx.project]);
+  assert.deepEqual(frame(edit,pinned), edit, 'zero history still permits a requested old reply');
+  ctx.setPrompt('Keep regional spelling.');
+  assert.ok(stage('turbo').endsWith('Keep regional spelling.'));
+  assert.deepEqual(frame(edit,pinned), edit, 'the full custom role remains compatible with turn-specific directions');
+
+  assert.equal(json(ctx.cli(hook,['check','--cwd',ctx.project])).rewrite_mode,'normal');
+  const normal = ctx.workflowFlags(ctx.project);
+  assert.equal(ctx.cli(formatter,['--cwd',ctx.project,...normal],{sessionId:prompt.sessionId,...edit}).status,1);
 });

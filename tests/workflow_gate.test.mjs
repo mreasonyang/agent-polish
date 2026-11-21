@@ -13,11 +13,15 @@ function fixture(t) {
   const script = path.join(installed, 'hooks/preferences.mjs'), helper = path.join(installed, 'skills/codex-polish/scripts/decisions.mjs');
   fs.writeFileSync(helper, `import fs from 'node:fs';
 import assert from 'node:assert/strict';
-assert.deepEqual(process.argv.slice(3), ['--cwd', process.env.FAULT_TEST_CWD]);
-fs.appendFileSync(process.env.FAULT_TEST_CALLS, process.argv[2] + '\\n');
-assert.deepEqual(JSON.parse(fs.readFileSync(0, 'utf8')), { question: 'q', draft: 'private example' });
-console.log(process.env.FAULT_TEST_RESPONSE);
-process.exitCode = Number(process.env.FAULT_TEST_EXIT || 0);\n`);
+export async function decide(args, stream) {
+  assert.deepEqual(args, ['judge', '--cwd', process.env.FAULT_TEST_CWD]);
+  fs.appendFileSync(process.env.FAULT_TEST_CALLS, 'judge\\n');
+  const pieces = [];
+  for await (const part of stream) pieces.push(part);
+  assert.deepEqual(JSON.parse(Buffer.concat(pieces)), { question: 'q', draft: 'private example' });
+  return JSON.parse(process.env.FAULT_TEST_RESPONSE);
+}
+`);
   const calls = path.join(f.home, 'calls');
   const env = { ...f.env, PATH: bin, OPENAI_API_KEY: 'test-openai', FAULT_TEST_CALLS: calls, FAULT_TEST_CWD: f.cwd,
     FAULT_TEST_RESPONSE: JSON.stringify({ action: 'rewrite', reason: 'needs_rewrite', probability: 0.96 }) };
@@ -28,16 +32,14 @@ process.exitCode = Number(process.env.FAULT_TEST_EXIT || 0);\n`);
     return [result.status, result.stdout ? JSON.parse(result.stdout) : null];
   }
   const judge = (trigger = 'auto', args = [], overrides = {}) => invoke(['decision', 'judge', '--trigger', trigger, ...args], overrides);
-  const finish = (route, trigger = 'auto', args = [], overrides = {}) => invoke(['finish', '--trigger', trigger, '--route', route, ...args], overrides);
   const check = overrides => invoke(['check'], overrides)[1];
-  const note = reason => assert.equal(invoke(['note-failure', reason])[0], 0);
   const logged = () => fs.readFileSync(calls, 'utf8').trim().split('\n');
-  return { ...f, installed, bin, agy, env, calls, script, invoke, judge, finish, check, note, logged };
+  return { ...f, installed, bin, agy, env, calls, script, invoke, judge, check, helper, logged };
 }
 
 test('missing or invalid prerequisites never invoke a provider', t => {
   const { judge, agy, calls, env } = fixture(t);
-  for (const [variable, value, expected] of [['OPENAI_API_KEY', 'x\ny', 'openai_key_invalid'], ['CODEX_POLISH_AGY_AUTH', 'oauth-personal', 'unsupported_google_auth']]) {
+  for (const [variable, value, expected] of [['CODEX_POLISH_AGY_AUTH', 'oauth-personal', 'unsupported_google_auth']]) {
     assert.ok(judge('auto', [], { [variable]: value })[1].blockers.includes(expected));
   }
   fs.unlinkSync(agy);
@@ -45,129 +47,103 @@ test('missing or invalid prerequisites never invoke a provider', t => {
 });
 
 test('direct route skips the judge and enforces project policy', t => {
-  const { judge, finish, check, mode, agy, calls } = fixture(t), keyless = { OPENAI_API_KEY: '' };
+  const { judge, check, mode, agy, calls } = fixture(t), keyless = { OPENAI_API_KEY: '' };
   for (const key of [undefined, '', ' \t\n']) {
     const env = { OPENAI_API_KEY: key }, status = check(env);
     assert.equal(status.decisions_enabled, false); assert.equal(status.decisions_mode, 'auto'); assert.deepEqual(status.blockers, []);
     assert.deepEqual(judge('auto', [], env), [0, { action: 'rewrite', reason: 'direct_acp', route: 'acp' }]);
-    assert.deepEqual(finish('acp', 'auto', [], env), [0, { action: 'accept', reason: 'workflow_ready', route: 'acp' }]);
   }
   fs.writeFileSync(mode, 'manual'); assert.equal(judge('auto', [], keyless)[1].reason, 'project_mode');
   assert.equal(judge('explicit', [], keyless)[1].action, 'rewrite');
-  fs.writeFileSync(mode, 'off'); assert.equal(finish('acp', 'explicit', [], keyless)[1].reason, 'project_mode');
+  fs.writeFileSync(mode, 'off'); assert.equal(judge('explicit', [], keyless)[1].reason, 'project_mode');
   fs.writeFileSync(mode, 'auto'); fs.unlinkSync(agy);
   assert.deepEqual(judge('auto', [], keyless)[1].blockers, ['agy_missing']); assert.equal(fs.existsSync(calls), false);
 });
 
-test('finish requires the saved route, leaves stdin unread, and calls neither provider', t => {
-  const { cwd, home, env, script, judge, calls, logged } = fixture(t);
-  const { route } = judge()[1];
-  const args = ['--trigger', 'auto', '--cwd', cwd];
-  assert.equal(run(script, ['decision', 'verify', ...args], { env }).status, 2);
-  assert.equal(run(script, ['finish', ...args], { env }).status, 2);
-
-  const file = path.join(home, 'stdin');
-  const input = '{"question":"q","draft":"private draft","candidate":"private candidate"}';
-  fs.writeFileSync(file, input);
-  const fd = fs.openSync(file, 'r');
-  try {
-    const output = json(run(script, ['finish', ...args, '--route', route], { env, stdio: [fd, 'pipe', 'pipe'] }));
-    assert.deepEqual(output, { action: 'accept', reason: 'workflow_ready', route });
-    assert.equal(fs.readFileSync(fd, 'utf8'), input);
-  } finally {
-    fs.closeSync(fd);
-  }
-  assert.deepEqual(logged(), ['judge']);
-  assert.equal(fs.existsSync(calls + '.agy'), false);
-});
-
 test('opt-out and routing changes cannot silently call OpenAI', t => {
-  const { invoke, check, judge, finish, calls, logged } = fixture(t);
+  const { invoke, check, judge, calls, logged } = fixture(t);
   assert.equal(invoke(['set-decisions', 'off'])[1].decisions_mode, 'off');
   const status = check({ OPENAI_API_KEY: 'bad key' });
   assert.deepEqual([status.decisions_mode, status.decisions_enabled, status.blockers], ['off', false, []]);
   assert.equal(judge()[1].route, 'acp');
   assert.equal(judge('explicit', ['--route', 'decisions'])[1].reason, 'decision_route_changed');
-  assert.equal(finish('decisions', 'explicit')[1].reason, 'decision_route_changed');
   invoke(['set-decisions', 'auto']);
   assert.equal(judge('explicit', ['--route', 'acp'])[1].reason, 'decision_route_changed');
-  assert.equal(finish('acp', 'explicit')[1].reason, 'decision_route_changed');
   assert.equal(fs.existsSync(calls), false);
   assert.equal(judge('explicit', ['--route', 'decisions'])[1].route, 'decisions'); assert.deepEqual(logged(), ['judge']);
 });
 
-test('direct route ignores only OpenAI cooldowns and recovers ACP', t => {
-  const { note, check, judge, finish, calls } = fixture(t), env = { OPENAI_API_KEY: '' };
-  for (const reason of ['api_quota_exhausted', 'invalid_api_response']) {
-    note(reason); const recent = check().cooldown;
-    assert.equal(recent.reason, reason); assert.equal(check(env).cooldown, null);
-    assert.equal(judge('auto', [], env)[1].action, 'rewrite');
-    finish('acp', 'explicit', ['--recovery-token', recent.token], env);
-    assert.equal(check().cooldown.token, recent.token);
-  }
-  note('acp_auth_failed'); assert.equal(judge('auto', [], env)[1].reason, 'cooldown');
-  assert.equal(finish('acp', 'auto', [], env)[1].reason, 'cooldown');
-  const first = judge('explicit', [], env)[1].recovery_token;
-  note('acp_timeout'); finish('acp', 'explicit', ['--recovery-token', first], env);
-  const second = judge('explicit', [], env)[1].recovery_token;
-  assert.notEqual(first, second); finish('acp', 'explicit', ['--recovery-token', second], env);
-  assert.equal(check(env).cooldown, null); assert.equal(fs.existsSync(calls), false);
-});
-
-test('turbo skips Decisions with any OpenAI key and preserves the saved normal-mode policy', t => {
-  const { invoke, judge, finish, check, calls, note, logged } = fixture(t);
-  note('api_quota_exhausted');
-  const previous = check().cooldown;
+test('turbo always bypasses Decisions and returning to normal uses the saved policy immediately', t => {
+  const { invoke, judge, check, calls, logged, mode, agy } = fixture(t);
   invoke(['set-rewrite-mode', 'turbo']);
   for (const key of [undefined, 'valid-test-key', 'bad key']) {
     const env = { OPENAI_API_KEY: key };
     const status = check(env);
     assert.deepEqual([status.rewrite_mode, status.decisions_mode, status.decisions_enabled], ['turbo', 'auto', false]);
-    assert.deepEqual(status.blockers, []); assert.equal(status.cooldown, null);
+    assert.deepEqual(status.blockers, []);
     assert.deepEqual(judge('auto', ['--rewrite-mode', 'turbo'], env), [0, { action: 'rewrite', reason: 'direct_acp', route: 'acp' }]);
-    assert.equal(finish('acp', 'explicit', ['--rewrite-mode', 'turbo', '--recovery-token', previous.token], env)[1].action, 'accept');
   }
-  assert.equal(finish('decisions')[1].reason, 'decision_route_changed');
-  assert.equal(fs.existsSync(calls), false);
-  invoke(['set-rewrite-mode', 'normal']);
-  assert.equal(check().cooldown.token, previous.token);
-  assert.equal(judge()[1].reason, 'cooldown');
-  assert.equal(judge('explicit')[1].route, 'decisions');
-  assert.deepEqual(logged(), ['judge']);
-});
-
-test('turbo honors ACP recovery, trigger policy and local requirements', t => {
-  const { invoke, mode, agy, note, check, judge, finish, calls } = fixture(t);
-  invoke(['set-rewrite-mode', 'turbo']);
-  note('acp_auth_failed');
-  assert.equal(judge()[1].reason, 'cooldown');
-  assert.equal(finish('acp')[1].reason, 'cooldown');
-  const token = judge('explicit')[1].recovery_token;
-  assert.equal(token, check().cooldown.token);
-  assert.equal(finish('acp', 'explicit', ['--recovery-token', token])[1].action, 'accept');
-  assert.equal(check().cooldown, null);
+  assert.equal(judge('auto', ['--route', 'decisions'])[1].reason, 'decision_route_changed');
   fs.writeFileSync(mode, 'manual');
   assert.equal(judge()[1].reason, 'project_mode');
   assert.equal(judge('explicit')[1].route, 'acp');
   fs.writeFileSync(mode, 'off');
   assert.equal(judge('explicit')[1].reason, 'project_mode');
   fs.writeFileSync(mode, 'auto');
+  assert.equal(fs.existsSync(calls), false);
+  invoke(['set-rewrite-mode', 'normal']);
+  assert.equal(judge()[1].route, 'decisions');
+  assert.deepEqual(logged(), ['judge']);
   fs.unlinkSync(agy);
   assert.deepEqual(judge()[1].blockers, ['agy_missing']);
-  assert.equal(fs.existsSync(calls), false);
 });
 
-test('decision and finish detect strategy changes even when both use direct ACP', t => {
-  const { invoke, judge, finish, calls } = fixture(t);
+test('decision detects strategy changes even when both modes use direct ACP', t => {
+  const { invoke, judge, calls } = fixture(t);
   invoke(['set-decisions', 'off']);
   for (const [before, after] of [['normal', 'turbo'], ['turbo', 'normal']]) {
     const pinned = ['--rewrite-mode', before];
     assert.equal(judge('auto', pinned)[1].route, 'acp');
     invoke(['set-rewrite-mode', after]);
     assert.equal(judge('auto', pinned)[1].reason, 'rewrite_mode_changed');
-    assert.equal(finish('acp', 'auto', pinned)[1].reason, 'rewrite_mode_changed');
-    assert.equal(finish('acp', 'auto', ['--rewrite-mode', after])[1].action, 'accept');
+    assert.equal(judge('auto', ['--rewrite-mode', after])[1].route, 'acp');
   }
+  assert.equal(fs.existsSync(calls), false);
+});
+
+test('explicit one-turn Turbo bypasses Decisions and the next turn uses Normal', t => {
+  const { invoke, judge, check, calls, logged, mode } = fixture(t);
+  const strategy = path.join(path.dirname(mode), 'codex-polish.rewrite-mode');
+  const args = ['--route', 'acp', '--rewrite-mode', 'turbo', '--model', 'gemini-4-hydrogen'];
+  for (const triggerMode of ['auto', 'manual']) {
+    fs.writeFileSync(mode, triggerMode);
+    const status = invoke(['check', '--trigger', 'turbo'])[1];
+    assert.deepEqual([status.rewrite_mode, status.decisions_enabled, status.mode], ['turbo', false, triggerMode]);
+    assert.deepEqual(judge('turbo', args), [0, { action: 'rewrite', reason: 'direct_acp', route: 'acp' }]);
+    assert.equal(judge('turbo', ['--route', 'decisions'])[1].reason, 'decision_route_changed');
+    assert.equal(judge('explicit', args)[1].reason, 'rewrite_mode_changed');
+  }
+  assert.equal(fs.existsSync(calls), false);
+  assert.equal(fs.existsSync(strategy), false);
+  const normal = check();
+  assert.deepEqual([normal.rewrite_mode, normal.decisions_enabled], ['normal', true]);
+  assert.equal(judge('explicit', ['--rewrite-mode', 'normal'])[1].route, 'decisions');
+  assert.deepEqual(logged(), ['judge']);
+});
+
+test('one-turn Turbo honors local off, invalid settings, missing providers and model changes', t => {
+  const { invoke, judge, calls, mode, agy } = fixture(t);
+  const setting = invoke(['set-rewrite-mode', 'normal'])[1].file;
+  assert.equal(judge('turbo', ['--model', 'unselected-model'])[1].reason, 'gemini_model_changed');
+  assert.equal(fs.readFileSync(setting, 'utf8'), 'normal\n');
+  fs.writeFileSync(mode, 'off');
+  assert.equal(judge('turbo')[1].reason, 'project_mode');
+  fs.unlinkSync(mode);
+  fs.writeFileSync(setting, 'broken');
+  assert.equal(judge('turbo')[1].reason, 'rewrite_mode_invalid');
+  fs.unlinkSync(setting);
+  fs.unlinkSync(agy);
+  assert.equal(judge('turbo')[1].reason, 'agy_missing');
   assert.equal(fs.existsSync(calls), false);
 });
 
@@ -189,51 +165,83 @@ test('explicit key mode validates only the configured Gemini key', t => {
 });
 
 test('enterprise runtime and policy changes', t => {
-  const { judge, finish, mode, logged, calls } = fixture(t);
+  const { judge, mode, logged, calls } = fixture(t);
   assert.equal(judge('auto', [], { CODEX_POLISH_AGY_AUTH: 'agent-platform', GEMINI_API_KEY: '' })[1].action, 'rewrite');
-  fs.writeFileSync(mode, 'manual'); assert.equal(finish('decisions')[1].reason, 'project_mode');
-  fs.writeFileSync(mode, 'off'); assert.equal(finish('decisions', 'explicit')[1].reason, 'project_mode');
+  fs.writeFileSync(mode, 'manual'); assert.equal(judge()[1].reason, 'project_mode');
+  fs.writeFileSync(mode, 'off'); assert.equal(judge('explicit')[1].reason, 'project_mode');
   assert.deepEqual(logged(), ['judge']); assert.equal(fs.existsSync(calls + '.agy'), false);
 });
 
-test('failed judge suppresses auto and explicit recovery is scoped', t => {
-  const { judge, finish, note, check, logged } = fixture(t);
-  const error = { FAULT_TEST_EXIT: '1', FAULT_TEST_RESPONSE: '{"action":"keep","reason":"api_rate_limited"}' };
-  assert.deepEqual(judge('auto', [], error), [1, { action: 'keep', reason: 'api_rate_limited' }]);
-  assert.equal(judge()[1].reason, 'cooldown');
-  const first = judge('explicit')[1].recovery_token;
-  note('acp_auth_failed');
-  assert.equal(finish('decisions', 'explicit', ['--recovery-token', first])[1].action, 'accept');
-  assert.equal(check().cooldown.reason, 'acp_auth_failed');
-  const token = judge('explicit')[1].recovery_token;
-  finish('decisions', 'explicit', ['--recovery-token', token]);
-  assert.equal(check().cooldown, null); assert.deepEqual(logged(), ['judge', 'judge', 'judge']);
+test('each optional provider failure permits a rewrite without retrying the decision', t => {
+  const { judge, logged } = fixture(t);
+  const reasons = ['api_rate_limited', 'api_timeout', 'api_auth_error', 'api_quota_exhausted', 'api_refusal',
+    'api_server_error', 'invalid_api_response', 'api_transport_error', 'api_http_error', 'decision_input_too_large', 'invalid_api_key'];
+  for (const reason of reasons) {
+    const failure = { FAULT_TEST_RESPONSE: JSON.stringify({ action: 'keep', reason }) };
+    assert.deepEqual(judge('auto', [], failure), [0, { action: 'rewrite', reason: 'decision_unavailable', decision_error: reason, route: 'decisions' }]);
+  }
+  assert.equal(judge()[1].reason, 'needs_rewrite');
+  assert.equal(logged().length, reasons.length + 1);
 });
 
-test('broken helper, rejected input and content refusal retain original without backoff', t => {
-  const { judge, note, check } = fixture(t);
-  const env = { FAULT_TEST_RESPONSE: '{', FAULT_TEST_EXIT: '1' };
-  assert.deepEqual(judge('auto', [], env), [1, { action: 'keep', reason: 'decision_helper_unavailable' }]);
-  for (const reason of ['api_refusal', 'possible_credential', 'display_control', 'editor_prompt_invalid', 'decision_route_changed', 'rewrite_mode_invalid']) {
-    const expected = { action: 'keep', reason };
-    env.FAULT_TEST_RESPONSE = JSON.stringify(expected);
-    assert.deepEqual(judge('auto', [], env), [1, expected]);
-    assert.equal(check().cooldown, null);
+test('malformed key and provider-sized input use ACP without making an HTTPS request', t => {
+  const { cwd, env, helper, script } = fixture(t);
+  fs.copyFileSync(path.join(plugin, 'skills/codex-polish/scripts/decisions.mjs'), helper);
+  for (const [key, draft, expected] of [['malformed key', 'test message', 'invalid_api_key'],
+      ['valid-test-key', 'x'.repeat(600 * 1024), 'decision_input_too_large']]) {
+    const input = JSON.stringify({ question: 'q', draft });
+    const output = json(run(script, ['decision', 'judge', '--cwd', cwd, '--route', 'decisions', '--trigger', 'auto'], {
+      env: { ...env, OPENAI_API_KEY: key, HTTPS_PROXY: 'http://127.0.0.1:1' }, input,
+    }));
+    assert.deepEqual(output, { action:'rewrite', reason:'decision_unavailable', decision_error:expected, route:'decisions' });
   }
-  note('acp_tool_requested'); assert.equal(check().cooldown, null);
+});
+
+test('a project change while stdin is being read prevents the OpenAI request', t => {
+  const { cwd, mode, env, helper, script } = fixture(t);
+  fs.copyFileSync(path.join(plugin, 'skills/codex-polish/scripts/decisions.mjs'), helper);
+  const preload = `
+    import fs from 'node:fs';
+    import https from 'node:https';
+    const original = process.stdin[Symbol.asyncIterator].bind(process.stdin);
+    process.stdin[Symbol.asyncIterator] = async function* () {
+      yield* original();
+      fs.writeFileSync(process.env.TEST_SETTING_PATH, process.env.TEST_SETTING_VALUE);
+    };
+    https.request = () => { fs.writeFileSync(process.env.FAULT_TEST_CALLS, 'unexpected network'); throw new Error(); };
+  `;
+  const model = path.join(path.dirname(mode), 'codex-polish.model');
+  for (const [file, value, reason] of [[mode, 'off', 'project_mode'], [model, 'gemini-other', 'gemini_model_changed']]) {
+    const result = run('--import', ['data:text/javascript,' + encodeURIComponent(preload), script, 'decision', 'judge',
+      '--trigger', 'auto', '--route', 'decisions', '--rewrite-mode', 'normal', '--model', 'gemini-4-hydrogen', '--cwd', cwd],
+    { env: { ...env, TEST_SETTING_PATH:file, TEST_SETTING_VALUE:value }, input: '{"question":"q","draft":"draft"}' });
+    const decision = json(result);
+    assert.equal(decision.action, 'keep');
+    assert.equal(decision.reason, reason);
+    assert.equal(fs.existsSync(env.FAULT_TEST_CALLS), false);
+    fs.unlinkSync(file);
+  }
+});
+
+test('input and local-policy failures keep the draft without disabling later turns', t => {
+  const { judge } = fixture(t);
+  for (const reason of ['possible_credential', 'invalid_input', 'display_control', 'editor_prompt_invalid', 'decision_route_changed', 'rewrite_mode_invalid']) {
+    const expected = { action: 'keep', reason };
+    assert.deepEqual(judge('auto', [], { FAULT_TEST_RESPONSE: JSON.stringify(expected) }), [1, expected]);
+  }
+  assert.equal(judge()[1].action, 'rewrite');
 });
 
 test('unrecognized helper output cannot be delivered or recorded', t => {
-  const { judge, check } = fixture(t);
-  for (const [exit, response] of [['0', '{"action":"rewrite","reason":"needs_rewrite"}'],
-    ['0', '{"action":"rewrite","probability":true,"reason":"needs_rewrite"}'], ['1', '{"action":"keep","reason":"private example"}']]) {
-    assert.deepEqual(judge('auto', [], { FAULT_TEST_EXIT: exit, FAULT_TEST_RESPONSE: response }), [1, { action: 'keep', reason: 'decision_helper_unavailable' }]);
-    assert.equal(check().cooldown, null);
+  const { judge } = fixture(t);
+  for (const response of ['{"action":"rewrite","reason":"needs_rewrite"}',
+    '{"action":"rewrite","probability":true,"reason":"needs_rewrite"}', '{"action":"keep","reason":"private example"}']) {
+    assert.deepEqual(judge('auto', [], { FAULT_TEST_RESPONSE: response }), [1, { action: 'keep', reason: 'decision_helper_unavailable' }]);
   }
 });
 
-test('auto hook shows a pause notice during backoff and stays silent without Node', t => {
-  const { installed, env, cwd, bin, note, invoke } = fixture(t);
+test('an OpenAI outage leaves subsequent auto hooks available; missing Node stays silent', t => {
+  const { installed, env, cwd, bin, judge, invoke } = fixture(t);
   const command = JSON.parse(fs.readFileSync(path.join(installed, 'hooks/hooks.json'))).hooks.UserPromptSubmit[0].hooks[0].command;
   const settings = { ...env, LANG: 'en_US.UTF-8', LC_ALL: 'en_US.UTF-8', PLUGIN_ROOT: installed };
   const hook = () => {
@@ -241,15 +249,13 @@ test('auto hook shows a pause notice during backoff and stays silent without Nod
     assert.equal(p.status, 0); assert.equal(p.stderr, ''); return p.stdout;
   };
   assert.equal(hook(), ''); fs.symlinkSync(process.execPath, path.join(bin, 'node'));
-  const ready = () => assert.match(hook(), /codex-polish:codex-polish/);
-  const paused = () => {
-    const notice = JSON.parse(hook()).hookSpecificOutput.additionalContext;
-    assert.match(notice, /temporarily paused/);
-    assert.doesNotMatch(notice, /codex-polish:codex-polish/);
-  };
-  ready(); note('invalid_api_response'); paused();
-  settings.OPENAI_API_KEY = ''; ready();
-  settings.OPENAI_API_KEY = env.OPENAI_API_KEY;
-  invoke(['set-rewrite-mode', 'turbo']); ready();
-  note('acp_timeout'); paused();
+  const workflow = JSON.stringify(path.join(installed, 'skills/codex-polish/WORKFLOW.md'));
+  const ready = () => assert.ok(JSON.parse(hook()).hookSpecificOutput.additionalContext.includes(workflow));
+  ready();
+  judge('auto', [], { FAULT_TEST_RESPONSE: '{"action":"keep","reason":"api_server_error"}' });
+  ready();
+  settings.OPENAI_API_KEY = '';
+  ready();
+  invoke(['set-rewrite-mode', 'turbo']);
+  ready();
 });

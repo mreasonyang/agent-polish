@@ -44,7 +44,14 @@ function fixture(t) {
   write(join(product, 'signature'), 'original');
   write(join(source, GUIDE), 'instructions');
   setVersion('1.0.0');
-  const state = { source: null, version: null, enabled: true, commands: [], fail: null, bad: 0 };
+  const state = {
+    market: null, version: null, enabled: true, commands: [], fail: null, bad: 0,
+    get source() {
+      if (!this.market) return null;
+      const path = JSON.parse(fs.readFileSync(join(this.market, INDEX))).plugins[0].source.path;
+      return join(this.market, path.split('/')[1]);
+    }
+  };
   function run(...args) {
     const command = args.join(' ');
     state.commands.push(command);
@@ -54,8 +61,8 @@ function fixture(t) {
     }
     if (command === 'marketplace list')
       return {
-        marketplaces: state.source
-          ? [{ name: MARKET, marketplaceSource: { sourceType: 'local', source: state.source } }]
+        marketplaces: state.market
+          ? [{ name: MARKET, marketplaceSource: { sourceType: 'local', source: state.market } }]
           : []
       };
     if (command === 'list --marketplace ' + MARKET)
@@ -63,12 +70,12 @@ function fixture(t) {
         installed: state.version ? [{ pluginId: PLUGIN_ID, version: state.version, enabled: state.enabled }] : []
       };
     if (args[0] === 'marketplace' && args[1] === 'add') {
-      assert.equal(state.source, null);
-      state.source = args[2];
+      assert.equal(state.market, null);
+      state.market = args[2];
       return {};
     }
     if (command === 'marketplace remove ' + MARKET) {
-      state.source = null;
+      state.market = null;
       return {};
     }
     if (command === 'remove ' + PLUGIN_ID) {
@@ -106,6 +113,9 @@ test('persistent snapshots survive extracted folder removal, update changed byte
   write(join(product, 'signature'), 'another release');
   await call('update');
   assert.notEqual(first, state.source);
+  assert.equal(state.market, store);
+  assert.equal(state.commands.filter((command) => command.startsWith('marketplace add')).length, 1);
+  assert.ok(!state.commands.some((command) => command.startsWith('marketplace remove')));
   assert.equal(fs.readFileSync(join(cache, 'signature'), 'utf8'), 'another release');
   const changed = state.source;
   write(join(changed, PRODUCT, 'signature'), 'my notes');
@@ -181,13 +191,38 @@ test('declines changes to a different registered marketplace for all operations'
   const { source, state, base, call } = fixture(t);
   const copy = join(base, 'another checkout');
   fs.cpSync(source, copy, { recursive: true });
-  state.source = copy;
+  state.market = copy;
   for (const action of ['setup', 'update', 'uninstall']) {
     state.commands = [];
     await assert.rejects(call(action), SetupError);
     assert.deepEqual(state.commands, ['marketplace list']);
-    assert.equal(state.source, copy);
+    assert.equal(state.market, copy);
   }
+});
+test('an altered or linked active marketplace manifest cannot redirect update or uninstall', async (t) => {
+  const { base, store, state, call } = fixture(t);
+  await call('setup');
+  const active = join(store, INDEX);
+  const original = fs.readFileSync(active);
+  const redirected = JSON.parse(original);
+  redirected.plugins[0].source.path = './other/' + PRODUCT;
+  write(active, JSON.stringify(redirected));
+  for (const action of ['setup', 'update', 'uninstall']) {
+    state.commands = [];
+    await assert.rejects(call(action), SetupError);
+    assert.deepEqual(state.commands, ['marketplace list']);
+  }
+  const external = join(base, 'external-index');
+  write(external, original);
+  fs.unlinkSync(active);
+  fs.symlinkSync(external, active);
+  await assert.rejects(call('uninstall'), SetupError);
+  assert.ok(fs.lstatSync(active).isSymbolicLink());
+  assert.deepEqual(fs.readFileSync(external), original);
+  fs.unlinkSync(active);
+  write(active, original);
+  await call('uninstall');
+  assert.ok(!fs.existsSync(join(store, '.agents')));
 });
 test('uninstall retains edited files, empty directories, FIFOs and links, and rejects foreign manifests', async (t) => {
   const { base, state, call } = fixture(t);
@@ -245,6 +280,10 @@ test('broken deregistration retries and modified managed source offers recovery'
   await assert.rejects(call('setup'), SetupError);
   assert.equal(state.source, null);
   await call('uninstall');
+  await call('setup');
+  write(join(store, '.pending-update.json'), 'damaged');
+  await call('uninstall');
+  assert.equal(state.source, null);
 });
 test('cache preserves mode, bytes, links, nonregular files, empty directories and unknown sources', (t) => {
   const base = temp(t);
@@ -256,7 +295,7 @@ test('cache preserves mode, bytes, links, nonregular files, empty directories an
     write(join(source, 'known'), 'data');
     fs.mkdirSync(dirname(cache), { recursive: true });
     fs.cpSync(source, target, { recursive: true });
-    const keep = () => preserve(profile, 'local', 'rewrite', '1.0.0', () => (change === 'no source' ? null : source));
+    const keep = () => preserve(profile, 'local', 'rewrite', '1.0.0', () => (change === 'no source' ? [] : [source]));
     if (change !== 'no source') assert.equal(keep(), null);
     if (change === 'empty') fs.mkdirSync(join(target, 'empty'));
     if (change === 'link') fs.symlinkSync(source, join(target, 'link'));
@@ -289,7 +328,7 @@ test('cache refuses linked ancestors and linked backup folder', (t) => {
       write(join(market, 'rewrite', 'notes'), 'mine');
       fs.symlinkSync(outside, join(profile, 'codex-polish-backups'));
     }
-    assert.throws(() => preserve(profile, 'local', 'rewrite', null, () => null), /directory|目录/);
+    assert.throws(() => preserve(profile, 'local', 'rewrite', null, () => []), /directory|目录/);
     assert.deepEqual(fs.readdirSync(outside), []);
   }
 });

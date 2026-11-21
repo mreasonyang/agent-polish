@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { temporary, plugin, run, json, mkfifo } from './hook_fixture.mjs';
-import { readHistory, MAX_HISTORY_BYTES, MAX_SCAN_BYTES } from '../plugins/codex-polish/hooks/history.mjs';
+import { readHistory, readPreviousReply } from '../plugins/codex-polish/hooks/history.mjs';
+import { formatReply, originalReplyText } from '../plugins/codex-polish/skills/codex-polish/scripts/format_reply.mjs';
 
 const script = path.join(plugin, 'hooks/history.mjs');
 const event = (name, fields = {}) => ({ type: 'event_msg', payload: { type: name, ...fields } });
@@ -103,18 +104,42 @@ test('exec and resumed exec keep root user input and exclude agents or automatio
   assert.deepEqual(read(1), [{ user: 'typed first', assistant: 'final first' }]);
 });
 
-test('returns newest whole exchanges within the UTF-8 byte budget', t => {
+test('includes the requested complete exchanges even when their UTF-8 text exceeds 16 KiB', t => {
   const { read, write } = fixture(t);
-  write(...exchange('a', 'secret past budget', 'x'.repeat(MAX_HISTORY_BYTES - 2)), ...exchange('b', 'q', '中'.repeat(Math.floor(MAX_HISTORY_BYTES / 3) - 1)),
-    ...exchange('c', 'q', 'newest'), start('now'));
-  assert.deepEqual(read(Number.MAX_SAFE_INTEGER), [{ user: 'q', assistant: 'newest' }]);
+  const first = { user: 'qA', assistant: 'x'.repeat(17000) };
+  const second = { user: 'qB', assistant: '中'.repeat(17000) };
+  write(...exchange('a', first.user, first.assistant), ...exchange('b', second.user, second.assistant), start('now'));
+  assert.deepEqual(read(2), [first, second]);
+});
+
+test('desktop composer and interrupted resumes keep all typed questions once in one exchange', t => {
+  const { write, read, file } = fixture(t);
+  const launch = (id, trigger) => event('task_started', { turn_id: id, root_turn_id: id,
+    turn_attribution: { turn_id: id, root_turn_id: id, turn_trigger: trigger, parent_turn_id: null, initiating_agent_path: null } });
+  const abort = (turn_id, reason = 'interrupted') => event('turn_aborted', { turn_id, reason });
+  const past = exchange('p', 'old', 'reply');
+  const initial = [launch('a', 'composer'), typed('a', '第一句'), user('第一句'), user('补充 A'), abort('a')];
+  const followup = [launch('b', 'resume_interrupted_task'), typed('b', '补充 B'), abort('b'), launch('c', 'resume_interrupted_task')];
+  write(...past, ...initial, ...followup);
+  // The submit hook can point to the original composer turn throughout a resume.
+  assert.deepEqual(readHistory(file, 's', 'a', 1), [{ user: 'old', assistant: 'reply' }]);
+  write(...past, ...initial, ...followup, final('完整答复'), finish('c', '完整答复'), launch('now', 'composer'));
+  assert.deepEqual(read(1), [{ user: '第一句\n\n补充 A\n\n补充 B', assistant: '完整答复' }]);
+  for (const [previous, current] of [
+    [[launch('a', 'composer'), typed('a', 'discard'), abort('a', 'cancelled')], 'resume_interrupted_task'],
+    [initial, 'composer'],
+    [[...initial, launch('agent', 'cron'), abort('agent')], 'resume_interrupted_task'],
+  ]) {
+    write(...past, ...previous, launch('new', current), typed('new', 'fresh'), final('ok'), finish('new', 'ok'), launch('now', 'composer'));
+    assert.deepEqual(read(1), [{ user: 'fresh', assistant: 'ok' }]);
+  }
 });
 
 test('reads recent turns in large files, rejects malformed or special files', t => {
   const { read, write, file } = fixture(t);
-  write(start('older'), user('too old'), { type: 'response_item', payload: { type: 'custom_tool_call_output', output: 'X'.repeat(MAX_SCAN_BYTES) } },
+  write(...exchange('old', 'older', 'answer before large tool result'), start('tool-only'), { type: 'response_item', payload: { type: 'custom_tool_call_output', output: 'X'.repeat(5 * 1024 * 1024) } },
     ...exchange('a', 'q', 'answer'), start('now'));
-  assert.deepEqual(read(), [{ user: 'q', assistant: 'answer' }]);
+  assert.deepEqual(read(), [{ user: 'older', assistant: 'answer before large tool result' }, { user: 'q', assistant: 'answer' }]);
   const args = ['--session-id', 's', '--transcript', file, '--turn-id', 'now'];
   assert.deepEqual(json(run(script, args)), read());
   assert.deepEqual(json(run(script, [...args, '--turns', '0'])), []);
@@ -134,4 +159,89 @@ test('rollback and fork never cross thread history', t => {
   meta.payload.forked_from_id = 'other';
   write(...seen, start('now'));
   assert.deepEqual(read(), []);
+});
+
+test('previous rewrite uses the selected question and draft and only the turns before it', t => {
+  const { file, write } = fixture(t);
+  const turns = Array.from({ length: 14 }, (_, i) => ({ user: 'question ' + i, assistant: 'answer ' + i }));
+  const previous = (count, turnsBack) => readPreviousReply(file, 's', 'now', count, turnsBack);
+  write(...turns.flatMap(({ user, assistant }, i) => exchange(String(i), user, assistant)), start('now'), user('Try again with Gemini.'));
+  assert.deepEqual(previous(0), { question: 'question 13', draft: 'answer 13', history: [] });
+  assert.deepEqual(previous(10, 3), { question: 'question 11', draft: 'answer 11', history: turns.slice(1, 11) });
+  assert.deepEqual(previous(10, 14), { question: 'question 0', draft: 'answer 0', history: [] });
+  assert.equal(previous(10, 15), null);
+  assert.equal(previous(10, Number.MAX_SAFE_INTEGER), null);
+  assert.equal(previous(2, 0), null);
+  assert.equal(readPreviousReply(file, 's', 'stale', 2), null);
+  assert.equal(readPreviousReply(file, 'another', 'now', 2), null);
+  write(start('now'), user('No earlier replies.'));
+  assert.equal(previous(2), null);
+});
+
+test('previous rewrite extracts the displayed GPT original in either language, including quoted disclosures', t => {
+  const { file, write } = fixture(t);
+  for (const lang of ['zh', 'en']) {
+    for (const draft of [
+      'Plain original, with an intentional ending.\n',
+      'The example contains markup.\r\n<details><summary>Demo</summary>\r\n\r\n\n> Example\n</details>\n\n```\n:::',
+    ]) for (const candidate of ['Gemini supplied different text.', draft]) {
+      const display = formatReply({ draft, candidate, display_language: lang }).display_text;
+      write(...exchange('old', 'Earlier question.', 'Earlier answer.'), ...exchange('selected', 'Original question.', display),
+        start('now'), user('Have Gemini rewrite the last reply.'));
+      assert.deepEqual(readPreviousReply(file, 's', 'now', 1), {
+        question: 'Original question.', draft, history: [{ user: 'Earlier question.', assistant: 'Earlier answer.' }],
+      });
+    }
+  }
+});
+
+test('the next rewrite uses the original body after a Normal decision or a service failure', () => {
+  const draft = 'The browser reuses a cached copy.\n';
+  for (const notice of ['**未润色** · OpenAI 判断原稿已经清楚。', '**Polishing skipped** · Gemini was unavailable.']) {
+    assert.equal(originalReplyText(notice + '\n\n' + draft), draft);
+  }
+});
+
+test('the formatter labels user-selected source neutrally and preserves it for later rewrites', () => {
+  const script = path.join(plugin, 'skills/codex-polish/scripts/format_reply.mjs');
+  for (const [lang, summary, unchanged] of [['zh', '查看原文', 'Gemini 返回了原文'], ['en', 'View original text', 'Gemini returned the original text']]) {
+    for (const draft of ['A user-selected excerpt.', 'A quoted example.\n\n<details>\n:::']) {
+      const input = { draft, candidate: 'Rewritten excerpt.', display_language: lang, source_label: 'quoted' };
+      const { display_text } = json(run(script, [], { input: JSON.stringify(input) }));
+      assert.ok(display_text.includes(summary));
+      assert.ok(!display_text.includes('GPT'));
+      assert.equal(originalReplyText(display_text), draft);
+      const same = formatReply({ ...input, candidate: draft });
+      assert.equal(same.display_text, `**${unchanged}**\n\n${draft}`);
+      assert.equal(originalReplyText(same.display_text), draft);
+    }
+  }
+  const badLabel = run(script, [], { input: JSON.stringify({ draft: 'Source.', candidate: 'Result.', source_label: 'unknown' }) });
+  assert.notEqual(badLabel.status, 0);
+  assert.equal(badLabel.stdout, '');
+});
+
+test('unavailable targets never silently select an older answer', t => {
+  const { file, write, meta } = fixture(t);
+  const before = exchange('earlier', 'Earlier question.', 'Earlier answer.');
+  const previous = (turnsBack = 1) => readPreviousReply(file, 's', 'now', 2, turnsBack);
+  for (const target of [
+    exchange('x', 'Question.', 'password=fixture-secret'),
+    exchange('x', 'Question.', '**Polished by Gemini**\n\nChanged copy, missing disclosure.'),
+    [start('x'), event('user_message', { message: 'Question.', images: ['attachment'] }), final('Reply.'), finish('x', 'Reply.')],
+    [start('x'), message('user', 'Unattributed material.'), final('Reply.'), finish('x', 'Reply.')],
+    [start('x'), user('Question.'), final('Reply.'), finish('x', 'Changed after completion.')],
+    [start('x'), user('Question.'), final('Reply.'), finish('x', null)],
+  ]) {
+    write(...before, ...target, start('now'));
+    assert.equal(previous(), null);
+    write(...before, ...target, ...exchange('latest', 'Another question.', 'Another answer.'), start('now'));
+    assert.equal(previous(2), null);
+    assert.deepEqual(previous().history[0], { user: 'Earlier question.', assistant: 'Earlier answer.' });
+  }
+  write(...before, event('thread_rolled_back', { num_turns: 1 }), start('now'));
+  assert.equal(previous(), null);
+  meta.payload.forked_from_id = 'other';
+  write(...before, start('now'));
+  assert.equal(previous(), null);
 });

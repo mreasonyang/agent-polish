@@ -1,20 +1,11 @@
-// Short-lived service failures scoped to a Codex profile and project.
+// Private storage for the current thread’s transcript pointer.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createHash, randomBytes } from 'node:crypto';
 
-export const COOLDOWNS = Object.freeze({
-  api_rate_limited: 60, api_server_error: 60, api_transport_error: 60,
-  api_timeout: 60, invalid_api_response: 60, acp_start_failed: 60,
-  acp_timeout: 60, acp_protocol_error: 60, acp_provider_error: 60,
-  acp_incomplete: 60, api_auth_error: 300, api_quota_exhausted: 300,
-  acp_auth_failed: 300, acp_model_unavailable: 300,
-});
 export const APPLICATION_ID = 0x43504f4c;
-const TOKEN = /^[0-9a-f]{32}$/;
-const validToken = value => typeof value === 'string' && value.length === 32 && TOKEN.test(value);
 const hash = value => createHash('sha256').update(value).digest('hex');
 
 function canonicalPath(value) {
@@ -131,7 +122,7 @@ export function removeProfileCache() {
     return withCache('write', db => {
       db.exec('BEGIN EXCLUSIVE');
       const objects = db.prepare('SELECT type, name FROM sqlite_master WHERE sql IS NOT NULL').all();
-      if (objects.some(row => row.type !== 'table' || !['cooldown', 'history_source'].includes(row.name))) return file;
+      if (objects.some(row => row.type !== 'table' || row.name !== 'history_source')) return file;
       if (db.prepare('PRAGMA journal_mode').get().journal_mode !== 'delete') return file;
       fs.unlinkSync(file);
       return null;
@@ -139,63 +130,5 @@ export function removeProfileCache() {
   } catch (cause) {
     if (cause.code === 'ENOENT') return null;
     throw Object.assign(new Error('could not clean up runtime cache', { cause }), { code: 'EIO', path: file });
-  }
-}
-
-function clocks() {
-  return [Date.now(), Number(process.hrtime.bigint() / 1_000_000n)];
-}
-
-export function activeFailure(scope, now = clocks) {
-  try {
-    const key = cacheScope(scope);
-    const row = withCache('read', db => {
-      const query = db.prepare('SELECT reason, wall_ms, mono_ms, token FROM cooldown WHERE scope = ?');
-      return query.get(key);
-    });
-    if (!row || typeof row.reason !== 'string' || !Object.hasOwn(COOLDOWNS, row.reason) || !validToken(row.token) ||
-        !Number.isSafeInteger(row.wall_ms) || !Number.isSafeInteger(row.mono_ms)) return null;
-    const [wall, mono] = now();
-    const wallElapsed = wall - row.wall_ms;
-    const monoElapsed = mono - row.mono_ms;
-    if (wallElapsed < 0 || monoElapsed < 0) return null;
-    const elapsed = Math.max(wallElapsed, monoElapsed);
-    const remaining = COOLDOWNS[row.reason] - Math.floor(elapsed / 1000);
-    return remaining > 0 ? { reason: row.reason, remaining_seconds: remaining, token: row.token } : null;
-  } catch {
-    return null;
-  }
-}
-
-export function noteFailure(scope, reason, now = clocks) {
-  if (typeof reason !== 'string' || !Object.hasOwn(COOLDOWNS, reason)) return false;
-  try {
-    const key = cacheScope(scope);
-    return withCache('create', db => {
-      db.exec(`BEGIN IMMEDIATE;
-        CREATE TABLE IF NOT EXISTS cooldown (
-          scope TEXT PRIMARY KEY, reason TEXT NOT NULL, wall_ms INTEGER NOT NULL,
-          mono_ms INTEGER NOT NULL, token TEXT NOT NULL)`);
-      const [wall, mono] = now();
-      const cutoff = Math.max(...Object.values(COOLDOWNS)) * 1000;
-      db.prepare('DELETE FROM cooldown WHERE wall_ms < ? OR mono_ms < ? OR wall_ms > ? OR mono_ms > ?')
-        .run(wall - cutoff, mono - cutoff, wall, mono);
-      db.prepare('INSERT OR REPLACE INTO cooldown(scope, reason, wall_ms, mono_ms, token) VALUES(?, ?, ?, ?, ?)')
-        .run(key, reason, wall, mono, randomBytes(16).toString('hex'));
-      db.exec('COMMIT');
-      return true;
-    });
-  } catch {
-    return false;
-  }
-}
-
-export function clearFailure(scope, token) {
-  if (!validToken(token)) return false;
-  try {
-    const key = cacheScope(scope);
-    return withCache('write', db => db.prepare('DELETE FROM cooldown WHERE scope = ? AND token = ?').run(key, token).changes === 1);
-  } catch {
-    return false;
   }
 }

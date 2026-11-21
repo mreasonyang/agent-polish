@@ -4,7 +4,7 @@ import * as fs from 'node:fs';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
 import { createHash, randomUUID } from 'node:crypto';
-import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { on } from 'node:events';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -14,8 +14,9 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { isDeepStrictEqual } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { language, tr } from '../plugins/codex-polish/hooks/ui_locale.mjs';
-import { findAgy } from '../plugins/codex-polish/hooks/preferences.mjs';
+import { DEFAULT_GEMINI_MODEL, findAgy } from '../plugins/codex-polish/hooks/preferences.mjs';
 import { removeProfileCache, sqliteModule } from '../plugins/codex-polish/hooks/recovery.mjs';
+import { sessionCatalog } from '../plugins/codex-polish/skills/codex-polish/scripts/acp_models.mjs';
 import { preserve } from './native_cache.mjs';
 
 export const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -288,6 +289,50 @@ function registration(run) {
   }
   return registeredPath(source);
 }
+function registeredMarket(run, store) {
+  const path = registration(run);
+  if (path && path !== store)
+    throw fail('同名市场使用了其他来源，请在 Codex 插件设置中检查。',
+      'A marketplace with the same name uses a different source. Check it in Codex plugin settings.');
+  return path;
+}
+function marketIndex(snapshot) {
+  bundleVersion(snapshot);
+  const index = readJSON(join(snapshot, INDEX));
+  index.plugins[0].source.path = './' + basename(snapshot) + '/' + PRODUCT;
+  return index;
+}
+function activeSnapshot(store) {
+  if (!plainFile(store, INDEX)) return null;
+  const index = readJSON(join(store, INDEX));
+  const relative = index?.plugins?.[0]?.source?.path;
+  const name = typeof relative === 'string' && relative.split('/')[1];
+  if (name && snapshotName.test(name)) {
+    const snapshot = join(store, name);
+    if (ownsSnapshot(snapshot, store) && isDeepStrictEqual(index, marketIndex(snapshot))) return snapshot;
+  }
+  throw fail('本地市场清单已变更，请在 Codex 插件设置中检查。', 'The local marketplace manifest has changed. Check it in Codex plugin settings.');
+}
+function activateSnapshot(store, target) {
+  const current = activeSnapshot(store);
+  if (current === target) return;
+  const file = join(store, INDEX);
+  if (target) {
+    fs.mkdirSync(dirname(file), { recursive: true });
+    writeAtomicJson(file, marketIndex(target));
+  } else {
+    fs.unlinkSync(file);
+    syncStore(dirname(file));
+    for (let dir = dirname(file); dir !== store; dir = dirname(dir)) {
+      try {
+        fs.rmdirSync(dir);
+      } catch (error) {
+        if (error.code === 'ENOTEMPTY' || error.code === 'EEXIST') break;
+        throw error;
+      }
+    }
+  }
+}
 function installed(run) {
   return lookup(run, 'installed', 'pluginId', PLUGIN_ID, 'list', '--marketplace', MARKET);
 }
@@ -391,6 +436,30 @@ export async function writeEnabled(value) {
   if (!['ok', 'okOverridden'].includes(result.status))
     throw fail('Codex 配置接口没有确认写入。', "Codex didn't confirm that it saved the setting.");
 }
+async function hookGuidance(lang, cwd = process.cwd()) {
+  const settings = tr('Codex「设置 → Hooks」（CLI 输入 /hooks）', 'Codex Settings → Hooks (/hooks in the CLI)', lang);
+  let hook;
+  try {
+    const { data } = await nativeConfig('hooks/list', { cwds: [cwd] }, { cwd, experimental: true });
+    hook = data.flatMap((entry) => entry.hooks).find((h) => h.pluginId === PLUGIN_ID && h.eventName === 'userPromptSubmit');
+  } catch {
+    return tr(`未能读取 hook 状态。可在 ${settings} 中查看 UserPromptSubmit。`,
+      `Couldn’t read the hook’s status. Check UserPromptSubmit in ${settings}.`, lang);
+  }
+  if (!hook) return tr('Codex 没有列出本插件的 UserPromptSubmit。请在插件设置中确认已安装并启用 Codex Polish。',
+    'Codex hasn’t listed UserPromptSubmit for this plugin. Check that Codex Polish is installed and enabled in plugin settings.', lang);
+  if (!hook.enabled) return tr(`UserPromptSubmit 已停用。要自动润色或附带历史，可在 ${settings} 中启用它。`,
+    `UserPromptSubmit is disabled. To use automatic polishing or include history, enable it in ${settings}.`, lang);
+  if (hook.trustStatus === 'trusted') return tr('Codex 已信任 UserPromptSubmit。', 'Codex trusts UserPromptSubmit.', lang);
+  if (hook.trustStatus === 'modified')
+    return tr(`已安装的插件内容有变，Codex 要求重新确认。请在 ${settings} 中审查并重新信任 UserPromptSubmit，再新开聊天。`,
+      `The installed plugin changed. Review and trust UserPromptSubmit again in ${settings}, then start a new chat.`, lang);
+  if (hook.trustStatus === 'untrusted')
+    return tr(`要自动润色或附带历史，请在 ${settings} 中信任本插件的 UserPromptSubmit，再新开聊天。`,
+      `For automatic polishing or history, trust UserPromptSubmit in ${settings}, then start a new chat.`, lang);
+  return tr(`请在 ${settings} 中查看 UserPromptSubmit 的信任状态。`,
+    `Check the trust status of UserPromptSubmit in ${settings}.`, lang);
+}
 async function hasUnlistedPlugin() {
   const { config } = await nativeConfig('config/read', { includeLayers: false });
   if (config.marketplaces?.[MARKET])
@@ -411,16 +480,15 @@ async function verifyInstalled(run, setEnabled, version, enabled) {
       throw fail('Codex 没有确认插件的启用状态。', "Codex didn't confirm whether the plugin is enabled.");
   }
 }
-async function rollback(run, setEnabled, previous, before, target) {
-  const current = registration(run);
-  if (![null, previous, target].includes(current))
+async function rollback(run, setEnabled, previous, before, target, store) {
+  const market = registeredMarket(run, store);
+  if (![null, previous, target].includes(activeSnapshot(store)))
     throw fail('其他进程修改了市场。', 'Another process changed the marketplace.');
   if (!before && installed(run)) run('remove', PLUGIN_ID);
-  if (current !== previous) {
-    if (current) run('marketplace', 'remove', MARKET);
-    if (previous) run('marketplace', 'add', previous);
-  }
-  if (registration(run) !== previous)
+  if (!previous && market) run('marketplace', 'remove', MARKET);
+  activateSnapshot(store, previous);
+  if (previous && !market) run('marketplace', 'add', store);
+  if (registeredMarket(run, store) !== (previous ? store : null) || activeSnapshot(store) !== previous)
     throw fail('Codex 没有恢复更新前的市场来源。', "Codex didn't restore the previous marketplace.");
   if (before) {
     verifyReceipt(run('add', PLUGIN_ID), previous, before.version);
@@ -428,7 +496,6 @@ async function rollback(run, setEnabled, previous, before, target) {
   } else if (installed(run))
     throw fail('Codex 没有清除未完成的安装。', "Codex didn't remove the incomplete installation.");
 }
-const sourceId = (path) => (path === null ? null : sha(path).digest('hex'));
 export function pendingUpdate(store) {
   let fd;
   try {
@@ -453,7 +520,7 @@ export function pendingUpdate(store) {
           snapshotName.test(entry.target) &&
           typeof entry.version === 'string' &&
           validVersion.test(entry.version) &&
-          (entry.previous === null || (typeof entry.previous === 'string' && /^[0-9a-f]{64}$/.test(entry.previous)))
+          typeof entry.previous === 'string' && snapshotName.test(entry.previous)
         )
           return entry;
       }
@@ -474,14 +541,15 @@ function syncStore(store) {
     fs.closeSync(fd);
   }
 }
-function savePending(store, entry) {
-  const tmp = join(store, '.prepare-update-' + randomUUID());
+function writeAtomicJson(file, entry) {
+  const dir = dirname(file);
+  const tmp = join(dir, '.prepare-update-' + randomUUID());
   const fd = fs.openSync(tmp, 'wx', 0o600);
   try {
     fs.writeFileSync(fd, JSON.stringify(entry));
     fs.fsyncSync(fd);
-    fs.renameSync(tmp, join(store, '.pending-update.json'));
-    syncStore(store);
+    fs.renameSync(tmp, file);
+    syncStore(dir);
   } finally {
     fs.closeSync(fd);
     fs.rmSync(tmp, { force: true });
@@ -496,15 +564,16 @@ function finishPending(store) {
   }
   syncStore(store);
 }
-export function preserveNativeCache(store, previous, state) {
+export function preserveNativeCache(store, previous, state, alternate) {
   if (store !== snapshotStore()) return;
   const version = state?.version;
-  function verifiedSource() {
-    if (!previous || !ownsSnapshot(previous, store) || !statMaybe(previous)) return null;
-    return verifiedPaths(previous) && bundleVersion(previous) === version ? join(previous, PRODUCT) : null;
+  function verifiedSources() {
+    return [...new Set([previous, alternate])].filter((path) =>
+      path && ownsSnapshot(path, store) && statMaybe(path) && verifiedPaths(path) && bundleVersion(path) === version
+    ).map((path) => join(path, PRODUCT));
   }
   try {
-    const backup = preserve(codexProfile(), MARKET, NAME, version, verifiedSource);
+    const backup = preserve(codexProfile(), MARKET, NAME, version, verifiedSources);
     if (backup)
       console.log(tr('已保留有改动或没法核对的插件缓存：', 'Kept a changed or unverified plugin cache at: ') + backup);
   } catch (error) {
@@ -515,17 +584,25 @@ export function preserveNativeCache(store, previous, state) {
   }
 }
 async function setup(root, store, run, setEnabled, action) {
-  const previous = registration(run);
+  const market = registeredMarket(run, store);
+  const active = activeSnapshot(store);
+  if (market && !active)
+    throw fail('已注册的市场缺少安装清单，请在 Codex 插件设置中检查。', 'The registered marketplace manifest is missing. Check it in Codex plugin settings.');
+  let previous = market ? active : null;
   checkSource(previous, store);
   const pending = pendingUpdate(store);
-  if (pending && previous && sourceId(previous) !== pending.previous && previous !== join(store, pending.target)) {
-    throw fail(
-      '上次更新后，市场来源变了。请先在 Codex 里核对来源，再重新安装。',
-      'The marketplace source changed after the interrupted update. Check it in Codex before reinstalling.'
-    );
+  if (pending) {
+    const original = join(store, pending.previous);
+    checkSource(original, store);
+    if (!market || ![original, join(store, pending.target)].includes(active))
+      throw fail('上次更新后，市场来源变了。请先在 Codex 里核对来源。', 'The marketplace source changed after the interrupted update. Check the source in Codex.');
+    preserveNativeCache(store, active, installed(run), original);
+    await rollback(run, setEnabled, original, pending, join(store, pending.target), store);
+    finishPending(store);
+    previous = original;
   }
   const before = installed(run);
-  if (!previous && !pending && (before || (store === snapshotStore() && (await hasUnlistedPlugin())))) {
+  if (!previous && (before || (store === snapshotStore() && (await hasUnlistedPlugin())))) {
     throw fail(
       'Codex 里还有安装记录，但市场来源已被移除。请用这个包运行 uninstall，再运行 setup。项目设置会保留。',
       'Codex still has an installation record, but the marketplace was removed. Run uninstall from this package, then setup. Your project settings will be kept.'
@@ -537,20 +614,16 @@ async function setup(root, store, run, setEnabled, action) {
       "Codex didn't report the installed version and enabled state."
     );
   }
-  const original = pending || before,
-    enabled = original?.enabled ?? true;
-  const versions = [before, pending].filter(Boolean).map((row) => row.version);
-  const [target, version] = makeSnapshot(root, store, versions, previous);
-  if (original)
-    savePending(store, { previous: sourceId(previous), target: basename(target), version: original.version, enabled });
+  const enabled = before?.enabled ?? true;
+  const [target, version] = makeSnapshot(root, store, before ? [before.version] : [], previous);
+  if (before)
+    writeAtomicJson(join(store, '.pending-update.json'), { previous: basename(previous), target: basename(target), version: before.version, enabled });
   preserveNativeCache(store, previous, before);
   try {
-    if (previous !== target) {
-      if (previous) run('marketplace', 'remove', MARKET);
-      run('marketplace', 'add', target);
-    }
+    activateSnapshot(store, target);
+    if (!market) run('marketplace', 'add', store);
     verifyReceipt(run('add', PLUGIN_ID), target, version);
-    if (registration(run) !== target)
+    if (registeredMarket(run, store) !== store || activeSnapshot(store) !== target)
       throw fail(
         'Codex 没有确认这次安装的市场来源。',
         "Codex didn't confirm the marketplace source for this installation."
@@ -558,17 +631,17 @@ async function setup(root, store, run, setEnabled, action) {
     await verifyInstalled(run, setEnabled, version, enabled);
   } catch (error) {
     try {
-      await rollback(run, setEnabled, previous, before, target);
+      await rollback(run, setEnabled, previous, before, target, store);
     } catch {
       throw fail(
         '安装失败，Codex 没能恢复。本地快照已保留，请重新运行 setup。',
         "Codex couldn't restore the previous installation. The local copy is still there. Run setup again."
       );
     }
-    if (before && !pending) finishPending(store);
+    if (before) finishPending(store);
     throw error;
   }
-  if (original) finishPending(store);
+  if (before) finishPending(store);
   if (!enabled)
     return [
       tr(
@@ -584,8 +657,8 @@ async function setup(root, store, run, setEnabled, action) {
   const lines = [
     status,
     tr(
-      '未设置模式的项目默认自动润色，已保存的模式继续生效。使用默认的普通改写模式并开启风格检查时，OpenAI 根据本轮问题和草稿原文判断要不要润色。改写时，Google 会收到本轮问题和草稿原文。只有 Gemini 改写会附带以前的问答，默认最近最多 2 轮。',
-      'Projects without a saved mode default to automatic polishing. Saved modes still apply. In normal rewrite mode (the default), the optional OpenAI style check uses your current question and draft as written. Google receives the current question and draft when Gemini rewrites. Only Gemini receives earlier exchanges, up to two by default.',
+      '未设置模式的项目默认自动润色，已保存的模式继续生效。使用默认的普通改写模式并开启风格检查时，OpenAI 根据本轮问题和草稿原文判断要不要润色。Google 收到待改的答复、它所回答的问题，以及你这次提出的改写要求。默认还会附带这份答复之前最多 2 轮问答。',
+      'Projects without a saved mode default to automatic polishing. Saved modes still apply. In normal rewrite mode (the default), the optional OpenAI style check uses your current question and draft as written. Gemini receives the selected draft, its question, any editing directions you give for this rewrite and, by default, up to two exchanges that preceded the draft.',
       lang
     ),
     tr(
@@ -594,11 +667,12 @@ async function setup(root, store, run, setEnabled, action) {
       lang
     ),
     tr(
-      '要自动润色或附带历史，请在 Codex 的「设置 → Hooks」（CLI 输入 /hooks）中信任本插件的 UserPromptSubmit，再新开一个聊天。想改触发时机，可以说「只在我要求时润色」或「关闭回复润色」。说「切换到 Turbo 模式」可跳过 OpenAI，把每份符合条件的草稿直接交给 Gemini。',
-      'For automatic polishing or history, trust the plugin’s UserPromptSubmit hook in Codex Settings → Hooks (/hooks in the CLI), then start a new chat. To change when polishing runs, say “Only polish when I ask” or “Turn off Codex Polish”. Say “Switch to turbo mode” to skip OpenAI and send each eligible draft directly to Gemini.',
+      '想改触发时机，可以说「只在我要求时润色」或「关闭回复润色」。想跳过 OpenAI，可以说「这条用 Turbo」或「让 Gemini 重写上一条」。希望以后都这样，可以说「把这个项目的默认模式设成 Turbo」。',
+      'To change when polishing runs, say “Only polish when I ask” or “Turn off Codex Polish”. To skip OpenAI once, say “Use Turbo for this answer” or “Have Gemini rewrite your last reply”. To keep using Turbo, say “Make Turbo the default for this project”.',
       lang
     )
   ];
+  if (store === snapshotStore()) lines.push(await hookGuidance(lang));
   if (action === 'setup') {
     const guide = join(target, lang === 'zh' ? GUIDE : GUIDE.replace('credentials.md', 'credentials.en.md'));
     lines.push(tr(`配置指南：${guide}`, `Setup guide: ${guide}`, lang));
@@ -690,7 +764,9 @@ function cleanUninstallData(store) {
   return message;
 }
 async function uninstall(store, run) {
-  const previous = registration(run);
+  const market = registeredMarket(run, store);
+  const active = activeSnapshot(store);
+  const previous = market && active;
   requireManagedSource(previous, store);
   if (previous) bundleVersion(previous);
   const before = installed(run);
@@ -711,7 +787,16 @@ async function uninstall(store, run) {
         "Couldn't verify the marketplace for the installed plugin. Check its source before uninstalling."
       );
   }
-  if (present || previous) preserveNativeCache(store, previous, before);
+  if (present || previous) {
+    // A known marketplace can still be removed if its interrupted-update journal is damaged.
+    let pending;
+    try {
+      pending = pendingUpdate(store);
+    } catch (error) {
+      if (!(error instanceof SetupError)) throw error;
+    }
+    preserveNativeCache(store, previous, before, pending && join(store, pending.previous));
+  }
   if (present) {
     run('remove', PLUGIN_ID);
     if (!previous && store === snapshotStore() ? await hasUnlistedPlugin() : installed(run))
@@ -720,7 +805,7 @@ async function uninstall(store, run) {
         'Codex still lists the plugin as installed. Run uninstall again.'
       );
   }
-  if (previous) {
+  if (market) {
     run('marketplace', 'remove', MARKET);
     if (registration(run))
       throw fail(
@@ -728,6 +813,7 @@ async function uninstall(store, run) {
         'Codex still lists the marketplace. Run uninstall again.'
       );
   }
+  activateSnapshot(store, null);
   return cleanUninstallData(store);
 }
 // An exclusive SQLite transaction serializes installers on both supported
@@ -785,7 +871,12 @@ function readChecks(cwd = process.cwd()) {
   const result = projectPreference(['check'], cwd);
   if (result.status !== 0 || result.error)
     throw fail('没法读取插件的环境检查结果。', "Couldn't read the plugin environment check results.");
-  return JSON.parse(result.stdout);
+  const checks = JSON.parse(result.stdout);
+  if (checks.agy_available && !supportedAgy(checks.agy_path)) {
+    checks.agy_available = false;
+    checks.blockers.push('agy_unsupported');
+  }
+  return checks;
 }
 function saveSetupMode(mode, cwd) {
   const result = projectPreference(['set-rewrite-mode', mode], cwd);
@@ -835,32 +926,39 @@ async function downloadBootstrap(file) {
   }
   throw fail('从 Google 下载 agy 失败。', 'Could not download agy from Google.');
 }
+function agyEnvironment() {
+  const env = { ...process.env };
+  for (const key of ['OPENAI_API_KEY', 'GEMINI_API_KEY', 'BASH_ENV', 'ENV']) delete env[key];
+  return env;
+}
+function supportedAgy(binary) {
+  const result = spawnSync(binary, ['--version'], {
+    env: agyEnvironment(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: 5000, maxBuffer: 16 * 1024, killSignal: 'SIGKILL'
+  });
+  const version = result.status === 0 && /(?:^|\s)v?(\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?(?:\+[a-zA-Z0-9.-]+)?)(?=\s|$)/.exec(result.stdout);
+  return Boolean(version && compareVersions(version[1], '1.2.1') >= 0);
+}
 export async function installAgy() {
   const target = join(homedir(), '.local/bin');
   fs.mkdirSync(target, { recursive: true });
   await withLock(join(target, '.codex-polish-agy.sqlite'), async () => {
-    if (findAgy()) return;
+    const existing = findAgy();
+    if (existing) {
+      if (supportedAgy(existing)) return;
+      throw fail('请将现有的 Antigravity CLI 更新到 1.2.1 或更高版本。', 'Update your existing Antigravity CLI to version 1.2.1 or later.');
+    }
     const binary = join(target, 'agy');
     if (statMaybe(binary))
       throw fail(`请先检查 ${binary}，这个路径已被占用。`, `Check ${binary}. That path is already in use.`);
     const temp = fs.mkdtempSync(join(tmpdir(), 'codex-polish-agy-')),
       script = join(temp, 'install.sh');
-    const env = { ...process.env };
-    for (const key of ['OPENAI_API_KEY', 'GEMINI_API_KEY', 'BASH_ENV', 'ENV']) delete env[key];
-    const options = { cwd: temp, env };
+    const options = { cwd: temp, env: agyEnvironment() };
     try {
       await downloadBootstrap(script);
       try {
         await runBootstrap(script, target, options);
-        const output = execFileSync(binary, ['--version'], {
-          ...options,
-          encoding: 'utf8',
-          stdio: ['ignore', 'pipe', 'pipe'],
-          timeout: 10_000,
-          killSignal: 'SIGKILL'
-        });
-        const version = /\b(\d+\.\d+\.\d+)\b/.exec(output);
-        if (!version || compareVersions(version[1], '1.2.1') < 0)
+        if (!supportedAgy(binary))
           throw fail('需要 Antigravity CLI 1.2.1 或更新版。', 'Antigravity CLI 1.2.1 or later is required.');
       } catch (error) {
         if (statMaybe(binary) && !fs.lstatSync(binary).isDirectory()) fs.unlinkSync(binary);
@@ -884,8 +982,9 @@ function decisionsSummary(checks, lang) {
       'The OpenAI style check is off. Drafts go straight to Gemini.',
       lang
     );
-  if (checks.blockers.includes('openai_key_invalid'))
-    return tr('OpenAI 风格检查目前用不了。', "The OpenAI style check isn't available right now.", lang);
+  if (checks.openai_key_malformed)
+    return tr('OPENAI_API_KEY 格式有误，草稿将直接交给 Gemini。要启用 OpenAI 检查，请重新复制密钥。',
+      'OPENAI_API_KEY has an invalid format. Drafts go straight to Gemini. Copy the key again to enable the OpenAI check.', lang);
   if (checks.decisions_enabled)
     return tr(
       '已启用 OpenAI Decisions。OpenAI 只用本轮问题、草稿和已设置的自定义润色提示词判断是否需要改写。',
@@ -899,10 +998,6 @@ function decisionsSummary(checks, lang) {
   );
 }
 const issues = {
-  openai_key_invalid: [
-    'OPENAI_API_KEY 格式不对。请重新复制密钥，或者在项目里说「这个项目只用 Gemini 改写」，跳过 OpenAI 检查。',
-    'OPENAI_API_KEY is invalid. Copy the key again, or ask Codex to “Use only Gemini for rewrites in this project”.'
-  ],
   gemini_key_missing: [
     '你选了用 API 密钥登录 Google。去 Google AI Studio 点 Create API key，然后把密钥设为 GEMINI_API_KEY。',
     'You chose Google API key sign-in. Select Create API key in Google AI Studio, then set GEMINI_API_KEY.',
@@ -916,6 +1011,11 @@ const issues = {
   agy_missing: [
     '找不到 agy。在插件解压目录运行 node scripts/install.mjs setup --install-agy，或按 Google 的指南安装。',
     "Couldn't find agy. Install it from the extracted plugin folder with node scripts/install.mjs setup --install-agy, or follow Google’s guide.",
+    AGY_INSTALL
+  ],
+  agy_unsupported: [
+    '请确认 agy --version 能显示 1.2.1 或更高版本。需要更新时可参考 Google 的安装指南。',
+    'Check that agy --version reports 1.2.1 or later. To update your installation, follow Google’s guide.',
     AGY_INSTALL
   ],
   unsupported_google_auth: [
@@ -984,8 +1084,8 @@ export function configurationSteps(checks) {
   );
   const examples = {
     auto: [
-      '在已信任 hook 的新聊天里，直接问「用一句话解释 DNS。」就会触发自动润色。',
-      'After trusting the hook, try automatic polishing in a new chat. Ask “Explain what DNS does in one sentence.”'
+      '在项目里新开聊天，问「用一句话解释 DNS。」即可试用自动润色。',
+      'To try automatic polishing, open a new project chat and ask “Explain what DNS does in one sentence.”'
     ],
     manual: [
       '这个项目只在点名时润色。试一句：「用一句话解释 DNS，再把你的回复润色一下。」',
@@ -1040,17 +1140,17 @@ async function chooseSetupProject(cwd, prompt, lang) {
     console.log(tr('请输入已有的项目文件夹。', 'Enter an existing project folder.', lang));
   }
 }
-export async function chooseSetupMode(project, lang, input = process.stdin, output = process.stdout) {
+async function chooseOption(title, options, lang, input = process.stdin, output = process.stdout) {
   if (input.destroyed || input.readableEnded) return null;
   const wasRaw = !!input.isRaw;
   const wasFlowing = input.readableFlowing;
-  let selected = 'normal';
-  // Keep only the two short option rows in the redraw area. Descriptions may wrap.
+  let selected = 0;
   function draw() {
-    clearLine(output, 0);
-    output.write((selected === 'normal' ? '❯ ● Normal' : '  ○ Normal') + '\r\n');
-    clearLine(output, 0);
-    output.write(selected === 'turbo' ? '❯ ● Turbo' : '  ○ Turbo');
+    for (const [index, option] of options.entries()) {
+      clearLine(output, 0);
+      output.write((selected === index ? '❯ ● ' : '  ○ ') + option.name);
+      if (index < options.length - 1) output.write('\r\n');
+    }
   }
   function restoreInput() {
     if (!wasRaw && input.isRaw && !input.destroyed) input.setRawMode(false);
@@ -1062,18 +1162,16 @@ export async function chooseSetupMode(project, lang, input = process.stdin, outp
   try {
     if (!wasRaw) input.setRawMode(true);
     input.resume();
-    output.write(tr(
-      `为这个项目选择改写模式：${project}\nNormal（默认）：按需润色，可先用 OpenAI 判断。\nTurbo：跳过 OpenAI，将每条可润色的回复直接交给 Gemini。\n用 ↑ ↓ 方向键移动，按回车确认。\n`,
-      `Choose a rewrite mode for ${project}\nNormal (default): Polish as needed, with an optional OpenAI check.\nTurbo: Skip OpenAI and send every eligible reply directly to Gemini.\nUse the ↑ ↓ arrow keys to move and press Enter to confirm.\n`, lang));
+    output.write(title + '\n' + tr('用 ↑ ↓ 方向键移动，按回车确认。\n', 'Use ↑ ↓ to move and Enter to confirm.\n', lang));
     draw();
     for await (const [, key] of keys) {
-      if (key.name === 'return' || key.name === 'enter') return selected;
+      if (key.name === 'return' || key.name === 'enter') return options[selected].id;
       if (key.name === 'escape' || (key.ctrl && ['c', 'd'].includes(key.name))) return null;
       if (key.name !== 'up' && key.name !== 'down') continue;
-      const next = key.name === 'up' ? 'normal' : 'turbo';
+      const next = Math.max(0, Math.min(options.length - 1, selected + (key.name === 'up' ? -1 : 1)));
       if (next === selected) continue;
       selected = next;
-      moveCursor(output, 0, -1);
+      moveCursor(output, 0, 1 - options.length);
       cursorTo(output, 0);
       draw();
     }
@@ -1086,6 +1184,72 @@ export async function chooseSetupMode(project, lang, input = process.stdin, outp
     output.write('\n');
   }
 }
+export function chooseSetupMode(project, lang, input, output) {
+  const title = tr(
+    `为这个项目选择改写模式：${project}\nNormal（默认）：按需润色，可先用 OpenAI 判断。\nTurbo：跳过 OpenAI，将每条可润色的回复直接交给 Gemini。`,
+    `Choose a rewrite mode for ${project}\nNormal (default): Polish as needed, with an optional OpenAI check.\nTurbo: Skip OpenAI and send every eligible reply directly to Gemini.`, lang);
+  return chooseOption(title, [{ id: 'normal', name: 'Normal' }, { id: 'turbo', name: 'Turbo' }], lang, input, output);
+}
+
+export async function discoverSetupModels(checks) {
+  const workspace = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), 'codex-polish-models-')));
+  try {
+    const skill = join(ROOT, PRODUCT, 'skills/codex-polish');
+    const task = [
+      'Discover the Gemini models available to this account. This is a metadata lookup. Do not send a prompt to Gemini.',
+      'Use your own execution tools to directly hold and drive the official agy acp process. Do not run an ACP client script.',
+      'Follow the startup, authentication, session/new (id 3) and cleanup steps in ' + JSON.stringify(join(skill, 'references/acp.md')) + '.',
+      'Use the current temporary directory as the private workspace, and the bundled default editor role.',
+      'The official agy executable is ' + JSON.stringify(checks.agy_path) + ' and the authentication mode is ' + JSON.stringify(checks.google_auth_method) + '.',
+      'When starting the official process, pipe its stdout through tee acp-frames.jsonl in the current working directory.',
+      'The installer reads the actual session/new response from that file. Never create or modify that file yourself, delete it, or write any model list. Close the session and stop after session/new. If the lookup fails, stop.'
+    ].join('\n');
+    const child = spawn('codex', ['exec', '--ephemeral', '--skip-git-repo-check', '-C', workspace,
+      '-c', 'plugins."codex-polish@codex-polish-local".enabled=false', task], { cwd: workspace, stdio: 'ignore' });
+    const interrupt = () => child.kill('SIGINT');
+    const terminate = () => child.kill('SIGTERM');
+    process.once('SIGINT', interrupt);
+    process.once('SIGTERM', terminate);
+    let code;
+    try {
+      code = await new Promise((done, reject) => child.once('error', reject).once('close', done));
+    } finally {
+      process.off('SIGINT', interrupt);
+      process.off('SIGTERM', terminate);
+    }
+    if (code !== 0) return [];
+    for (const line of readPlain(join(workspace, 'acp-frames.jsonl')).toString('utf8').split('\n')) {
+      if (!line.trim()) continue;
+      const frame = JSON.parse(line);
+      if (frame.id === 3 && !frame.method) return sessionCatalog(line, 3n).models;
+    }
+    return [];
+  } finally {
+    fs.rmSync(workspace, { force: true, recursive: true });
+  }
+}
+
+export async function chooseSetupModel(checks, lang, input, output, discover = discoverSetupModels) {
+  const choose = (title, rows) => chooseOption(title, rows, lang, input, output);
+  const choice = await choose(tr('选择改写用的 Gemini 模型', 'Choose the Gemini model for rewrites', lang), [
+    { id: 'default', name: tr('Gemini 4 Hydrogen（默认）', 'Gemini 4 Hydrogen (default)', lang) },
+    { id: 'lookup', name: tr('让 Codex 查询我账号的可用模型…', 'Ask Codex to list models available to my account…', lang) }
+  ]);
+  if (choice !== 'lookup') return choice === 'default' ? DEFAULT_GEMINI_MODEL : null;
+  console.log(tr('Codex 正在通过 Antigravity 获取模型列表…', 'Codex is reading the model list from Antigravity…', lang));
+  let models;
+  try { models = await discover(checks); } catch { /* Report failed lookup below. */ }
+  if (!Array.isArray(models) || !models.length) {
+    console.log(tr('没能读取模型。稍后在 Codex 里说「选择改写模型」可重试。',
+      'Couldn’t read the model list. Say “Choose a rewrite model” in Codex to retry.', lang));
+    return null;
+  }
+  const rows = models.map(({ id, name }) => ({
+    id, name: models.some(model => model.id !== id && model.name === name) ? name + ' (' + id + ')' : name
+  }));
+  return choose(tr('用哪个模型改写？', 'Which model should rewrite your replies?', lang), rows);
+}
+
 export async function showSetupGuidance({
   cwd = process.cwd(),
   installDependency = false,
@@ -1094,6 +1258,7 @@ export async function showSetupGuidance({
   check = readChecks,
   saveRewriteMode = saveSetupMode,
   chooseMode = chooseSetupMode,
+  chooseModel = chooseSetupModel,
   install = installAgy,
   prompt = ask,
   browse = openPage
@@ -1120,6 +1285,10 @@ export async function showSetupGuidance({
       console.log(tr(`已为这个项目保存 ${selected === 'turbo' ? 'Turbo' : 'Normal'} 模式。`,
         `Saved ${selected === 'turbo' ? 'Turbo' : 'Normal'} mode for this project.`, lang));
     }
+  }
+  if (installDependency && checks.blockers.includes('agy_unsupported')) {
+    console.error(tr(issues.agy_unsupported[0], issues.agy_unsupported[1], lang) + '\n' + AGY_INSTALL);
+    return false;
   }
   if (checks.blockers.includes('agy_missing')) {
     let requested = installDependency;
@@ -1158,6 +1327,16 @@ export async function showSetupGuidance({
   } else if (installDependency)
     console.log(tr('已找到 agy，直接使用现有安装。', 'Found agy. Your existing installation will be used.', lang));
   if (dependencyOnly) return true;
+  if (interactive && project && checks.gemini_model_configured === false && checks.agy_available && !checks.blockers.includes('agy_unsupported')) {
+    const model = await chooseModel(checks, lang);
+    if (model) {
+      const result = projectPreference(['set-model', model], project);
+      if (result.status !== 0 || result.error || JSON.parse(result.stdout).gemini_model !== model)
+        throw fail('没能保存改写模型，请检查项目目录的写入权限。', 'Could not save the model. Check write access to the project folder.');
+      checks = check(project);
+      console.log(tr(`已为这个项目保存模型 ${model}。`, `Saved ${model} for this project.`, lang));
+    }
+  }
   const [lines, pages] = configurationSteps(checks);
   console.log(lines.join('\n'));
   if (
@@ -1177,22 +1356,6 @@ export async function showSetupGuidance({
   }
   return true;
 }
-const serviceIssues = {
-  api_rate_limited: ['OpenAI 请求过于频繁', 'OpenAI rate limit'],
-  api_server_error: ['OpenAI 服务暂不可用', 'OpenAI service unavailable'],
-  api_transport_error: ['无法连接 OpenAI', 'OpenAI connection failed'],
-  api_timeout: ['OpenAI 请求超时', 'OpenAI request timed out'],
-  invalid_api_response: ['OpenAI 返回了无效结果', 'invalid OpenAI response'],
-  api_auth_error: ['OpenAI 认证失败，请检查密钥', 'OpenAI authentication failed; check your key'],
-  api_quota_exhausted: ['OpenAI 额度不足', 'OpenAI quota exhausted'],
-  acp_start_failed: ['Antigravity 启动失败', 'Antigravity failed to start'],
-  acp_timeout: ['Antigravity 请求超时', 'Antigravity request timed out'],
-  acp_protocol_error: ['Antigravity 通信中断', 'Antigravity communication failed'],
-  acp_provider_error: ['Antigravity 服务暂不可用', 'Antigravity service unavailable'],
-  acp_incomplete: ['Antigravity 没返回完整回复', 'incomplete Antigravity response'],
-  acp_auth_failed: ['Antigravity 登录失效，请重新登录', 'Antigravity sign-in failed; sign in again'],
-  acp_model_unavailable: ['所选 Gemini 模型不可用，请重新选择', 'selected Gemini model unavailable; choose a new model']
-};
 export function doctor(checks = readChecks()) {
   const lang = checks.ui_language,
     modes = { manual: ['只在我要求时', 'only when asked'], auto: ['自动改写', 'automatic'], off: ['已关闭', 'off'] };
@@ -1224,7 +1387,10 @@ export function doctor(checks = readChecks()) {
     ['Codex CLI', checks.codex_available],
     ['Antigravity CLI', checks.agy_available]
   ]) {
-    lines.push(tool + tr('：', ': ', lang) + (ready ? tr('可用', 'available', lang) : tr('未找到', 'not found', lang)));
+    const status = tool === 'Antigravity CLI' && checks.blockers.includes('agy_unsupported')
+      ? tr('需要 1.2.1 或更高版本', 'requires version 1.2.1 or later', lang)
+      : ready ? tr('可用', 'available', lang) : tr('未找到', 'not found', lang);
+    lines.push(tool + tr('：', ': ', lang) + status);
   }
   switch (checks.google_auth_method) {
     case 'existing-session':
@@ -1255,17 +1421,6 @@ export function doctor(checks = readChecks()) {
       ),
       ...setupIssues(checks, lang)[0]
     );
-  if (checks.cooldown) {
-    const reason = tr(...(serviceIssues[checks.cooldown.reason] || ['服务暂不可用', 'service unavailable']), lang),
-      seconds = checks.cooldown.remaining_seconds;
-    lines.push(
-      tr(
-        `自动改写已暂停，${seconds} 秒后可以再试。上次遇到的问题：${reason}。`,
-        `Automatic rewrites are paused for ${seconds} more seconds. Last issue: ${reason}.`,
-        lang
-      )
-    );
-  }
   return lines.join('\n');
 }
 function usage(lang) {
@@ -1295,7 +1450,9 @@ export async function main(args = process.argv.slice(2)) {
   }
   try {
     if (action === 'doctor') {
-      console.log(doctor());
+      const checks = readChecks();
+      console.log(doctor(checks));
+      console.log(await hookGuidance(checks.ui_language));
       return 0;
     }
     const [message, offerSetup] = await manage(action, ROOT, snapshotStore());

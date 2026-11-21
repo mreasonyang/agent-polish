@@ -1,8 +1,11 @@
-// List selectable Gemini models in one ACP frame captured by the current agent.
+// Inspect one ACP frame. The current agent owns the connection and sends each request.
 import { parseArgs } from 'node:util';
 import { validModelId } from '../../../hooks/preferences.mjs';
-import { CREDENTIAL, MAX_REQUEST } from './text_guard.mjs';
+import { CREDENTIAL } from './text_guard.mjs';
 import { isMain, readLimited, record, utf8 } from './cli_io.mjs';
+
+// Bound incoming ACP configuration frames, which carry only model and session metadata.
+export const MAX_CONFIG_FRAME_BYTES = 1024 * 1024;
 
 const GEMINI_NAME = /^Gemini(?= [a-z0-9])/i;
 const GEMINI_ID = /^gemini-[a-z0-9]/;
@@ -47,6 +50,13 @@ export function catalog(options) {
   return { config_id: id, current_model: models.some(model => model.id === currentValue) ? currentValue : null, models };
 }
 
+function nextRewriteStep(model, target, responseId) {
+  if (![3n, 4n].includes(responseId) || !model.models.some(entry => entry.id === target)) throw new Error();
+  if (model.current_model === target) return { next: 'submit_prompt' };
+  if (responseId === 4n) throw new Error();
+  return { next: 'set_model', config_id: model.config_id, value: target };
+}
+
 function parseFrame(raw) {
   // JSON.parse validates the grammar but normally drops duplicate fields. Scan the
   // already validated text for keys, decoding escaped forms before comparing.
@@ -84,16 +94,31 @@ function frameOptions(frame, responseId, session) {
   return frame.params.update.configOptions;
 }
 
+export function sessionCatalog(line, id) {
+  return catalog(frameOptions(parseFrame(line), id));
+}
+
 if (isMain(import.meta.url)) {
   try {
-    const { values } = parseArgs({ options: { 'response-id': {type:'string'}, 'update-session': {type:'string'}, help:{type:'boolean', short:'h'} } });
-    if (values.help) console.log('Usage: acp_models.mjs --response-id ID | --update-session SESSION');
+    const { values } = parseArgs({ options: {
+      'response-id': {type:'string'}, 'update-session': {type:'string'}, 'target-model': {type:'string'}, help:{type:'boolean', short:'h'},
+    } });
+    if (values.help) console.log('Usage: acp_models.mjs (--response-id ID | --update-session SESSION) [--target-model MODEL]');
     else {
       const id = values['response-id'];
       if ((id === undefined) === (values['update-session'] === undefined) || (id !== undefined && !/^[+-]?\d+$/.test(id)))
         throw new Error();
-      const frame = parseFrame(utf8(await readLimited(process.stdin, MAX_REQUEST)));
-      console.log(JSON.stringify(catalog(frameOptions(frame, id === undefined ? undefined : BigInt(id), values['update-session']))));
+      const frame = parseFrame(utf8(await readLimited(process.stdin, MAX_CONFIG_FRAME_BYTES)));
+      const responseId = id === undefined ? undefined : BigInt(id);
+      const options = frameOptions(frame, responseId, values['update-session']);
+      const model = catalog(options);
+      const target = values['target-model'];
+      let result = model;
+      if (target !== undefined) {
+        if (responseId !== undefined) result = nextRewriteStep(model, target, responseId);
+        else if (model.current_model !== target) throw new Error();
+      }
+      console.log(JSON.stringify(result));
     }
   } catch { process.exitCode = 1; }
 }

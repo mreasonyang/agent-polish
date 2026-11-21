@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { catalog } from '../plugins/codex-polish/skills/codex-polish/scripts/acp_models.mjs';
-import { MAX_REQUEST } from '../plugins/codex-polish/skills/codex-polish/scripts/text_guard.mjs';
+import { MAX_CONFIG_FRAME_BYTES } from '../plugins/codex-polish/skills/codex-polish/scripts/acp_models.mjs';
+import { promptFrame } from '../plugins/codex-polish/skills/codex-polish/scripts/acp_payload.mjs';
 import { Fixture, selectOption } from './fixture_acp.mjs';
 
 const script = fileURLToPath(new URL('../plugins/codex-polish/skills/codex-polish/scripts/acp_models.mjs', import.meta.url));
@@ -15,6 +16,72 @@ function rejects(args, frame) {
   assert.equal(result.status, 1);
   assert.equal(result.stdout + result.stderr, '');
 }
+
+const target = 'gemini-4-hydrogen';
+const targetArgs = id => ['--response-id', String(id), '--target-model', target];
+function next(response) {
+  const output = cli(targetArgs(response.id), response);
+  assert.equal(output.status, 0, output.stderr);
+  return JSON.parse(output.stdout);
+}
+
+test('rewrite submits after selecting the model and keeps its current thinking level', async () => {
+  const events = [];
+  const fixture = new Fixture('ok', line => events.push(JSON.parse(line)));
+  const rpc = (id, method, params) => {
+    fixture.handle({ jsonrpc:'2.0', id, method, params });
+    return events.at(-1);
+  };
+  rpc(1, 'initialize', {protocolVersion:1});
+  const opened = rpc(3, 'session/new', {cwd:'/offline', mcpServers:[]});
+  const model = next(opened);
+  assert.deepEqual(model, {next:'set_model', config_id:'model', value:target});
+  const sessionId = opened.result.sessionId;
+  const selected = rpc(4, 'session/set_config_option', {sessionId, configId:model.config_id, value:model.value});
+  assert.equal(selected.result.configOptions.find(option => option.category === 'thought_level').currentValue, 'high');
+  assert.deepEqual(next(selected), {next:'submit_prompt'});
+
+  const notice = { jsonrpc:'2.0', method:'session/update', params:{sessionId, update:{
+    sessionUpdate:'config_option_update', configOptions:selected.result.configOptions,
+  }}};
+  const observed = cli(['--update-session', sessionId], notice);
+  assert.equal(observed.status, 0);
+  assert.deepEqual(JSON.parse(observed.stdout), catalog(selected.result.configOptions));
+  const updateArgs = ['--update-session', sessionId, '--target-model'];
+  const checked = cli([...updateArgs, target], notice);
+  assert.equal(checked.status, 0);
+  assert.deepEqual(JSON.parse(checked.stdout), catalog(selected.result.configOptions));
+  rejects([...updateArgs, opened.result.configOptions.find(option => option.category === 'model').currentValue], notice);
+  rejects([...updateArgs, 'missing-model'], notice);
+  rejects(['--update-session', 'other-session', '--target-model', target], notice);
+  rejects(targetArgs(4), notice);
+
+  const prompt = await promptFrame({sessionId, question:'When?', draft:'Tomorrow.'});
+  fixture.handle(prompt);
+  assert.deepEqual(events.at(-1), {jsonrpc:'2.0', id:6, result:{stopReason:'end_turn'}});
+  assert.equal(fixture.thinking, 'high');
+});
+
+test('the selected model is ready regardless of its thinking options', () => {
+  const model = selectOption('model','model','Model',target,[[target,'Gemini 4 Hydrogen']]);
+  const response = (id, ...options) => ({jsonrpc:'2.0', id, result:{configOptions:[model, ...options]}});
+  assert.deepEqual(next(response(3)), {next:'submit_prompt'});
+  const choices = [['low','Low'],['medium','Medium'],['high','High']];
+  for (const [value] of choices) {
+    const level = selectOption('thinking','thought_level','Thinking',value,choices);
+    assert.deepEqual(next(response(3,level)), {next:'submit_prompt'});
+  }
+});
+
+test('a failed model change or an unexpected response cannot trigger a prompt or retry', () => {
+  const model = selectOption('model','model','Model','gemini-4-neon',[[target,'Gemini 4 Hydrogen'],['gemini-4-neon','Gemini 4 Neon']]);
+  const response = (id, options) => ({jsonrpc:'2.0', id, result:{configOptions:options}});
+  rejects(targetArgs(4), response(4,[model]));
+  rejects(targetArgs(3), response(3, new Fixture('no-hydrogen').options()));
+  const chosen = {...model, currentValue:target};
+  for (const id of [5,6]) rejects(targetArgs(id), response(id,[chosen]));
+  rejects(targetArgs(4), {jsonrpc:'2.0', id:4, error:{code:-32602}});
+});
 
 test('catalog preserves provider order and excludes routers and non-Gemini models', () => {
   const choices = [
@@ -80,5 +147,5 @@ test('responses and updates must match the open session and have unambiguous JSO
     [['--response-id','4'],JSON.stringify(response).replace('"id":4','"id":3,"id":4')],
     [['--response-id','4'],JSON.stringify(response).replace('"id":4','"id":4.0')],
     [['--response-id','4'],JSON.stringify(response).replace('"id":4','"id":3,"\\u0069d":4')],
-    [['--response-id','4'],'x'.repeat(MAX_REQUEST+1)]]) rejects(args, frame);
+    [['--response-id','4'],'x'.repeat(MAX_CONFIG_FRAME_BYTES+1)]]) rejects(args, frame);
 });

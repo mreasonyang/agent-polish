@@ -5,7 +5,7 @@ import path from 'node:path';
 import childProcess from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
 import { systemLanguage, language, LANGUAGE_FILE } from '../plugins/codex-polish/hooks/ui_locale.mjs';
-import { makeProject, json, run, preferences } from './hook_fixture.mjs';
+import { makeProject, json, run, preferences, plugin } from './hook_fixture.mjs';
 
 test('terminal locale precedence and unsupported fallback', () => {
   for (const [env, expected] of [
@@ -57,7 +57,7 @@ test('project language persists and auto uses environment without changing rewri
   const override = check({ env: { ...env, LC_ALL: 'zh-Hant' } });
   assert.deepEqual([override.language_mode, override.ui_language], ['auto', 'zh']);
   assert.match(call(['set-history-turns', '11']).stderr, /whole number/);
-  assert.equal(language(project, { LANG: 'en' }), 'zh');
+  assert.equal(language(project, { LANG: 'en' }), 'en');
 });
 
 test('nested repositories, invalid and linked settings do not leak language', t => {
@@ -79,11 +79,16 @@ test('nested repositories, invalid and linked settings do not leak language', t 
 test('hook localizes reminder while preserving protocol fields', t => {
   const { call, project, cwd, env } = makeProject(t);
   json(call(['set-mode', 'auto'], { where: project }));
-  for (const [lang, phrase] of [['zh', '本项目已开启自动改写'], ['en', 'Automatic rewriting is on']]) {
+  for (const [lang, phrase, quiet] of [
+    ['zh', '本项目已开启自动改写', /无需.*播报.*润色进度/],
+    ['en', 'Automatic rewriting is on', /without progress announcements/],
+  ]) {
     json(call(['set-language', lang], { where: project }));
     const output = json(run(preferences, ['hook'], { env, input: JSON.stringify({ hook_event_name: 'UserPromptSubmit', cwd }) })).hookSpecificOutput;
     assert.equal(output.hookEventName, 'UserPromptSubmit');
     assert.ok(output.additionalContext.includes(phrase));
-    assert.ok(output.additionalContext.includes('codex-polish:codex-polish'));
+    assert.match(output.additionalContext, quiet);
+    assert.ok(output.additionalContext.includes(JSON.stringify(path.join(plugin, 'skills/codex-polish/WORKFLOW.md'))));
+    assert.doesNotMatch(output.additionalContext, /codex-polish:codex-polish/);
   }
 });

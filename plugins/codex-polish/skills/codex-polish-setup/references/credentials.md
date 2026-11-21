@@ -2,7 +2,7 @@
 
 [English](credentials.en.md)
 
-在项目目录交互运行 `setup`，用 **↑ / ↓** 选择改写模式，按 **回车** 确认。默认选中 **普通（Normal）**，可使用下文的 OpenAI 风格检查。**Turbo** 跳过 OpenAI，直接让 Gemini 改写符合条件的草稿。也可以在项目聊天里说 **“配置回复润色”**，然后点选模式。如果聊天只支持文字，回复模式名即可。项目会记住你的选择。Gemini 默认沿用 Antigravity 登录。
+在项目目录交互运行 `setup`，用 **↑ / ↓** 选择改写模式，按 **回车** 确认。默认选中 **普通（Normal）**，可使用下文的 OpenAI 风格检查。**Turbo** 跳过 OpenAI，直接让 Gemini 改写符合条件的草稿。也可以在项目聊天里说 **“配置回复润色”**，然后点选模式。如果聊天只支持文字，回复模式名即可。项目会记住你的选择。Gemini 默认沿用 Antigravity 登录。 接着可以选默认的 Gemini 4 Hydrogen，或让 Codex 查询你的 Antigravity 账号可用的模型。只有查询账号模型才会启动 Codex 会话。
 
 ## 准备 Antigravity
 

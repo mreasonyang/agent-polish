@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { homedir, tmpdir } from 'node:os';
 import { PassThrough } from 'node:stream';
 import { setImmediate } from 'node:timers/promises';
-import { chooseSetupMode, configurationSteps, showSetupGuidance, doctor } from '../scripts/install.mjs';
+import { chooseSetupModel, chooseSetupMode, configurationSteps, showSetupGuidance, doctor } from '../scripts/install.mjs';
 import { rewriteModeSettings } from '../plugins/codex-polish/hooks/rewrite_mode.mjs';
 import { makeProject } from './hook_fixture.mjs';
 
@@ -24,14 +24,14 @@ const checks = {
   node_available: true,
   gemini_model: 'gemini-4-hydrogen',
   history_turns: 2,
-  language_mode: 'auto',
-  cooldown: null
+  language_mode: 'auto'
 };
 test('bilingual setup and doctor distinguish auth, project model, history, decision checks and temporary service failures', () => {
   for (const lang of ['zh', 'en']) {
     const data = { ...checks, ui_language: lang };
     const summarize = (extra) => configurationSteps({ ...data, ...extra })[0].join('\n');
     assert.match(summarize({}), lang === 'en' ? /go straight to Gemini/ : /直接交给 Gemini/);
+    assert.match(summarize({ openai_key_malformed: true }), /OPENAI_API_KEY/);
     const withOpenAI = summarize({ decisions_enabled: true });
     assert.match(
       withOpenAI,
@@ -54,7 +54,6 @@ test('bilingual setup and doctor distinguish auth, project model, history, decis
     assert.doesNotMatch(enterprise, /GEMINI_API_KEY|https:/);
     assert.match(enterprise, lang === 'en' ? /enterprise/ : /企业/);
     for (const [code, fragment] of [
-      ['openai_key_invalid', 'OPENAI_API_KEY'],
       ['agy_missing', 'setup --install-agy'],
       ['unsupported_node', 'Node.js 22.16'],
       ['unsupported_google_auth', 'CODEX_POLISH_AGY_AUTH'],
@@ -77,10 +76,9 @@ test('bilingual setup and doctor distinguish auth, project model, history, decis
         google_auth_method: 'gemini-api-key',
         gemini_key_configured: true,
         history_turns: 0,
-        gemini_model: 'gemini-4-argon',
-        cooldown: { reason: 'api_timeout', remaining_seconds: 12 }
+        gemini_model: 'gemini-4-argon'
       });
-      for (const detail of ['Node.js 22.16+', 'gemini-4-argon', '12']) assert.ok(report.includes(detail));
+      for (const detail of ['Node.js 22.16+', 'gemini-4-argon']) assert.ok(report.includes(detail));
       assert.match(report, lang === 'en' ? /History is off/ : /历史记录设为 0/);
       assert.ok(!report.includes('api_timeout'));
     }
@@ -140,6 +138,46 @@ test('closing the terminal during selection cancels the picker', async () => {
   input.destroy();
   assert.equal(await selection, null);
   output.destroy();
+});
+
+test('model picker accepts arrows, looks up only on request and preserves provider IDs', async t => {
+  const enter = '\r', down = '\x1b[B';
+  for (const [keys, lang, expected, calls] of [
+    [[enter], 'en', 'gemini-4-hydrogen', 0],
+    [[down, enter, '2', down, enter], 'zh', 'gemini-4-argon', 1],
+    [[down, enter, '\x03'], 'en', null, 1],
+    [[down, enter], 'en', null, 1]
+  ]) {
+    const input = new PassThrough(), output = new PassThrough();
+    input.setRawMode = enabled => { input.isRaw = enabled; };
+    const discover = t.mock.fn(() => keys.length === 2 ? [] : [
+      { id: 'gemini-4-neon', name: 'Gemini 4 Neon' }, { id: 'gemini-4-argon', name: 'Gemini 4 Argon' }
+    ]);
+    let display = '';
+    output.on('data', bytes => { display += bytes.toString(); });
+    const selection = chooseSetupModel(checks, lang, input, output, discover);
+    for (const key of keys) { await setImmediate(); input.write(key); }
+    assert.equal(await selection, expected);
+    assert.equal(discover.mock.callCount(), calls);
+    assert.match(display, /Gemini 4 Hydrogen/);
+    assert.equal(!!input.isRaw, false);
+    input.destroy(); output.destroy();
+  }
+});
+
+test('first setup from a subdirectory saves the model once for the whole repository', async t => {
+  const { project, cwd, check } = makeProject(t);
+  t.mock.method(console, 'log', () => {});
+  const chooseModel = t.mock.fn(() => 'gemini-4-argon');
+  const setup = where => showSetupGuidance({
+    cwd: where, interactive: true, check: dir => ({ ...check({ where: dir }), agy_available: true, blockers: [] }),
+    chooseMode: () => 'normal', chooseModel, prompt: () => assert.fail('unexpected question')
+  });
+  await setup(cwd);
+  assert.equal(check({ where: project }).gemini_model, 'gemini-4-argon');
+  await setup(project);
+  assert.equal(chooseModel.mock.callCount(), 1);
+  assert.equal(fs.existsSync(join(cwd, '.codex')), false);
 });
 
 test('first interactive setup chooses a mode before agy, saves it and refreshes its guidance', async (t) => {
@@ -379,6 +417,20 @@ test('bootstrap uses the official HTTPS endpoint, removes credentials, verifies 
     assert.equal(result.status, 0, result.stderr);
   }
   assert.equal(fs.readFileSync(binary, 'utf8'), supported);
-  assert.equal(fs.readFileSync(join(base, 'invocations'), 'utf8'), '--version\n');
+  assert.equal(fs.readFileSync(join(base, 'invocations'), 'utf8'), '--version\n--version\n');
+  assert.equal(fs.readFileSync(join(base, 'requests'), 'utf8'), 'https://antigravity.google/cli/install.sh\n');
+  for (const version of ['1.2.0', '1.2.1-rc.1', 'unreadable']) {
+    const outdated = supported.replace('1.2.1', version);
+    fs.writeFileSync(binary, outdated);
+    const existing = run();
+    assert.notEqual(existing.status, 0);
+    assert.match(existing.stderr, /1\.2\.1 or later/);
+    assert.equal(fs.readFileSync(binary, 'utf8'), outdated);
+    const report = spawnSync(process.execPath, [new URL('../scripts/install.mjs', import.meta.url).pathname, 'doctor'], {
+      cwd: base, env, encoding: 'utf8'
+    });
+    assert.equal(report.status, 0, report.stderr);
+    assert.match(report.stdout, /Antigravity CLI: requires version 1\.2\.1 or later/);
+  }
   assert.equal(fs.readFileSync(join(base, 'requests'), 'utf8'), 'https://antigravity.google/cli/install.sh\n');
 });

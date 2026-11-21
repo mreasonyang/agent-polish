@@ -25,7 +25,7 @@ node --test tests/evaluation.test.mjs
 | `needs_rewrite` | `true` when human review judges that the original draft needs rewriting |
 | `workflow_expected`, `workflow_ran` | Whether the turn should run through the plugin, and whether the host trace shows it actually ran. Turns skipped by rule can be `false` |
 | `triggered` | `true` when the check decides to trigger an external rewrite, even if a failure happens afterward |
-| `outcome` | `original` when delivering the initial draft, `adopted` when using the rewrite, `fallback` when delivering the original draft after a workflow error or failed local check, `cancelled` when the user cancels and nothing is delivered |
+| `outcome` | `original` when the draft is delivered without triggering a rewrite, `adopted` when Gemini’s complete reply is delivered (including unchanged text), `fallback` when a workflow failure prevents a complete reply and the original is delivered, `cancelled` when the user cancels and nothing is delivered |
 | `selected_text`, `final_text` | Take the first from the chosen rewrite or original draft. Independently take the second from its corresponding body in the native final message. Use the polished body when both versions appear, or the sole body when one appears. Exclude plugin labels and status. Preserve punctuation, spaces, and newlines within the body. Omit or set to `null` when cancelled |
 | `elapsed_ms` | Total milliseconds from draft ready to native final message display. Set to `null` when unmeasured or cancelled |
 | `severe_fact_reversal` | Human fact-check result for the delivered reply. Set `true` if a severe reversal is found, `false` if checked and none is found, or `null` if unchecked or cancelled |

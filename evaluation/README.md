@@ -25,7 +25,7 @@ node --test tests/evaluation.test.mjs
 | `needs_rewrite` | 人工判断原稿需要改写时为 `true` |
 | `workflow_expected`、`workflow_ran` | 该回合是否应走插件，以及从宿主轨迹观察到是否实际运行。按约定跳过的回合可填 `false` |
 | `triggered` | 判定触发外部改写时为 `true`，即使随后发生故障 |
-| `outcome` | `original` 交付初稿，`adopted` 采用改稿，`fallback` 工作流出错或本地检查未通过时交付原稿，`cancelled` 用户取消且本轮未交付 |
+| `outcome` | `original` 未触发改写并交付原稿，`adopted` 交付 Gemini 返回的完整正文（包括返回原文），`fallback` 工作流因故障未取得完整回复并交付原稿，`cancelled` 用户取消且本轮未交付 |
 | `selected_text`、`final_text` | 前者取自选定的改稿或原稿，后者独立取自原生最终消息中对应的正文。双版本回复只取润色版正文，单版本回复取唯一正文。排除插件添加的标签和状态，保留正文自身的标点、空格和换行。取消时省略或填 `null` |
 | `elapsed_ms` | 草稿就绪到原生最终消息显示的总毫秒数。缺测或取消填 `null` |
 | `severe_fact_reversal` | 对已交付正文的人工结论。发现严重反转填 `true`，已检查且无反转填 `false`，未检查或取消填 `null` |

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { json, makeProject, mkfifo, plugin } from './hook_fixture.mjs';
-import { MAX_PROMPT_BYTES, PROMPT_FILE, readBundledEditorRole, readEditorPrompt } from '../plugins/codex-polish/hooks/editor_prompt.mjs';
+import { PROMPT_FILE, readBundledEditorRole, readEditorPrompt } from '../plugins/codex-polish/hooks/editor_prompt.mjs';
 
 const settingsFile = project => path.join(project, '.codex', PROMPT_FILE);
 
@@ -21,7 +21,7 @@ test('prompt shows the bundled role body; check and reset leave a fresh project 
   }
 });
 
-test('custom prompts survive new CLI processes and keep literal UTF-8 bytes through inheritance', t => {
+test('custom prompts keep literal UTF-8 bytes across CLI sessions and apply across a repository', t => {
   const { project, cwd, check, call } = makeProject(t);
   const parentText = '  \r\n用中文说明。\r\n\r\nKeep `$` and ${names} intact.\t\r\n  ';
   const saved = json(call(['set-prompt'], { where: project, input: parentText }));
@@ -33,31 +33,29 @@ test('custom prompts survive new CLI processes and keep literal UTF-8 bytes thro
   assert.ok(!call(['check']).stdout.includes('Keep'));
   assert.ok(!fs.existsSync(path.join(cwd, '.codex')));
 
-  const childText = '保留空格\n\tRead this first.';
-  json(call(['set-prompt'], { input: childText }));
-  assert.deepEqual(readEditorPrompt(cwd), { source: 'custom', text: childText });
-  json(call(['set-prompt', '--reset']));
-  assert.equal(json(call(['prompt'])).source, 'default');
-  assert.equal(fs.statSync(settingsFile(cwd)).size, 0);
-  assert.equal(readEditorPrompt(project).text, parentText);
-  fs.unlinkSync(settingsFile(cwd));
+  const updated = '保留空格\n\tRead this first.';
+  assert.equal(json(call(['set-prompt'], {input:updated})).file, settingsFile(project));
+  assert.equal(readEditorPrompt(project).text, updated);
+  assert.ok(!fs.existsSync(path.join(cwd,'.codex')));
   fs.writeFileSync(path.join(cwd, '.git'), 'gitdir: ../.git');
-  assert.equal(json(call(['prompt'])).source, 'default');
-  json(call(['set-prompt', '--reset'], { where: project }));
+  assert.equal(readEditorPrompt(cwd).source, 'default');
+  fs.unlinkSync(path.join(cwd, '.git'));
+  json(call(['set-prompt', '--reset']));
   assert.ok(!fs.existsSync(saved.file));
+  assert.equal(readEditorPrompt(project).source, 'default');
 });
 
 test('invalid save input preserves existing content and never echoes the prompt', t => {
   const { call, cwd } = makeProject(t);
-  const limit = 'é'.repeat(MAX_PROMPT_BYTES / 2);
-  json(call(['set-prompt'], { input: limit }));
-  assert.equal(readEditorPrompt(cwd).text, limit);
+  const longPrompt = 'é'.repeat(32 * 1024);
+  json(call(['set-prompt'], { input: longPrompt }));
+  assert.equal(readEditorPrompt(cwd).text, longPrompt);
   const secret = 'password=example-private-value';
-  for (const input of ['', ' \n\t ', limit + 'a', Buffer.from([0xff]), 'hide\x1b[31m', secret]) {
+  for (const input of ['', ' \n\t ', Buffer.from([0xff]), 'hide\x1b[31m', secret]) {
     const result = call(['set-prompt'], { input });
     assert.notEqual(result.status, 0);
     assert.ok(!(result.stdout + result.stderr).includes('example-private-value'));
-    assert.equal(readEditorPrompt(cwd).text, limit);
+    assert.equal(readEditorPrompt(cwd).text, longPrompt);
   }
   const wrongArgs = call(['set-prompt', secret]);
   assert.equal(wrongArgs.status, 2);
@@ -66,8 +64,7 @@ test('invalid save input preserves existing content and never echoes the prompt'
 
 test('unsafe or corrupt settings block use without exposing their contents', t => {
   const { cwd, project, call, check } = makeProject(t);
-  const file = settingsFile(cwd), parent = settingsFile(project);
-  fs.mkdirSync(path.dirname(file));
+  const file = settingsFile(project), neighbor = path.join(cwd, 'neighbor.md');
   const secret = 'private-project-words';
   const invalid = () => {
     assert.throws(() => readEditorPrompt(cwd));
@@ -79,16 +76,16 @@ test('unsafe or corrupt settings block use without exposing their contents', t =
     assert.ok(status.blockers.includes('editor_prompt_invalid'));
     assert.ok(!JSON.stringify(status).includes(secret));
   };
-  for (const content of [Buffer.from([0xff]), ' \n', 'a'.repeat(MAX_PROMPT_BYTES + 1), 'token=' + secret]) {
+  for (const content of [Buffer.from([0xff]), ' \n', '', 'token=' + secret]) {
     fs.writeFileSync(file, content);
     invalid();
   }
   fs.unlinkSync(file);
-  fs.writeFileSync(parent, secret);
-  fs.linkSync(parent, file);
+  fs.writeFileSync(neighbor, secret);
+  fs.linkSync(neighbor, file);
   invalid();
   fs.unlinkSync(file);
-  for (const create of [() => fs.symlinkSync(parent, file), () => mkfifo(file)]) {
+  for (const create of [() => fs.symlinkSync(neighbor, file), () => mkfifo(file)]) {
     create();
     invalid();
     assert.notEqual(call(['set-prompt'], { input: '替换' }).status, 0);
@@ -96,9 +93,10 @@ test('unsafe or corrupt settings block use without exposing their contents', t =
     fs.unlinkSync(file);
   }
   fs.rmdirSync(path.dirname(file));
-  fs.symlinkSync(path.dirname(parent), path.dirname(file));
+  fs.writeFileSync(path.join(cwd, PROMPT_FILE), secret);
+  fs.symlinkSync(cwd, path.dirname(file));
   invalid();
   assert.notEqual(call(['set-prompt'], { input: '替换' }).status, 0);
   assert.notEqual(call(['set-prompt', '--reset']).status, 0);
-  assert.equal(fs.readFileSync(parent, 'utf8'), secret);
+  assert.equal(fs.readFileSync(neighbor, 'utf8'), secret);
 });

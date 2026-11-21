@@ -18,6 +18,7 @@ function accessSetting(directory, operation, filename, value) {
     try {
       const stat = fs.fstatSync(fd);
       if (!stat.isFile() || (operation === 'read-bytes' && stat.nlink > 1)) return '';
+      if (operation === 'read-bytes' && value === undefined) return fs.readFileSync(fd);
       const raw = Buffer.alloc(value + 1);
       let size = 0;
       while (size < raw.length) {
@@ -75,31 +76,28 @@ export function accessProjectSetting(directory, operation, filename, value) {
   }
 }
 
-const invalid = '';
+// Git worktrees and nested repositories each own their project preferences.
+export function projectRoot(cwd) {
+  if (typeof cwd !== 'string' || !path.isAbsolute(cwd)) throw new Error('invalid project path');
+  const directory = fs.realpathSync(cwd);
+  if (!fs.statSync(directory).isDirectory()) throw new Error('invalid project directory');
+  for (let base = directory; base !== os.homedir() && base !== path.dirname(base); base = path.dirname(base)) {
+    if (fs.lstatSync(path.join(base, '.git'), { throwIfNoEntry: false })) return base;
+  }
+  return directory;
+}
 
 export function readProjectSetting(cwd, filename, maxBytes, { allowMissingLink = false, raw = false } = {}) {
-  if (typeof cwd !== 'string' || !path.isAbsolute(cwd)) return [invalid, null];
+  let base;
   try {
-    const directory = fs.realpathSync(cwd);
-    if (!fs.statSync(directory).isDirectory()) return [invalid, null];
-    for (let base = directory; base !== os.homedir() && base !== path.dirname(base); base = path.dirname(base)) {
-      const settings = path.join(base, '.codex');
-      try {
-        if (fs.lstatSync(settings).isSymbolicLink()) {
-          if (!allowMissingLink || !fs.statSync(settings, { throwIfNoEntry: false })?.isDirectory() ||
-              fs.lstatSync(path.join(settings, filename), { throwIfNoEntry: false })) {
-            return [invalid, base];
-          }
-        } else {
-          return [accessProjectSetting(settings, raw ? 'read-bytes' : 'read', filename, maxBytes), base];
-        }
-      } catch (error) {
-        if (error.code !== 'ENOENT') return [invalid, base];
-      }
-      if (fs.existsSync(path.join(base, '.git'))) return [null, base];
-    }
-    return [null, directory];
-  } catch {
-    return [invalid, null];
+    base = projectRoot(cwd);
+    if (base === os.homedir() || base === path.dirname(base)) return [null, base];
+    const settings = path.join(base, '.codex');
+    if (allowMissingLink && fs.lstatSync(settings).isSymbolicLink() &&
+        fs.statSync(settings, { throwIfNoEntry: false })?.isDirectory() &&
+        !fs.lstatSync(path.join(settings, filename), { throwIfNoEntry: false })) return [null, base];
+    return [accessProjectSetting(settings, raw ? 'read-bytes' : 'read', filename, maxBytes), base];
+  } catch (error) {
+    return [base && error.code === 'ENOENT' ? null : '', base ?? null];
   }
 }

@@ -2,18 +2,20 @@
 
 [中文使用说明](README.md) · [English README](README.en.md)
 
-## Unreleased
+## 0.0.1-beta.4
 
+- 在普通模式也可以说“这题用 Turbo”或“让 Gemini 重写刚才那条”。单次请求直接走 Gemini，可以附上具体改法。下一条普通提问继续使用项目默认模式。
+- A one-time Turbo request can rewrite the current draft or a specific earlier answer in the same chat. Give Gemini any directions for that rewrite. The next ordinary question uses the project's saved mode.
 - 新增项目改写模式。普通模式（默认）沿用原有流程，Turbo 会跳过 OpenAI，将每份符合条件的草稿直接交给 Gemini，可直接说“切换到 Turbo 模式”或“恢复普通模式”。
 - Projects can now choose a rewrite mode. Normal (default) keeps the existing workflow. Turbo skips OpenAI and sends every eligible draft directly to Gemini. Say “Switch to turbo mode” or “Switch back to normal mode”.
-- OpenAI 风格检查只使用本轮问题、草稿和已设置的自定义润色提示词。历史问答仅在 Gemini 改写时附带，默认最多 2 轮，可选 0 到 10 轮，历史正文最多 16 KiB。可以要求本轮不带历史。本轮问题和草稿各限 128 KiB，每一步的材料按紧凑 UTF-8 JSON 计最多 256 KiB。Gemini 的材料放不下时先移除最早的完整问答，若本轮内容仍超限则保留原稿。
-- The OpenAI style check uses only the current question, draft, and any custom polishing prompt. History goes only to Gemini when it rewrites. Projects can choose 0–10 exchanges (default 2) with up to 16 KiB of history text, or omit history for one rewrite. The question and draft may each contain up to 128 KiB. The plugin limits each step’s material to 256 KiB of compact UTF-8 JSON. It drops the oldest whole exchanges from Gemini’s material first and keeps the original draft if the current material alone exceeds the limit.
+- OpenAI 风格检查只使用本轮问题、草稿和已设置的自定义润色提示词。历史问答仅在 Gemini 改写时附带，默认最多 2 轮，可选 0 到 10 轮。可以要求本轮不带历史。OpenAI 检查不可用或材料超过该接口限制时，直接交给 Gemini。
+- The OpenAI style check uses only the current question, draft, and any custom polishing prompt. History goes only to Gemini when it rewrites. Projects can choose 0–10 exchanges (default 2), or omit history for one rewrite. When the OpenAI check is unavailable or its input limit is exceeded, the draft goes directly to Gemini.
 - 可以在项目里说“查看润色提示词”“设置润色提示词”或“恢复默认润色提示词”。自定义提示词逐字保存在 `.codex/codex-polish.prompt.md`，供同一项目后续聊天使用。普通和 Turbo 模式都将原文作为 Gemini 的全部编辑指令。可选的 OpenAI 风格检查也会参考它。
 - Projects can show, set, or restore the default polishing prompt in chat. Custom prompts are saved verbatim in `.codex/codex-polish.prompt.md` for future chats in the project. Normal and Turbo both use the saved text as Gemini’s complete editing prompt. The optional OpenAI style check also considers it.
-- 采用改稿时，在支持折叠的客户端，完整原稿默认收起。点击润色版下方的“查看 GPT 原稿”即可对照。
+- Gemini 返回改稿后，在支持折叠的客户端，完整原稿默认收起。点击润色版下方的“查看 GPT 原稿”即可对照。
 - When a rewrite changes the text, clients that support folding show the full draft collapsed. Select “View original GPT draft” below the rewrite to compare.
-- Gemini 和可选的 OpenAI 风格检查现在直接接收本轮问题和草稿原文，包括代码、路径、链接和数值。OpenAI 只在改写前判断草稿是否需要润色。Gemini 返回的改稿在本地检查后交付。插件仍会跳过检测到疑似凭据或要求固定格式的回合，并检查改稿的 Markdown 结构。
-- Gemini and the optional OpenAI style check now receive the current question and draft as written, including code, paths, links, and numbers. OpenAI is called only before rewriting to decide whether the draft needs editing. The plugin checks Gemini’s reply locally before delivery. It still skips detected credentials and exact-output requests and checks the rewrite’s Markdown structure.
+- Gemini 和可选的 OpenAI 风格检查现在直接接收本轮问题和草稿原文，包括代码、路径、链接和数值。OpenAI 只在改写前判断草稿是否需要润色。本轮材料含疑似凭据或用户要求固定格式时，插件会在发送前跳过。两种模式收到 Gemini 的完整回复后只做显示排版。Gemini 返回原文时，正文只显示一次。
+- Gemini and the optional OpenAI style check now receive the current question and draft as written, including code, paths, links, and numbers. OpenAI is called only before rewriting to decide whether the draft needs editing. The plugin skips suspected credentials and exact-output requests before sending. Both modes now format Gemini’s complete reply for display. If Gemini returns the original text, it appears once.
 
 ## 0.0.1-beta.3
 

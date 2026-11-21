@@ -33,7 +33,7 @@ export function treeContents(root) {
   return visit('') ? contents : null;
 }
 
-export function preserve(profile, market, name, version, getSource) {
+export function preserve(profile, market, name, version, getSources) {
   let parent = profile;
   let cache;
   try {
@@ -55,10 +55,10 @@ export function preserve(profile, market, name, version, getSource) {
       const entries = fs.readdirSync(cache);
       if (!entries.length) return null;
       if (entries.length === 1 && entries[0] === version && fs.lstatSync(join(cache, version)).isDirectory()) {
-        const source = getSource();
-        if (source) {
-          const expected = treeContents(source);
-          if (expected && isDeepStrictEqual(expected, treeContents(join(cache, version)))) return null;
+        const sources = getSources();
+        if (sources.length) {
+          const cached = treeContents(join(cache, version));
+          if (cached && sources.some((source) => isDeepStrictEqual(treeContents(source), cached))) return null;
         }
       }
     }

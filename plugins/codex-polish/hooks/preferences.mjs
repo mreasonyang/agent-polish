@@ -1,14 +1,12 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { spawnSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
-import { readProjectSetting, accessProjectSetting } from './project_setting.mjs';
-import { PROMPT_FILE, readEditorPrompt, readPromptInput, resetPromptValue } from './editor_prompt.mjs';
-import { REWRITE_MODES, REWRITE_MODE_FILE, projectRewriteMode, rewriteModeSettings } from './rewrite_mode.mjs';
+import { projectRoot, readProjectSetting, accessProjectSetting } from './project_setting.mjs';
+import { PROMPT_FILE, readEditorPrompt, readPromptInput } from './editor_prompt.mjs';
+import { REWRITE_MODES, REWRITE_MODE_FILE, REWRITE_TRIGGERS, projectRewriteMode, rewriteModeSettings } from './rewrite_mode.mjs';
 import { LANGUAGES, LANGUAGE_FILE, language, languageSettings, tr } from './ui_locale.mjs';
-import { COOLDOWNS, activeFailure, cacheScope, clearFailure, noteFailure, withCache } from './recovery.mjs';
+import { cacheScope, withCache } from './recovery.mjs';
 
 const MODES = ['auto', 'manual', 'off'];
 const MODE_FILE = 'codex-polish.mode';
@@ -22,12 +20,14 @@ const GOOGLE_AUTH_MODES = ['existing-session', 'gemini-api-key', 'agent-platform
 const SESSION_ID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
 const TURN_ID = /^[A-Za-z0-9_-]{1,128}$/;
 const SOURCE_MAX_AGE = 7 * 24 * 60 * 60;
-const DECISION_ERRORS = new Set([
-  ...Object.keys(COOLDOWNS).filter(reason => reason.startsWith('api_')),
-  'invalid_api_response', 'api_refusal', 'api_http_error', 'input_read_error',
-  'input_too_large', 'invalid_input', 'possible_credential', 'display_control',
-  'invalid_options', 'missing_api_key', 'invalid_api_key', 'editor_prompt_invalid',
-  'decision_route_changed', 'rewrite_mode_invalid',
+const DECISION_UNAVAILABLE = new Set([
+  'api_rate_limited', 'api_server_error', 'api_transport_error', 'api_timeout',
+  'api_auth_error', 'api_quota_exhausted', 'invalid_api_response', 'api_refusal',
+  'api_http_error', 'missing_api_key', 'invalid_api_key', 'decision_input_too_large',
+]);
+const LOCAL_DECISION_ERRORS = new Set([
+  'input_read_error', 'input_too_large', 'invalid_input', 'possible_credential', 'display_control',
+  'invalid_options', 'editor_prompt_invalid', 'decision_route_changed', 'rewrite_mode_invalid',
 ]);
 const DECISION_REASONS = { rewrite: 'needs_rewrite', keep: 'already_clear' };
 
@@ -58,8 +58,9 @@ export function projectHistoryTurns(cwd) {
 export function decisionsSettings(cwd, rewriteMode = projectRewriteMode(cwd)) {
   const [value] = readProjectSetting(cwd, DECISIONS_FILE, 16);
   const mode = value === null || value === 'auto' ? 'auto' : 'off';
-  const hasKey = Boolean(process.env.OPENAI_API_KEY?.trim());
-  return { decisions_mode: mode, openai_key_configured: hasKey, decisions_enabled: rewriteMode === 'normal' && mode === 'auto' && hasKey };
+  const key = process.env.OPENAI_API_KEY;
+  const hasKey = Boolean(key?.trim());
+  return { decisions_mode: mode, openai_key_configured: hasKey, openai_key_malformed: hasKey && /[^!-~]/.test(key), decisions_enabled: rewriteMode === 'normal' && mode === 'auto' && hasKey };
 }
 
 export function validModelId(value) {
@@ -67,15 +68,19 @@ export function validModelId(value) {
     /^[A-Za-z0-9][A-Za-z0-9._-]*(?:[/:][A-Za-z0-9][A-Za-z0-9._-]*)*$/.test(value);
 }
 
-export function projectGeminiModel(cwd) {
+function modelPreference(cwd) {
   const [value] = readProjectSetting(cwd, MODEL_FILE, 257, { allowMissingLink: true });
-  if (value === null) return DEFAULT_GEMINI_MODEL;
-  return validModelId(value) ? value : null;
+  return { gemini_model: value === null ? DEFAULT_GEMINI_MODEL : validModelId(value) ? value : null,
+    gemini_model_configured: validModelId(value) };
+}
+
+export function projectGeminiModel(cwd) {
+  return modelPreference(cwd).gemini_model;
 }
 
 function writeProjectSetting(cwd, filename, value, lang) {
   if (!path.isAbsolute(cwd)) throw new RangeError(tr('请提供项目目录的完整路径。', 'Enter the full path to the project folder.', lang));
-  const project = fs.realpathSync(cwd);
+  const project = projectRoot(cwd);
   if (!fs.statSync(project).isDirectory() || path.dirname(project) === project || project === fs.realpathSync(os.homedir())) {
     throw new RangeError(tr('请选择要配置的项目目录。', 'Choose a project folder to configure.', lang));
   }
@@ -95,10 +100,7 @@ function writeProjectSetting(cwd, filename, value, lang) {
 function setProjectModel(cwd, model, lang) {
   if (!validModelId(model)) throw new RangeError(tr('这个模型 ID 无效，请从当前账号的 Gemini 模型列表里选一个。',
     "This model ID isn't valid. Choose a Gemini model from your account's list.", lang));
-  const [, scope] = projectSettings(cwd);
-  const recent = model !== projectGeminiModel(cwd) ? activeFailure(scope) : null;
   const file = writeProjectSetting(cwd, MODEL_FILE, model, lang);
-  if (recent?.reason === 'acp_model_unavailable') clearFailure(scope, recent.token);
   return { gemini_model: model, file };
 }
 
@@ -148,11 +150,6 @@ export function historySource(cwd) {
   return null;
 }
 
-function workflowCooldown(scope, decisionsEnabled) {
-  const recent = activeFailure(scope);
-  return !decisionsEnabled && DECISION_ERRORS.has(recent?.reason) ? null : recent;
-}
-
 function findExecutable(name, extra = []) {
   const directories = (process.env.PATH ?? '/bin:/usr/bin').split(path.delimiter);
   for (const directory of [...directories, ...extra]) {
@@ -177,10 +174,10 @@ function supportedNode() {
   return major > 22 || (major === 22 && minor >= 16);
 }
 
-export function runtimeStatus(cwd, mode, scope) {
+export function runtimeStatus(cwd, mode, trigger) {
   const googleAuth = process.env.CODEX_POLISH_AGY_AUTH ?? 'existing-session';
   const agy = findAgy();
-  const rewriteSettings = rewriteModeSettings(cwd);
+  const rewriteSettings = rewriteModeSettings(cwd, trigger);
   const rewriteMode = rewriteSettings.rewrite_mode;
   let promptSource;
   try { promptSource = readEditorPrompt(cwd, rewriteMode ?? 'normal').source; }
@@ -188,7 +185,7 @@ export function runtimeStatus(cwd, mode, scope) {
   const status = {
     mode, ...rewriteSettings, node_available: supportedNode(),
     codex_available: Boolean(findExecutable('codex')), agy_available: Boolean(agy), agy_path: agy,
-    ...decisionsSettings(cwd, rewriteMode), gemini_model: projectGeminiModel(cwd), prompt_source: promptSource,
+    ...decisionsSettings(cwd, rewriteMode), ...modelPreference(cwd), prompt_source: promptSource,
     google_auth_method: GOOGLE_AUTH_MODES.includes(googleAuth) ? googleAuth : 'unsupported',
     gemini_key_configured: googleAuth === 'existing-session' ? null : Boolean(process.env.GEMINI_API_KEY?.trim()),
   };
@@ -199,95 +196,83 @@ export function runtimeStatus(cwd, mode, scope) {
   if (status.google_auth_method === 'unsupported') blockers.push('unsupported_google_auth');
   if (status.gemini_model === null) blockers.push('gemini_model_invalid');
   if (promptSource === 'invalid') blockers.push('editor_prompt_invalid');
-  const keys = [];
-  if (status.decisions_enabled) keys.push(['openai', process.env.OPENAI_API_KEY]);
-  if (googleAuth === 'gemini-api-key') keys.push(['gemini', process.env.GEMINI_API_KEY]);
-  for (const [provider, key] of keys) {
-    if (!key?.trim()) blockers.push(provider + '_key_missing');
-    else if (/[^!-~]/.test(key)) blockers.push(provider + '_key_invalid');
+  if (googleAuth === 'gemini-api-key') {
+    const key = process.env.GEMINI_API_KEY;
+    if (!key?.trim()) blockers.push('gemini_key_missing');
+    else if (/[^!-~]/.test(key)) blockers.push('gemini_key_invalid');
   }
-  return { ...status, blockers, cooldown: workflowCooldown(scope, status.decisions_enabled) };
+  return { ...status, blockers };
 }
 
-function runOpenaiDecision(scope, cwd) {
-  const helper = fileURLToPath(new URL('../skills/codex-polish/scripts/decisions.mjs', import.meta.url));
-  const unavailable = [{ action: 'keep', reason: 'decision_helper_unavailable' }, 1];
-  const child = spawnSync(process.execPath, [helper, 'judge', '--cwd', cwd], {
-    stdio: ['inherit', 'pipe', 'ignore'], timeout: 15000, killSignal: 'SIGKILL', maxBuffer: 64 * 1024,
-  });
-  if (child.error?.code === 'ETIMEDOUT') {
-    noteFailure(scope, 'api_timeout');
-    return [{ action: 'keep', reason: 'api_timeout' }, 1];
-  }
-  if (child.error || child.status === null) return unavailable;
+async function runOpenaiDecision(cwd, pinned) {
+  // Run the one request in this process so cancelling the host command also cancels HTTPS.
   let output;
+  let policy;
   try {
-    output = JSON.parse(child.stdout);
+    const { decide } = await import('../skills/codex-polish/scripts/decisions.mjs');
+    output = await decide(['judge', '--cwd', cwd], process.stdin, process.env, undefined, () => {
+      policy = workflowPolicy(cwd, pinned);
+      return policy.action === 'accept';
+    });
+    if (policy?.action === 'keep') return [policy, 0];
   } catch {
-    return unavailable;
+    return [{ action: 'keep', reason: 'decision_helper_unavailable' }, 1];
   }
-  if (!output || typeof output !== 'object' || Array.isArray(output)) return unavailable;
-  const { action, reason, probability } = output;
-  if (child.status) {
-    if (action !== 'keep' || !DECISION_ERRORS.has(reason)) return unavailable;
-    noteFailure(scope, reason);
-    return [{ action, reason }, 1];
+  const { action, reason, probability } = output ?? {};
+  if (DECISION_UNAVAILABLE.has(reason) && action === 'keep') {
+    return [{ action: 'rewrite', reason: 'decision_unavailable', decision_error: reason }, 0];
   }
-  if (typeof action !== 'string' || !Object.hasOwn(DECISION_REASONS, action) ||
-      reason !== DECISION_REASONS[action] || typeof probability !== 'number' || !(probability >= 0 && probability <= 1)) return unavailable;
+  if (LOCAL_DECISION_ERRORS.has(reason) && action === 'keep') return [{ action, reason }, 1];
+  if (typeof action !== 'string' || !Object.hasOwn(DECISION_REASONS, action) || reason !== DECISION_REASONS[action] ||
+      typeof probability !== 'number' || !(probability >= 0 && probability <= 1)) {
+    return [{ action: 'keep', reason: 'decision_helper_unavailable' }, 1];
+  }
   return [{ action, reason, probability }, 0];
 }
 
-function runWorkflowCommand(command, args) {
-  const [mode, scope] = projectSettings(args.cwd);
-  if (mode === 'off' || (mode !== 'auto' && args.trigger === 'auto')) return [{ action: 'keep', reason: 'project_mode' }, 0];
-  const { blockers, cooldown, decisions_enabled, rewrite_mode } = runtimeStatus(args.cwd, mode, scope);
-  if (blockers.length) return [{ action: 'keep', reason: blockers[0], blockers }, 0];
-  if (args['rewrite-mode'] && args['rewrite-mode'] !== rewrite_mode) return [{ action: 'keep', reason: 'rewrite_mode_changed' }, 0];
-  const route = decisions_enabled ? 'decisions' : 'acp';
-  if (args.route && args.route !== route) return [{ action: 'keep', reason: 'decision_route_changed' }, 0];
-  if (cooldown && args.trigger === 'auto') return [{ action: 'keep', reason: 'cooldown', cooldown }, 0];
-  if (command === 'finish') {
-    if (cooldown && args['recovery-token'] === cooldown.token) clearFailure(scope, cooldown.token);
-    return [{ action: 'accept', reason: 'workflow_ready', route }, 0];
-  }
-  const [result, code] = decisions_enabled
-    ? runOpenaiDecision(scope, args.cwd)
+export function workflowPolicy(cwd, { trigger, route, rewriteMode, model }) {
+  const [mode] = projectSettings(cwd);
+  const keep = reason => ({ action: 'keep', reason });
+  if (!REWRITE_TRIGGERS.includes(trigger) || mode === 'off' || (mode !== 'auto' && trigger === 'auto'))
+    return keep('project_mode');
+  const status = runtimeStatus(cwd, mode, trigger);
+  if (status.blockers.length) return { ...keep(status.blockers[0]), blockers: status.blockers };
+  if (rewriteMode !== undefined && rewriteMode !== status.rewrite_mode) return keep('rewrite_mode_changed');
+  if (model !== undefined && model !== status.gemini_model) return keep('gemini_model_changed');
+  const selected = status.decisions_enabled ? 'decisions' : 'acp';
+  if (route !== undefined && route !== selected) return keep('decision_route_changed');
+  return { action: 'accept', reason: 'workflow_ready', route: selected };
+}
+
+async function judgeDraft(args) {
+  const pinned = { trigger: args.trigger, route: args.route, rewriteMode: args['rewrite-mode'], model: args.model };
+  const policy = workflowPolicy(args.cwd, pinned);
+  if (policy.action === 'keep') return [policy, 0];
+  const { route } = policy;
+  const [result, code] = route === 'decisions'
+    ? await runOpenaiDecision(args.cwd, { ...pinned, route })
     : [{ action: 'rewrite', reason: 'direct_acp' }, 0];
   if (code) return [result, code];
   result.route = route;
-  if (cooldown && result.action === 'rewrite') result.recovery_token = cooldown.token;
   return [result, 0];
 }
 
 function runHook() {
   if (!supportedNode()) return;
-  const limit = 2 * 1024 * 1024;
   let event;
   try {
-    const raw = Buffer.alloc(limit + 1);
-    let size = 0;
-    while (size < raw.length) {
-      const count = fs.readSync(0, raw, size, raw.length - size);
-      if (count === 0) break;
-      size += count;
-    }
-    if (size > limit) return;
-    event = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(raw.subarray(0, size)));
+    event = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(fs.readFileSync(0)));
   } catch {
     return;
   }
   if (event?.hook_event_name !== 'UserPromptSubmit') return;
-  const [mode, scope] = projectSettings(event.cwd);
+  const [mode] = projectSettings(event.cwd);
   rememberHistorySource(event, mode);
   if (mode !== 'auto') return;
   const lang = language(event.cwd);
-  const paused = workflowCooldown(scope, decisionsSettings(event.cwd).decisions_enabled);
-  const additionalContext = paused
-    ? tr('自动润色因上次服务故障暂时暂停。常规回复请在最终消息里注明本轮未润色，再给出 GPT 原稿。遵守用户的格式要求；若本轮明确点名润色，可按技能手动重试。',
-      'Automatic polishing is temporarily paused after a service failure. For ordinary replies, mark the final answer as unpolished and show the original GPT draft. Honor the requested format. An explicit polish request can still use the skill.', lang)
-    : tr('本项目已开启自动改写。完成任务后，在发送最终回复前使用已安装的 codex-polish:codex-polish 技能。按当前项目的改写模式处理原稿，按技能的交付规则在常规回复中展示润色结果和完整 GPT 原稿。遵守用户指定的输出格式、取消或禁止外发的要求。',
-      'Automatic rewriting is on for this project. Before sending the final answer, use the installed codex-polish:codex-polish skill. Follow the current project rewrite mode and the skill’s delivery instructions for showing the result and the full original GPT draft in ordinary replies. Honor the requested format, cancellations, and requests to keep content local.', lang);
+  const workflow = JSON.stringify(path.resolve(import.meta.dirname, '../skills/codex-polish/WORKFLOW.md'));
+  const additionalContext = tr(`本项目已开启自动改写。用户要重写已有回复时，直接按 ${workflow} 处理用户指的那条回复。其他任务先准备本轮原稿，再按同一流程处理。无需向用户播报润色进度。只在最终回复中按流程展示结果和原稿。遵守用户指定的格式、取消或禁止外发的要求。`,
+      `Automatic rewriting is on for this project. If the user asks to rewrite an earlier reply, follow ${workflow} using the reply they refer to. For other tasks, prepare this turn’s draft and then follow the same workflow. Run the polishing steps without progress announcements. Show the result and original draft in the final answer as directed. Honor the requested format, cancellations, and requests to keep content local.`, lang);
   console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext } }));
 }
 
@@ -301,12 +286,10 @@ const commands = {
   'set-decisions': ['{auto,off} --cwd DIR', '设置是否让 OpenAI 判断原稿是否需要润色', 'choose whether OpenAI decides if a draft needs editing'],
   'set-model': ['(MODEL_ID | --reset) --cwd DIR', '选择项目的 Gemini 改写模型，或恢复默认模型 ' + DEFAULT_GEMINI_MODEL, 'choose a Gemini model or reset to ' + DEFAULT_GEMINI_MODEL],
   prompt: ['--cwd DIR', '查看当前生效的润色提示词和来源', 'show the effective editing prompt and its source'],
-  'set-prompt': ['[--reset] --cwd DIR', '从标准输入保存 UTF-8 润色提示词（最多 16 KiB），或恢复默认', 'save a UTF-8 editing prompt from stdin (up to 16 KiB), or restore the default'],
+  'set-prompt': ['[--reset] --cwd DIR', '从标准输入保存 UTF-8 润色提示词，或恢复默认', 'save a UTF-8 editing prompt from stdin, or restore the default'],
   'set-language': ['{auto,zh,en} --cwd DIR', '选择设置和提示的显示语言（auto 自动识别，zh 中文，en 英文）', 'choose the language for settings and messages (auto detects, zh Chinese, en English)'],
-  check: ['--cwd DIR', '查看当前设置和缺少的依赖', 'check project settings and local requirements'],
-  decision: ['judge --trigger {auto,explicit} --cwd DIR [--route {acp,decisions}] [--rewrite-mode {normal,turbo}]', '判断原稿是否需要润色', 'decide whether to rewrite a draft'],
-  finish: ['--trigger {auto,explicit} --cwd DIR --route {acp,decisions} [--rewrite-mode {normal,turbo}] [--recovery-token TOKEN]', '在本机核对项目设置并结束本轮润色', 'check local project settings and finish the rewrite'],
-  'note-failure': ['REASON --cwd DIR', '记录项目的临时服务故障', 'record a temporary service issue'],
+  check: ['--cwd DIR [--trigger {auto,explicit,turbo}]', '查看当前设置和缺少的依赖', 'check project settings and local requirements'],
+  decision: ['judge --trigger {auto,explicit,turbo} --cwd DIR [--route {acp,decisions}] [--rewrite-mode {normal,turbo}] [--model MODEL_ID]', '判断原稿是否需要润色', 'decide whether to rewrite a draft'],
 };
 
 function printHelp(command, t) {
@@ -332,16 +315,15 @@ async function main(args) {
   if (command === '--help' || command === '-h') { printHelp(null, t); return 0; }
   if (!Object.hasOwn(commands, command)) return usageError(t('请提供有效的命令。使用 --help 查看帮助。', 'Provide a valid command. Use --help to see available commands.'));
   if (rest.includes('--help') || rest.includes('-h')) { printHelp(command, t); return 0; }
-  const isWorkflowCommand = command === 'decision' || command === 'finish';
   const options = {};
   if (commands[command][0]) options.cwd = { type: 'string' };
   if (command === 'set-model' || command === 'set-prompt') options.reset = { type: 'boolean' };
-  if (isWorkflowCommand) {
+  if (command === 'decision' || command === 'check') options.trigger = { type: 'string' };
+  if (command === 'decision') {
     options.route = { type: 'string' };
-    options.trigger = { type: 'string' };
     options['rewrite-mode'] = { type: 'string' };
+    options.model = { type: 'string' };
   }
-  if (command === 'finish') options['recovery-token'] = { type: 'string' };
   let values, positionals;
   try {
     ({ values, positionals } = parseArgs({ args: rest, options, allowPositionals: true }));
@@ -349,15 +331,15 @@ async function main(args) {
     return usageError(t('参数无效或缺少参数值。使用 --help 查看用法。', 'Invalid option or missing option value. Use --help for usage.'));
   }
   if (options.cwd && !values.cwd) return usageError(t('缺少必填参数 --cwd', 'The --cwd option is required.'));
-  const expected = (command.startsWith('set-') && command !== 'set-prompt') || command === 'decision' || command === 'note-failure' ? 1 : 0;
+  const expected = (command.startsWith('set-') && command !== 'set-prompt') || command === 'decision' ? 1 : 0;
   if (positionals.length !== (values.reset ? 0 : expected)) return usageError(t('参数组合无效。使用 --help 查看用法。', 'Invalid arguments. Use --help for usage.'));
   const value = positionals[0];
   const choices = { 'set-mode': MODES, 'set-rewrite-mode': REWRITE_MODES, 'set-language': LANGUAGES, 'set-decisions': ['auto', 'off'], decision: ['judge'] };
   const toCheck = [[value, choices[command]]];
-  if (isWorkflowCommand) {
-    toCheck.push([values.trigger, ['auto', 'explicit']]);
+  if (command === 'decision' || values.trigger !== undefined) toCheck.push([values.trigger, REWRITE_TRIGGERS]);
+  if (command === 'decision') {
     if (values['rewrite-mode'] !== undefined) toCheck.push([values['rewrite-mode'], REWRITE_MODES]);
-    if (command === 'finish' || values.route !== undefined) toCheck.push([values.route, ['acp', 'decisions']]);
+    if (values.route !== undefined) toCheck.push([values.route, ['acp', 'decisions']]);
   }
   for (const [selected, allowed] of toCheck) {
     if (allowed && !allowed.includes(selected)) {
@@ -389,16 +371,11 @@ async function main(args) {
     return 0;
   }
   if (command === 'check') {
-    console.log(JSON.stringify({ ...runtimeStatus(cwd, ...projectSettings(cwd)), ...languageSettings(cwd), history_turns: projectHistoryTurns(cwd) }));
+    console.log(JSON.stringify({ ...runtimeStatus(cwd, projectSettings(cwd)[0], values.trigger), ...languageSettings(cwd), history_turns: projectHistoryTurns(cwd) }));
     return 0;
   }
-  if (command === 'note-failure') {
-    const [mode, scope] = projectSettings(cwd);
-    if (mode !== 'off') noteFailure(scope, value);
-    return 0;
-  }
-  if (isWorkflowCommand) {
-    const [output, code] = runWorkflowCommand(command, values);
+  if (command === 'decision') {
+    const [output, code] = await judgeDraft(values);
     console.log(JSON.stringify(output));
     return code;
   }
@@ -418,14 +395,14 @@ async function main(args) {
       case 'set-model': result = setProjectModel(cwd, values.reset ? DEFAULT_GEMINI_MODEL : value, lang); break;
       case 'set-prompt': {
         let data;
-        if (values.reset) data = resetPromptValue(cwd);
+        if (values.reset) data = null;
         else {
           try { data = await readPromptInput(process.stdin); }
           catch (error) {
             if (error.message === 'possible_credential') throw new RangeError(t('提示词含有疑似凭据，请移除后保存。',
               'The prompt appears to contain a credential. Remove it before saving.'));
-            throw new RangeError(t('请输入非空的 UTF-8 文本，最多 16 KiB，并移除显示控制字符。',
-              'Enter nonempty UTF-8 text up to 16 KiB and remove display control characters.'));
+            throw new RangeError(t('请输入非空的 UTF-8 文本，并移除显示控制字符。',
+              'Enter nonempty UTF-8 text and remove display control characters.'));
           }
         }
         result = { prompt_source: values.reset ? 'default' : 'custom', file: save(PROMPT_FILE, data) };

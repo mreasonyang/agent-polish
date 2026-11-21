@@ -45,15 +45,21 @@ function isolated(t) {
   }
   const cli = (...args) => JSON.parse(invoke('codex', ['plugin', ...args, '--json']));
   const rows = () => cli('list', '--marketplace', MARKET).installed;
-  const snapshot = () =>
+  const marketplace = () =>
     cli('marketplace', 'list').marketplaces.find((row) => row.name === MARKET)?.marketplaceSource.source;
+  const snapshot = () => {
+    const market = marketplace();
+    if (!market) return;
+    const { plugins } = JSON.parse(fs.readFileSync(join(market, INDEX)));
+    return join(market, plugins[0].source.path.split('/')[1]);
+  };
   const local = (action) => invoke(process.execPath, [join(ROOT, 'scripts/install.mjs'), action]);
-  return { base, profile, env, invoke, cli, rows, snapshot, local };
+  return { base, profile, env, invoke, cli, rows, marketplace, snapshot, local };
 }
 nativeTest(
   'npm tarball, both Finder launchers, npx from archive, native onboarding and hooks, disabled update, cache backups and uninstall',
   async (t) => {
-    const { base, profile, env, invoke, rows, snapshot } = isolated(t);
+    const { base, profile, env, invoke, rows, marketplace, snapshot } = isolated(t);
     const [pack] = JSON.parse(
       invoke('npm', ['pack', '--ignore-scripts', '--json', '--pack-destination', base], { cwd: ROOT })
     );
@@ -65,8 +71,8 @@ nativeTest(
     const chinese = invoke(join(download, '安装回复润色.command'), []);
     assert.ok(chinese.includes('用一句话解释 DNS。'));
     assert.match(chinese, /未设置模式的项目默认自动润色/);
-    assert.match(chinese, /切换到 Turbo 模式.*跳过 OpenAI/);
-    assert.match(chinese, /只有 Gemini 改写会附带以前的问答，默认最近最多 2 轮/);
+    assert.match(chinese, /跳过 OpenAI.*这条用 Turbo.*这个项目的默认模式设成 Turbo/);
+    assert.match(chinese, /默认还会附带这份答复之前最多 2 轮问答/);
     assert.match(chinese, /\/hooks.*信任.*UserPromptSubmit.*新开/);
     assert.ok(chinese.includes('复用你现有的 Antigravity 登录'));
     assert.ok(chinese.includes(join(snapshot(), GUIDE)));
@@ -76,15 +82,15 @@ nativeTest(
     const english = invoke(join(download, 'Install Codex Polish.command'), []);
     assert.ok(english.includes('Explain what DNS does in one sentence.'));
     assert.match(english, /without a saved mode default to automatic polishing/);
-    assert.match(english, /Switch to turbo mode.*skip OpenAI/);
-    assert.match(english, /Only Gemini receives earlier exchanges, up to two by default/);
+    assert.match(english, /skip OpenAI once.*Use Turbo for this answer.*Make Turbo the default/);
+    assert.match(english, /up to two exchanges that preceded the draft/);
     assert.match(english, /trust.*UserPromptSubmit.*\/hooks.*new chat/);
     const first = snapshot();
     assert.ok(first.startsWith(join(profile,'codex-polish','sources') + '/'));
     assert.ok(english.includes(join(first, GUIDE.replace('credentials.md', 'credentials.en.md'))));
     assert.equal(rows()[0].enabled, true);
     const rpc = (method, params) => nativeConfig(method, params, { env, cwd: base, experimental: true });
-    const { plugin } = await rpc('plugin/read', { pluginName: NAME, marketplacePath: join(first, INDEX) });
+    const { plugin } = await rpc('plugin/read', { pluginName: NAME, marketplacePath: join(marketplace(), INDEX) });
     assert.equal(plugin.onboardingSkill.name, 'codex-polish:codex-polish-setup');
     assert.equal(plugin.onboardingSkill.enabled, true);
     assert.equal(plugin.summary.interface.displayName, 'Codex Polish · 回复润色');
@@ -98,6 +104,9 @@ nativeTest(
     assert.equal(hooks[0].trustStatus, 'untrusted');
     await rpc('config/value/write', { keyPath: `plugins.${PLUGIN_ID}.enabled`, value: false, mergeStrategy: 'upsert' });
     const cache = join(profile, 'plugins/cache', MARKET, NAME, pack.version);
+    const polishing = join(cache, 'skills/codex-polish');
+    assert.ok(fs.statSync(join(polishing, 'WORKFLOW.md')).isFile());
+    assert.match(fs.readFileSync(join(polishing, 'SKILL.md'), 'utf8'), /\]\((?:\.\/)?WORKFLOW\.md\)/);
     fs.writeFileSync(join(cache, 'user-note'), 'edited cache');
     fs.appendFileSync(join(download, GUIDE), '\n<!-- replacement build -->');
     assert.match(invoke(join(download, 'Install Codex Polish.command'), []), /disabled/);
@@ -135,6 +144,58 @@ nativeTest(
     for (const p of [first, changed, cache]) assert.ok(!fs.existsSync(p), p);
   }
 );
+nativeTest('native hook trust survives identical content and reports package, editor prompt and hook changes until reviewed', async (t) => {
+  const { base, env, invoke, marketplace } = isolated(t);
+  const root = join(base, 'release');
+  fs.mkdirSync(dirname(join(root, INDEX)), { recursive: true });
+  fs.copyFileSync(join(ROOT, INDEX), join(root, INDEX));
+  fs.cpSync(join(ROOT, PRODUCT), join(root, PRODUCT), { recursive: true });
+  fs.cpSync(join(ROOT, 'scripts'), join(root, 'scripts'), { recursive: true });
+  const install = (action) => invoke(process.execPath, [join(root, 'scripts/install.mjs'), action]);
+  const rpc = (method, params) => nativeConfig(method, params, { env, cwd: base, experimental: true });
+  const hook = async () => (await rpc('hooks/list', { cwds: [base] })).data[0].hooks.find((h) => h.pluginId === PLUGIN_ID);
+  // Simulate approval only inside this disposable Codex profile.
+  const approve = (h) => rpc('config/value/write', {
+    keyPath: 'hooks.state."' + h.key + '".trusted_hash', value: h.currentHash, mergeStrategy: 'upsert'
+  });
+  assert.match(install('setup'), /trust UserPromptSubmit/);
+  const fixedMarket = marketplace();
+  let initial = await hook();
+  assert.equal(initial.trustStatus, 'untrusted');
+  await approve(initial);
+  fs.writeFileSync(join(root, 'README.md'), 'Updated package documentation outside the native plugin.');
+  assert.match(install('update'), /Codex trusts UserPromptSubmit/);
+  assert.equal((await hook()).currentHash, initial.currentHash);
+  assert.equal((await hook()).trustStatus, 'trusted');
+  const files = [
+    [GUIDE, '\nUpdated setup guide.\n'],
+    [PRODUCT + '/skills/codex-polish/references/codex-polish-editor.md', '\nUpdated editorial prompt.\n'],
+    [PRODUCT + '/hooks/preferences.mjs', '\n// Updated hook implementation.\n'],
+    [PRODUCT + '/hooks/hooks.json', null]
+  ];
+  for (const [relative, change] of files) {
+    const path = join(root, relative);
+    if (change) fs.appendFileSync(path, change);
+    else {
+      const manifest = JSON.parse(fs.readFileSync(path));
+      manifest.hooks.UserPromptSubmit[0].hooks[0].command += ' ';
+      fs.writeFileSync(path, JSON.stringify(manifest));
+    }
+    assert.match(install('update'), /trust UserPromptSubmit again/, relative);
+    assert.equal(marketplace(), fixedMarket);
+    const changed = await hook();
+    assert.equal(changed.trustStatus, 'modified');
+    assert.notEqual(changed.currentHash, initial.currentHash);
+    assert.equal(changed.command === initial.command, Boolean(change));
+    assert.match(install('doctor'), /trust UserPromptSubmit again/);
+    const { config } = await rpc('config/read', { includeLayers: false });
+    const saved = config.hooks.state[initial.key];
+    assert.equal(saved.trusted_hash + '/' + saved.trusted_content_hash, initial.currentHash);
+    await approve(changed);
+    assert.equal((await hook()).trustStatus, 'trusted');
+    initial = changed;
+  }
+});
 nativeTest('explicit uninstall clears the current plugin after its marketplace was removed', (t) => {
   const { profile, local, cli, invoke } = isolated(t);
   local('setup');
@@ -145,9 +206,9 @@ nativeTest('explicit uninstall clears the current plugin after its marketplace w
   assert.ok(!fs.existsSync(join(profile, 'plugins/cache', MARKET, NAME)));
 });
 for (const [stage, action] of [
-  ['after-removal', 'update'],
+  ['after-pointer', 'update'],
   ['after-install', 'setup'],
-  ['after-removal', 'uninstall']
+  ['after-pointer', 'uninstall']
 ]) {
   nativeTest(`interrupted native update ${stage} supports ${action} in a new process`, (t) => {
     const { base, profile, invoke, rows, cli, env } = isolated(t);
@@ -162,9 +223,9 @@ for (const [stage, action] of [
       const [action,stage,root]=process.argv.slice(1);
       if(action==='disable'){await app.writeEnabled(false);}
       else await app.manage(action,root,app.snapshotStore(),(...args)=>{
+        if(stage==='after-pointer' && args[0]==='add') process.exit(79);
         const reply=app.codex(...args);
-        if(stage==='after-removal' && args[0]==='marketplace' && args[1]==='remove'
-           || stage==='after-install' && args[0]==='add') process.exit(79);
+        if(stage==='after-install' && args[0]==='add') process.exit(79);
         return reply;
       });`;
     const install = (action, stage = '') =>
@@ -186,6 +247,7 @@ for (const [stage, action] of [
     }
     install(action);
     assert.equal(journals().length, 0);
+    assert.ok(!fs.existsSync(join(profile, 'codex-polish-backups')), 'intact pre- and post-update caches need no backup');
     if (action === 'uninstall') {
       assert.deepEqual(rows(), []);
       assert.ok(!fs.existsSync(receipt.installedPath));

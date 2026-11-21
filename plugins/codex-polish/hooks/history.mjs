@@ -2,17 +2,15 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { isDeepStrictEqual, parseArgs } from 'node:util';
+import { originalReplyText } from '../skills/codex-polish/scripts/format_reply.mjs';
 import { CREDENTIAL, DISPLAY_CONTROL } from '../skills/codex-polish/scripts/text_guard.mjs';
 import { DEFAULT_HISTORY_TURNS, MAX_HISTORY_TURNS } from './preferences.mjs';
 
-export const MAX_HISTORY_BYTES = 16 * 1024;
-export const MAX_SCAN_BYTES = 4 * 1024 * 1024;
-const MAX_HEADER_BYTES = 1024 * 1024;
 const HOST_TEXT = /^\s*(?:<\/?(?:environment_context|system-reminder|subagent_notification|turn_aborted|user_shell_command|task-notification|user_instructions|skills_instructions|permissions|developer_instructions|instructions|goal_context|ide_context|local-command-[\w-]+|agent_message|skill|t3_code_[\w-]+)(?:[\s>/])|# AGENTS\.md instructions\b|# (?:Context from my IDE setup|Files mentioned by the user):|Subagent completed:)/im;
 const ATTACHMENTS = ['images', 'file_ids', 'local_images', 'audio', 'audio_references', 'local_audio'];
 
 function safeText(text) {
-  return typeof text === 'string' && text.trim() !== '' && text.length <= MAX_HISTORY_BYTES && text.isWellFormed() &&
+  return typeof text === 'string' && text.trim() !== '' && text.isWellFormed() &&
     !CREDENTIAL.test(text) && !DISPLAY_CONTROL.test(text) && !HOST_TEXT.test(text);
 }
 
@@ -28,15 +26,22 @@ function present(value) {
 }
 
 class Turn {
-  constructor(start) {
+  constructor(start, interrupted) {
     this.id = start.turn_id;
     this.events = [];
     this.messages = [];
     this.answer = null;
+    this.previousInput = [];
+    this.turnIds = new Set([this.id]);
     const source = start.turn_attribution ?? {};
     this.ordinary = typeof source === 'object' && !Array.isArray(source) &&
-      [undefined, null, 'user', 'exec'].includes(source.turn_trigger) &&
-      !source.initiating_agent_path && !source.parent_turn_id && (start.root_turn_id ?? this.id) === this.id;
+      [undefined, null, 'user', 'exec', 'composer', 'resume_interrupted_task'].includes(source.turn_trigger) &&
+      !source.initiating_agent_path && !source.parent_turn_id && (start.root_turn_id ?? this.id) === this.id &&
+      (source.root_turn_id ?? this.id) === this.id && (source.turn_id ?? this.id) === this.id;
+    if (this.ordinary && source.turn_trigger === 'resume_interrupted_task' && interrupted?.ordinary) {
+      this.previousInput = interrupted.userInput();
+      this.turnIds = new Set([...interrupted.turnIds, this.id]);
+    }
   }
 
   read(kind, item) {
@@ -64,90 +69,126 @@ class Turn {
     }
   }
 
+  userInput() {
+    return this.previousInput.concat(this.events.length ? this.events : this.messages);
+  }
+
   finish(completed) {
-    const messages = this.events.length ? this.events : this.messages;
-    if (completed.last_agent_message !== this.answer || !safeText(this.answer) || !messages.every(safeText)) return null;
-    const user = messages.join('\n\n');
-    if (Buffer.byteLength(user) + Buffer.byteLength(this.answer) > MAX_HISTORY_BYTES) return null;
-    return { user, assistant: this.answer };
+    const messages = this.userInput();
+    if (completed.last_agent_message !== this.answer || !safeText(this.answer) || !messages.length || !messages.every(safeText)) return null;
+    return { user: messages.join('\n\n'), assistant: this.answer };
   }
 }
 
-function completedExchanges(data, sessionId, turnId, turns) {
+// Snapshot the size at open and stream complete JSONL records. Only the current
+// turn and the configured number of completed exchanges stay in memory.
+function* records(fd, size) {
+  const chunkSize = 64 * 1024;
+  const decoder = new TextDecoder('utf-8', { fatal: true });
+  let pending = [];
+  for (let pos = 0; pos < size;) {
+    const chunk = Buffer.allocUnsafe(Math.min(chunkSize, size - pos));
+    const count = fs.readSync(fd, chunk, 0, chunk.length, pos);
+    if (!count) throw new Error('truncated transcript');
+    pos += count;
+    const raw = chunk.subarray(0, count);
+    let start = 0;
+    for (let newline = raw.indexOf(10); newline !== -1; newline = raw.indexOf(10, start)) {
+      const part = raw.subarray(start, newline);
+      const line = pending.length ? Buffer.concat([...pending, part]) : part;
+      pending = [];
+      yield JSON.parse(decoder.decode(line));
+      start = newline + 1;
+    }
+    if (start < raw.length) pending.push(raw.subarray(start));
+  }
+  if (pending.length) throw new Error('incomplete transcript');
+}
+
+function completedExchanges(rows, sessionId, turnId, limit, { previous = false, through = Infinity } = {}) {
   const last = [];
+  let count = 0;
+  let header = false;
   let active = null;
-  for (const line of data.split('\n')) {
-    const { type: kind, payload: item } = JSON.parse(line);
-    if (typeof kind !== 'string') return [];
+  let interrupted = null;
+  for (const { type: kind, payload: item } of rows) {
+    if (typeof kind !== 'string' || (!header && kind !== 'session_meta')) return null;
     if (!['session_meta', 'event_msg', 'response_item'].includes(kind)) continue;
-    if (!item || typeof item !== 'object' || Array.isArray(item)) return [];
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
     if (kind === 'session_meta') {
-      if (item.id !== sessionId) return [];
+      if (header || item.id !== sessionId || item.parent_thread_id || item.forked_from_id ||
+          item.source?.subagent || (item.thread_source != null && item.thread_source !== 'user')) return null;
+      header = true;
     } else if (kind === 'event_msg' && item.type === 'task_started') {
-      active = typeof item.turn_id === 'string' && item.turn_id ? new Turn(item) : null;
-    } else if (kind === 'event_msg' && ['turn_aborted', 'thread_rolled_back'].includes(item.type)) {
+      active = typeof item.turn_id === 'string' && item.turn_id ? new Turn(item, interrupted) : null;
+      interrupted = null;
+    } else if (kind === 'event_msg' && item.type === 'turn_aborted') {
+      interrupted = item.reason === 'interrupted' && active?.id === item.turn_id ? active : null;
       active = null;
-      if (item.type === 'thread_rolled_back') last.length = 0;
+    } else if (kind === 'event_msg' && item.type === 'thread_rolled_back') {
+      interrupted = active = null;
+      count = 0;
+      last.length = 0;
     } else if (kind === 'event_msg' && item.type === 'task_complete') {
-      if (active?.ordinary && active.id !== turnId && item.turn_id === active.id && !present(item.error) &&
-          (active.events.length || active.messages.length) && item.last_agent_message) {
-        last.push(active.finish(item));
-        if (last.length > Math.min(turns, MAX_HISTORY_TURNS)) last.shift();
+      if (active?.ordinary && !active.turnIds.has(turnId) && item.turn_id === active.id &&
+          (item.last_agent_message || (previous && active.answer != null)) &&
+          (previous || (!present(item.error) && active.userInput().length))) {
+        count++;
+        if (limit && count <= through) {
+          last.push(present(item.error) ? null : active.finish(item));
+          if (last.length > limit) last.shift();
+        }
       }
-      active = null;
+      active = interrupted = null;
     } else {
       active?.read(kind, item);
     }
   }
-  if (!active?.ordinary || (turnId !== null && active.id !== turnId)) return [];
-  let budget = MAX_HISTORY_BYTES;
-  const result = [];
-  for (const exchange of last.reverse()) {
-    if (!exchange) continue;
-    budget -= Buffer.byteLength(exchange.user) + Buffer.byteLength(exchange.assistant);
-    if (budget < 0) break;
-    result.push(exchange);
-  }
-  return result.reverse();
+  if (!active?.ordinary || (turnId !== null && !active.turnIds.has(turnId))) return null;
+  return { last, count };
 }
 
-function readRange(fd, start, length) {
-  const raw = Buffer.alloc(length);
-  let count = 0;
-  while (count < length) {
-    const n = fs.readSync(fd, raw, count, length - count, start + count);
-    if (!n) break;
-    count += n;
-  }
-  return raw.subarray(0, count);
-}
-
-export function readHistory(file, sessionId, turnId = null, turns = DEFAULT_HISTORY_TURNS) {
-  if (!Number.isInteger(turns) || turns <= 0 || !sessionId || typeof file !== 'string' || !path.isAbsolute(file)) return [];
+function withTranscript(file, read) {
+  if (typeof file !== 'string' || !path.isAbsolute(file)) return null;
   try {
     const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK | fs.constants.O_NOFOLLOW);
     try {
       const info = fs.fstatSync(fd);
-      if (!info.isFile()) return [];
-      const head = readRange(fd, 0, Math.min(info.size, MAX_HEADER_BYTES));
-      const headerEnd = head.indexOf(10) + 1;
-      if (!headerEnd || info.size <= headerEnd) return [];
-      const decoder = new TextDecoder('utf-8', { fatal: true });
-      const { type, payload } = JSON.parse(decoder.decode(head.subarray(0, headerEnd)));
-      if (type !== 'session_meta' || payload?.id !== sessionId || payload.parent_thread_id || payload.forked_from_id) return [];
-      const start = Math.max(headerEnd, info.size - MAX_SCAN_BYTES);
-      let raw = readRange(fd, start, info.size - start);
-      if (raw.length !== info.size - start || raw.at(-1) !== 10) return [];
-      // Drop the truncated first line before decoding, since it may start mid-codepoint.
-      if (start > headerEnd) raw = raw.subarray(raw.indexOf(10) + 1);
-      if (!raw.length) return [];
-      return completedExchanges(decoder.decode(raw.subarray(0, -1)), sessionId, turnId, turns);
+      if (!info.isFile()) return null;
+      return read(() => records(fd, info.size));
     } finally {
       fs.closeSync(fd);
     }
   } catch {
-    return [];
+    return null;
   }
+}
+
+export function readHistory(file, sessionId, turnId = null, turns = DEFAULT_HISTORY_TURNS) {
+  if (!Number.isInteger(turns) || turns <= 0 || !sessionId) return [];
+  const exchanges = withTranscript(file, rows =>
+    completedExchanges(rows(), sessionId, turnId, Math.min(turns, MAX_HISTORY_TURNS)));
+  return exchanges?.last.filter(Boolean) ?? [];
+}
+
+export function readPreviousReply(file, sessionId, turnId, turns = DEFAULT_HISTORY_TURNS, turnsBack = 1) {
+  if (!turnId || !sessionId || !Number.isSafeInteger(turnsBack) || turnsBack < 1 ||
+      !Number.isInteger(turns) || turns < 0 || turns > MAX_HISTORY_TURNS) return null;
+  return withTranscript(file, rows => {
+    let through = Infinity;
+    if (turnsBack > 1) {
+      // Find the selected ordinal without retaining every intervening answer.
+      const scan = completedExchanges(rows(), sessionId, turnId, 0, { previous: true });
+      if (!scan || scan.count < turnsBack) return null;
+      through = scan.count - turnsBack + 1;
+    }
+    const scan = completedExchanges(rows(), sessionId, turnId, turns + 1, { previous: true, through });
+    const target = scan?.last.pop();
+    if (!target) return null;
+    const draft = originalReplyText(target.assistant);
+    if (!safeText(draft)) return null;
+    return { question: target.user, draft, history: scan.last.filter(Boolean) };
+  });
 }
 
 if (process.argv[1] && fs.existsSync(process.argv[1]) && fs.realpathSync(process.argv[1]) === import.meta.filename) {

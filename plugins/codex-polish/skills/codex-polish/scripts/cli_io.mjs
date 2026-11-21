@@ -1,4 +1,4 @@
-// Shared by the one-shot UTF-8 JSON helpers. Never read more than the input budget into memory.
+import { constants } from 'node:buffer';
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
@@ -8,7 +8,7 @@ export function isMain(url) {
   catch { return false; }
 }
 
-export async function readLimited(stream, limit) {
+export async function readLimited(stream, limit = constants.MAX_LENGTH) {
   let size = 0;
   const chunks = [];
   for await (const chunk of stream) {

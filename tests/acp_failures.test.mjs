@@ -7,7 +7,6 @@ const initialize = request(1, 'initialize', {protocolVersion:1, clientCapabiliti
 const auth = request(2, 'authenticate', {methodId:'gemini-api-key'});
 const newSession = request(3, 'session/new', {cwd:'/offline', mcpServers:[]});
 const model = request(4, 'session/set_config_option', {sessionId:SESSION, configId:'model', value:'gemini-4-hydrogen'});
-const low = request(5, 'session/set_config_option', {sessionId:SESSION, configId:'thought_level', value:'low'});
 const prompt = request(6, 'session/prompt', {sessionId:SESSION, prompt:[{type:'text', text:'模拟原稿'}]});
 
 function trace(fixture, ...messages) {
@@ -22,7 +21,7 @@ function trace(fixture, ...messages) {
 
 function turn(scenario) {
   const fixture = new Fixture(scenario);
-  trace(fixture, initialize, newSession, model, low);
+  trace(fixture, initialize, newSession, model);
   return [fixture, trace(fixture, prompt)];
 }
 

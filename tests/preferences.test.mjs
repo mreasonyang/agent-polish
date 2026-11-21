@@ -30,9 +30,12 @@ test('a fresh project receives a reminder for an ordinary prompt without writing
   fs.rmdirSync(path.dirname(mode));
   assert.equal(getMode(), 'auto');
   assert.equal(check().mode, 'auto');
-  const output = JSON.parse(hook()).hookSpecificOutput;
+  const response = JSON.parse(hook());
+  assert.equal(Object.hasOwn(response, 'systemMessage'), false);
+  const output = response.hookSpecificOutput;
   assert.equal(output.hookEventName, 'UserPromptSubmit');
-  assert.match(output.additionalContext, /codex-polish:codex-polish/);
+  assert.ok(output.additionalContext.includes(JSON.stringify(path.join(plugin, 'skills/codex-polish/WORKFLOW.md'))));
+  assert.doesNotMatch(output.additionalContext, /codex-polish:codex-polish/);
   assert.equal(hook('SessionStart'), '');
   assert.equal(fs.existsSync(path.dirname(mode)), false);
   assert.equal(fs.existsSync(path.join(cwd, '.codex')), false);
@@ -64,6 +67,7 @@ test('model selection is scoped and explicit reset restores Hydrogen', t => {
   const { project, cwd, check, call } = fixture(t);
   const def = 'gemini-4-hydrogen';
   assert.equal(check().gemini_model, def);
+  assert.equal(check().gemini_model_configured, false);
   assert.equal(fs.existsSync(path.join(cwd, '.codex')), false);
   const parent = json(call(['set-model', 'models/gemini-2.5-pro'], { where: project }));
   assert.equal(check().gemini_model, 'models/gemini-2.5-pro');
@@ -71,13 +75,16 @@ test('model selection is scoped and explicit reset restores Hydrogen', t => {
   const child = json(call(['set-model', 'MODEL_PLACEHOLDER_M8']));
   assert.equal(check().gemini_model, 'MODEL_PLACEHOLDER_M8'); assert.equal(fs.readFileSync(child.file, 'utf8'), 'MODEL_PLACEHOLDER_M8\n');
   assert.equal(json(call(['set-model', '--reset'])).gemini_model, def); assert.equal(check().gemini_model, def);
-  assert.equal(check({ where: project }).gemini_model, 'models/gemini-2.5-pro');
+  assert.equal(child.file, parent.file);
+  assert.equal(check({ where: project }).gemini_model, def);
+  assert.equal(check({ where: project }).gemini_model_configured, true);
   fs.unlinkSync(child.file); fs.writeFileSync(path.join(cwd, '.git'), 'gitdir: ../.git');
   assert.equal(check().gemini_model, def);
 });
 
 test('invalid ids preserve model; corrupt settings block rewrites; links are handled safely', t => {
-  const { call, check, project } = fixture(t);
+  const { call, check, project, cwd } = fixture(t);
+  fs.mkdirSync(path.join(cwd, '.git'));
   const { file } = json(call(['set-model', 'gemini-example']));
   for (const args of [[], ['--reset', 'gemini-other'], ['gemini-a b'], ['gemini-1\nreset'], ['models/../secret'], ['a'.repeat(257)], ['gemini-私密']]) {
     assert.notEqual(call(['set-model', ...args]).status, 0);
@@ -96,17 +103,14 @@ test('invalid ids preserve model; corrupt settings block rewrites; links are han
   fs.writeFileSync(parent, 'linked-model'); assert.ok(check().blockers.includes('gemini_model_invalid'));
 });
 
-test('changing model clears only its own previous failure', t => {
-  const { check, call } = fixture(t);
-  const fail = reason => assert.equal(call(['note-failure', reason]).status, 0);
-  fail('acp_model_unavailable');
-  const before = check().cooldown;
-  assert.equal(before.reason, 'acp_model_unavailable');
-  json(call(['set-model', '--reset'])); assert.equal(check().cooldown.token, before.token);
-  json(call(['set-model', 'gemini-example'])); assert.equal(check().cooldown, null);
-  fail('acp_auth_failed');
-  const token = check().cooldown.token;
-  json(call(['set-model', '--reset'])); assert.equal(check().cooldown.token, token);
+test('outside Git the chosen folder owns its settings', t => {
+  const { home, call, check } = fixture(t);
+  const base = path.join(home, 'standalone'), child = path.join(base, 'sub');
+  fs.mkdirSync(child, { recursive: true });
+  json(call(['set-model', 'gemini-4-neon'], { where: base }));
+  assert.equal(check({ where: child }).gemini_model_configured, false);
+  json(call(['set-model', 'gemini-4-argon'], { where: child }));
+  assert.equal(check({ where: base }).gemini_model, 'gemini-4-neon');
 });
 
 test('decision policy inherits, and invalid decisions disable only OpenAI', t => {
@@ -117,7 +121,7 @@ test('decision policy inherits, and invalid decisions disable only OpenAI', t =>
   const parent = json(call(['set-decisions', 'off'], { where: project }));
   assert.equal(parent.decisions_mode, 'off'); assert.deepEqual(policy(), ['auto', 'off', false]);
   const child = json(call(['set-decisions', 'auto']));
-  assert.deepEqual(policy(), ['auto', 'auto', true]); assert.equal(fs.readFileSync(parent.file, 'utf8'), 'off\n');
+  assert.deepEqual(policy(), ['auto', 'auto', true]); assert.equal(fs.readFileSync(parent.file, 'utf8'), 'auto\n');
   fs.writeFileSync(child.file, 'typo'); assert.deepEqual(policy(), ['auto', 'off', false]);
   fs.unlinkSync(child.file); fs.writeFileSync(path.join(cwd, '.git'), 'gitdir: ../.git');
   assert.deepEqual(policy(), ['auto', 'auto', true]);
@@ -141,8 +145,8 @@ test('rewrite mode inherits independently of the trigger and Decisions settings'
   const child = json(call(['set-rewrite-mode', 'normal']));
   const status = check();
   assert.deepEqual([status.rewrite_mode, status.rewrite_mode_configured, status.mode, status.decisions_mode], ['normal', true, 'manual', 'off']);
-  assert.equal(fs.readFileSync(setting, 'utf8'), 'turbo\n');
-  assert.deepEqual(modeSelection(parent), ['turbo', true]);
+  assert.equal(child.file, setting);
+  assert.deepEqual(modeSelection(parent), ['normal', true]);
   assert.equal(call(['set-rewrite-mode', 'fast']).status, 2);
   assert.equal(fs.readFileSync(child.file, 'utf8'), 'normal\n');
   fs.unlinkSync(child.file);
@@ -151,7 +155,8 @@ test('rewrite mode inherits independently of the trigger and Decisions settings'
 });
 
 test('invalid or linked rewrite strategy settings prevent provider calls', t => {
-  const { call, check, env, project } = fixture(t);
+  const { call, check, env, project, cwd } = fixture(t);
+  fs.mkdirSync(path.join(cwd, '.git'));
   const { file } = json(call(['set-rewrite-mode', 'turbo']));
   const inspect = () => {
     const options = { env: { ...env, OPENAI_API_KEY: 'example' } };
@@ -197,22 +202,23 @@ test('portable project hook does not require the plugin environment', t => {
   const hooks = json(run(preferences, ['project-hook']));
   const command = hooks.hooks.UserPromptSubmit[0].hooks[0].command;
   const p = spawnSync('/bin/sh', ['-c', command], { cwd, env: { PATH: env.PATH }, input: JSON.stringify({ hook_event_name: 'UserPromptSubmit', cwd: project }), encoding: 'utf8' });
-  assert.match(json(p).hookSpecificOutput.additionalContext, /codex-polish/);
+  assert.ok(json(p).hookSpecificOutput.additionalContext.includes(JSON.stringify(path.join(plugin, 'skills/codex-polish/WORKFLOW.md'))));
 });
 
-test('mode changes affect only the exact target', t => {
+test('mode changes from a subdirectory reach the repository root', t => {
   const { mode, cwd, call, getMode, hook } = fixture(t);
   fs.writeFileSync(mode, 'off\n');
   for (const value of ['auto', 'manual', 'off', 'off']) {
     assert.equal(json(call(['set-mode', value])).mode, value);
-    assert.equal(getMode(), value); assert.equal(fs.readFileSync(mode, 'utf8'), 'off\n'); assert.equal(Boolean(hook()), value === 'auto');
+    assert.equal(getMode(), value); assert.equal(fs.readFileSync(mode, 'utf8'), value + '\n'); assert.equal(Boolean(hook()), value === 'auto');
   }
-  assert.deepEqual(fs.readdirSync(path.join(cwd, '.codex')), ['codex-polish.mode']);
+  assert.equal(fs.existsSync(path.join(cwd, '.codex')), false);
 });
 
 test('unsafe mode settings disable rewriting and reject writes', t => {
   const { mode, cwd, call, hook, getMode } = fixture(t);
   fs.writeFileSync(mode, 'auto\n');
+  fs.mkdirSync(path.join(cwd, '.git'));
   const dir = path.join(cwd, '.codex'), marker = path.join(dir, path.basename(mode));
   const rejectsMode = () => {
     assert.equal(getMode(), 'off');
@@ -257,7 +263,7 @@ test('history count has independent default, inheritance and override', t => {
   assert.equal(fs.readFileSync(setting, 'utf8'), '10\n'); assert.equal(fs.statSync(setting).mode & 0o777, 0o600);
   json(call(['set-mode', 'auto'])); assert.equal(count(), 10);
   json(call(['set-history-turns', '0'])); assert.equal(count(), 0);
-  assert.equal(getMode(), 'auto'); assert.equal(count({ where: project }), 10);
+  assert.equal(getMode(), 'auto'); assert.equal(count({ where: project }), 0);
   const child = path.join(cwd, 'child'); fs.mkdirSync(child); fs.writeFileSync(path.join(child, '.git'), 'gitdir: ../.git');
   assert.equal(count({ where: child }), 2);
 });
@@ -272,6 +278,7 @@ test('invalid history input preserves saved value and malformed settings disable
   for (const value of ['-1', '1.5', 'three', '1_0', '9223372036854775808']) assert.notEqual(call(['set-history-turns', value], parent).status, 0);
   assert.equal(check(parent).history_turns, 6);
   fs.writeFileSync(mode, 'auto\n');
+  fs.mkdirSync(path.join(cwd, '.git'));
   const dir = path.join(cwd, '.codex'), file = path.join(dir, 'codex-polish.history-turns'); fs.mkdirSync(dir);
   for (const value of ['', '-3', '11', 'bad', '1\n0', Buffer.from([255]), '9'.repeat(100)]) {
     fs.writeFileSync(file, value); assert.equal(check().history_turns, 0);
@@ -285,9 +292,9 @@ test('invalid history input preserves saved value and malformed settings disable
 });
 
 test('concurrent changes never leave partial or unrelated files', async t => {
-  const { cwd, check, env } = fixture(t);
+  const { project, cwd, check, env } = fixture(t);
   await Promise.all(Array.from({ length: 8 }, (_, i) => exec(process.execPath, [preferences, 'set-history-turns', String(i), '--cwd', cwd], { env })));
-  assert.deepEqual(fs.readdirSync(path.join(cwd, '.codex')), ['codex-polish.history-turns']); assert.ok(check().history_turns < 8);
+  assert.deepEqual(fs.readdirSync(path.join(project, '.codex')), ['codex-polish.history-turns']); assert.ok(check().history_turns < 8);
 });
 
 test('check never launches agy or returns credentials', t => {

@@ -2,7 +2,7 @@
 
 [简体中文](credentials.md)
 
-Run interactive `setup` from your project directory. Use **↑ / ↓** to select a rewrite mode and press **Enter** to confirm. **Normal** is selected by default and allows the optional OpenAI style check below. **Turbo** skips OpenAI and sends eligible drafts directly to Gemini. You can also say **“Set up Codex Polish”** in a project chat and select a mode there. In a text-only chat, reply with the mode name. The project remembers your choice.
+Run interactive `setup` from your project directory. Use **↑ / ↓** to select a rewrite mode and press **Enter** to confirm. **Normal** is selected by default and allows the optional OpenAI style check below. **Turbo** skips OpenAI and sends eligible drafts directly to Gemini. You can also say **“Set up Codex Polish”** in a project chat and select a mode there. In a text-only chat, reply with the mode name. The project remembers your choice. Setup also offers Gemini 4 Hydrogen or a list from your Antigravity account. Only the second choice starts a Codex session to look up the models.
 
 ## Use your Antigravity sign-in
 

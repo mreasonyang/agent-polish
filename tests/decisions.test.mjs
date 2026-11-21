@@ -8,7 +8,7 @@ import { EventEmitter, once } from 'node:events';
 import { Readable } from 'node:stream';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { decide, MAX_EVIDENCE_BYTES, MAX_INPUT_BYTES, MAX_RESPONSE_BYTES } from '../plugins/codex-polish/skills/codex-polish/scripts/decisions.mjs';
+import { decide, MAX_DECISION_DATA_BYTES, MAX_RESPONSE_BYTES } from '../plugins/codex-polish/skills/codex-polish/scripts/decisions.mjs';
 import { makeProject } from './hook_fixture.mjs';
 
 const script = fileURLToPath(new URL('../plugins/codex-polish/skills/codex-polish/scripts/decisions.mjs', import.meta.url));
@@ -92,6 +92,18 @@ test('a direct judge invocation checks the rewrite policy before using credentia
   assert.equal(mock.calls(), 1);
 });
 
+test('standalone judge respects project-wide and OpenAI-specific opt-outs', async t => {
+  const { project, cwd } = makeProject(t);
+  const mock = mockResponse(t);
+  const modeFile = path.join(project, '.codex/codex-polish.mode');
+  fs.writeFileSync(modeFile, 'off');
+  assert.deepEqual(await cli(['judge', '--cwd', cwd], draft), failure('project_mode'));
+  fs.writeFileSync(modeFile, 'manual');
+  fs.writeFileSync(path.join(project, '.codex/codex-polish.decisions'), 'off');
+  assert.deepEqual(await cli(['judge', '--cwd', cwd], draft), failure('decision_route_changed'));
+  assert.equal(mock.calls(), 0);
+});
+
 test('custom project editing goals reach the judge as evidence', async t => {
   const { cwd, project } = makeProject(t);
   const prompt = 'Lead with the result.\nUse short sentences.\n';
@@ -113,24 +125,28 @@ test('custom project editing goals reach the judge as evidence', async t => {
   assert.ok(!customJudge.questions[0].instructions.includes(prompt));
 });
 
-test('invalid or oversized project editing evidence stops the judge before HTTPS', async t => {
+test('only validated evidence within the Decisions per-field limit reaches HTTPS', async t => {
   const { cwd, project } = makeProject(t);
   const mock = mockResponse(t);
   const file = path.join(project, '.codex/codex-polish.prompt.md');
   fs.writeFileSync(file, 'token=fixture-secret');
   assert.deepEqual(await cli(['judge', '--cwd', cwd], draft), failure('editor_prompt_invalid'));
-  fs.writeFileSync(file, 'Use short sentences.');
-  const nearLimit = {question:'q'.repeat(128 * 1024), draft:''};
-  nearLimit.draft = 'x'.repeat(MAX_EVIDENCE_BYTES - Buffer.byteLength(JSON.stringify(nearLimit)));
-  assert.deepEqual(await cli(['judge', '--cwd', cwd], nearLimit), failure('input_too_large'));
   assert.equal(mock.calls(), 0);
+  const editor_prompt = 'Use short sentences.';
+  fs.writeFileSync(file, editor_prompt);
+  const input = { question:'q'.repeat(140 * 1024), draft:'' };
+  input.draft = 'x'.repeat(MAX_DECISION_DATA_BYTES - Buffer.byteLength(JSON.stringify({...input, editor_prompt})));
+  mock.set(reply('needs_rewrite', 0.7));
+  assert.equal((await cli(['judge', '--cwd', cwd], input)).action, 'rewrite');
+  assert.deepEqual(JSON.parse(mock.requests[0].body).input[0].content[0].data, {...input, editor_prompt});
+  input.draft += 'x';
+  assert.deepEqual(await cli(['judge', '--cwd', cwd], input), failure('decision_input_too_large'));
+  assert.equal(mock.calls(), 1);
 });
 
-test('judge compares the reported score against the inclusive threshold', async () => {
-  for (const [args,score,action] of [
-    [['judge'],0.79,'keep'], [['judge','--threshold','0.7'],0.79,'rewrite'],
-    [['judge','--threshold','0.79'],0.79,'rewrite']]) {
-    const out = await cli(args,draft,'test-key',async () => reply('needs_rewrite',score));
+test('only a majority for rewriting sends a draft for editing', async () => {
+  for (const [score, action] of [[0, 'keep'], [0.499, 'keep'], [0.5, 'keep'], [0.5001, 'rewrite'], [0.79, 'rewrite'], [1, 'rewrite']]) {
+    const out = await cli(['judge'],draft,'test-key',async () => reply('needs_rewrite',score));
     assert.equal(out.action,action);
     assert.equal(out.probability,score);
   }
@@ -145,8 +161,8 @@ test('bad inputs and configuration send nothing', async () => {
     [['judge'],{...draft,editor_prompt:'override'},'key','invalid_input'],
     [['verify'],{...draft,candidate:'edited'},'key','invalid_options'], [['judge'],{...draft,candidate:'edited'},'key','invalid_input'],
     [['judge'],draft,'','missing_api_key'], [['judge'],draft,'x\r\ny','invalid_api_key'],
-    [['judge'],{question:'q',draft:'汉'.repeat(90000)},'key','input_too_large'],
-    [['judge'],{question:'q',draft:'x'.repeat(MAX_INPUT_BYTES)},'key','input_too_large']])
+    [['judge'],{question:'q',draft:'汉'.repeat(90000)},'key','decision_input_too_large'],
+    [['judge'],{question:'q',draft:'x'.repeat(600 * 1024)},'key','decision_input_too_large']])
     assert.deepEqual(await cli(args,data,key,()=>{calls++;}),failure(reason));
   assert.equal(calls,0);
 });

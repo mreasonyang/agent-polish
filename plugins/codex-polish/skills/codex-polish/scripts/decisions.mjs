@@ -7,11 +7,10 @@ import { parseArgs } from 'node:util';
 import { projectRewriteMode } from '../../../hooks/rewrite_mode.mjs';
 import { isMain, readLimited, utf8 } from './cli_io.mjs';
 import { MaterialError, primaryMaterial, projectMaterial } from './rewrite_material.mjs';
-export { MAX_EVIDENCE_BYTES } from './rewrite_material.mjs';
 
 export const API_URL = 'https://api.openai.com/v1/decisions';
 export const MODEL = 'gpt-6-luna';
-export const MAX_INPUT_BYTES = 512 * 1024;
+export const MAX_DECISION_DATA_BYTES = 256 * 1024;
 export const MAX_RESPONSE_BYTES = 64 * 1024;
 const PROVIDER = new URL(API_URL);
 
@@ -27,7 +26,7 @@ function fail(code) { throw new DecisionError(code); }
 
 async function readEvidence(stream) {
   let raw;
-  try { raw = await readLimited(stream, MAX_INPUT_BYTES); }
+  try { raw = await readLimited(stream); }
   catch (error) { fail(error instanceof RangeError ? 'input_too_large' : 'input_read_error'); }
   let data;
   try { data = JSON.parse(utf8(raw)); } catch { fail('invalid_input'); }
@@ -124,7 +123,7 @@ async function parseResponse(response) {
 async function boundedProbability(data, instructions, key, seconds, env, request) {
   const name = 'needs_rewrite';
   const controller = new AbortController();
-  const deadline = performance.now() + seconds * 1000;
+  const deadline = seconds === undefined ? Infinity : performance.now() + seconds * 1000;
   let timer;
   const expired = new Promise((_, reject) => {
     function arm() {
@@ -134,7 +133,7 @@ async function boundedProbability(data, instructions, key, seconds, env, request
         controller.abort();
       } else timer = setTimeout(arm, Math.min(2 ** 31 - 1, Math.ceil(remaining)));
     }
-    arm();
+    if (seconds !== undefined) arm();
   });
   try {
     const body = JSON.stringify({model: MODEL, input: [{role:'user', content:[{ type:'input_json', data }]}],
@@ -165,44 +164,49 @@ function options(args) {
   let parsed;
   try {
     parsed = parseArgs({ args, allowPositionals:true, options: {
-      cwd:{type:'string'}, threshold:{type:'string'}, timeout:{type:'string'},
+      cwd:{type:'string'}, timeout:{type:'string'},
     } });
   } catch { fail('invalid_options'); }
   if (parsed.positionals.length !== 1 || parsed.positionals[0] !== 'judge') fail('invalid_options');
-  function decimal(raw, fallback) {
-    if (raw === undefined) return fallback;
-    if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(raw.trim())) fail('invalid_options');
-    return Number(raw);
-  }
-  const threshold = decimal(parsed.values.threshold, 0.80);
-  const timeout = decimal(parsed.values.timeout, 10);
-  if (!(threshold >= 0 && threshold <= 1 && timeout > 0 && timeout <= 9223372036)) fail('invalid_options');
-  return {threshold, timeout, cwd: parsed.values.cwd};
+  const raw = parsed.values.timeout;
+  const seconds = raw === undefined ? undefined : Number(raw);
+  if (raw !== undefined && (!Number.isFinite(seconds) || seconds <= 0 || seconds > Number.MAX_SAFE_INTEGER / 1000))
+    fail('invalid_options');
+  return {timeout: seconds, cwd: parsed.values.cwd};
 }
 
-export async function decide(args, stream, env = process.env, request = send) {
+export async function decide(args, stream, env = process.env, request = send, canSend) {
   try {
-    const { threshold, timeout, cwd } = options(args);
+    const { timeout, cwd } = options(args);
     const primary = await readEvidence(stream);
-    const rewriteMode = projectRewriteMode(cwd ?? process.cwd());
+    const directory = cwd ?? process.cwd();
+    const rewriteMode = projectRewriteMode(directory);
     if (rewriteMode === null) fail('rewrite_mode_invalid');
     if (rewriteMode === 'turbo') fail('decision_route_changed');
+    if (!canSend) {
+      // Standalone judge calls also respect the project's opt-outs.
+      const { projectSettings, decisionsSettings } = await import('../../../hooks/preferences.mjs');
+      if (projectSettings(directory)[0] === 'off') fail('project_mode');
+      if (decisionsSettings(directory, rewriteMode).decisions_mode !== 'auto') fail('decision_route_changed');
+    }
     const key = env.OPENAI_API_KEY;
     if (!key) fail('missing_api_key');
     if (/[^!-~]/.test(key)) fail('invalid_api_key');
     const { evidence: data } = projectMaterial(primary, cwd);
+    if (Buffer.byteLength(JSON.stringify(data)) > MAX_DECISION_DATA_BYTES) fail('decision_input_too_large');
     const instructions = Object.hasOwn(data, 'editor_prompt') ? PROJECT_STYLE : STYLE;
+    if (canSend && !canSend()) fail('decision_route_changed');
     const probability = await boundedProbability(data, instructions, key, timeout, env, request);
-    return probability >= threshold ? {action:'rewrite', probability, reason:'needs_rewrite'}
+    return probability > 0.5 ? {action:'rewrite', probability, reason:'needs_rewrite'}
       : {action:'keep', probability, reason:'already_clear'};
   } catch (error) {
-    return {action:'keep', reason: error instanceof DecisionError || error instanceof MaterialError ? error.message : 'api_transport_error'};
+    return {action:'keep', reason: error instanceof DecisionError || error instanceof MaterialError ? error.message : 'decision_helper_unavailable'};
   }
 }
 
 if (isMain(import.meta.url)) {
   const args = process.argv.slice(2);
-  if (args.includes('--help') || args.includes('-h')) console.log('Usage: decisions.mjs judge [--cwd DIR] [--threshold P] [--timeout SECONDS]');
+  if (args.includes('--help') || args.includes('-h')) console.log('Usage: decisions.mjs judge [--cwd DIR] [--timeout SECONDS]');
   else {
     const output = await decide(args, process.stdin);
     // A cancelled OS resolver may finish in the background. Bound the lifetime of this one-shot CLI too.

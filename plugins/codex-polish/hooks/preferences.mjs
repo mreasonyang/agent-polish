@@ -3,7 +3,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { executable, windows } from './platform.mjs';
 import { parseArgs } from 'node:util';
-import { projectRoot, readProjectSetting, accessProjectSetting } from './project_setting.mjs';
+import { projectRoot, readProjectSetting, readSettingWithDefault, writeProfileDefault } from './project_setting.mjs';
+import { changeProjectSetting } from './owned_settings.mjs';
 import { PROMPT_FILE, readEditorPrompt, readPromptInput } from './editor_prompt.mjs';
 import { REWRITE_MODES, REWRITE_MODE_FILE, REWRITE_TRIGGERS, projectRewriteMode, rewriteModeSettings } from './rewrite_mode.mjs';
 import { readHostLine, utf8 } from '../skills/codex-polish/scripts/cli_io.mjs';
@@ -14,7 +15,7 @@ const MODES = ['auto', 'manual', 'off'];
 const MODE_FILE = 'codex-polish.mode';
 const HISTORY_FILE = 'codex-polish.history-turns';
 const DECISIONS_FILE = 'codex-polish.decisions';
-const MODEL_FILE = 'codex-polish.model';
+export const MODEL_FILE = 'codex-polish.model';
 export const DEFAULT_GEMINI_MODEL = 'gemini-4-hydrogen';
 export const DEFAULT_HISTORY_TURNS = 2;
 export const MAX_HISTORY_TURNS = 10;
@@ -77,7 +78,7 @@ export function validModelId(value) {
 }
 
 function modelPreference(cwd) {
-  const [value] = readProjectSetting(cwd, MODEL_FILE, 257);
+  const value = readSettingWithDefault(cwd, MODEL_FILE, 257);
   return { gemini_model: value === null ? DEFAULT_GEMINI_MODEL : validModelId(value) ? value : null,
     gemini_model_configured: validModelId(value) };
 }
@@ -86,7 +87,7 @@ export function projectGeminiModel(cwd) {
   return modelPreference(cwd).gemini_model;
 }
 
-function writeProjectSetting(cwd, filename, value, lang, operation = value === null ? 'remove' : 'write') {
+function writeProjectSetting(cwd, filename, value, lang) {
   if (!path.isAbsolute(cwd)) throw new RangeError(tr('请提供项目目录的完整路径。', 'Enter the full path to the project folder.', lang));
   const project = projectRoot(cwd);
   if (!fs.statSync(project).isDirectory() || path.dirname(project) === project || project === fs.realpathSync(os.homedir())) {
@@ -95,7 +96,7 @@ function writeProjectSetting(cwd, filename, value, lang, operation = value === n
   const settings = path.join(project, '.codex');
   if (value !== null) fs.mkdirSync(settings, { mode: 0o700, recursive: true });
   try {
-    accessProjectSetting(settings, operation, filename, value);
+    changeProjectSetting(settings, value === null ? 'remove' : 'write', filename, value);
   } catch (error) {
     if (value === null && error.code === 'ENOENT') return path.join(settings, filename);
     if (error.code === 'EINVAL') throw new RangeError(tr('项目设置路径指向了链接或特殊文件。',
@@ -105,10 +106,17 @@ function writeProjectSetting(cwd, filename, value, lang, operation = value === n
   return path.join(settings, filename);
 }
 
-function setProjectModel(cwd, model, lang) {
+function setModel(cwd, model, lang) {
+  if (model === null) {
+    if (cwd === null) model = DEFAULT_GEMINI_MODEL;
+    else {
+      const file = writeProjectSetting(cwd, MODEL_FILE, null, lang);
+      return { gemini_model: projectGeminiModel(cwd), file };
+    }
+  }
   if (!validModelId(model)) throw new RangeError(tr('这个模型 ID 无效，请从当前账号的 Gemini 模型列表里选一个。',
     "This model ID isn't valid. Choose a Gemini model from your account's list.", lang));
-  const file = writeProjectSetting(cwd, MODEL_FILE, model, lang);
+  const file = cwd === null ? writeProfileDefault(MODEL_FILE, model) : writeProjectSetting(cwd, MODEL_FILE, model, lang);
   return { gemini_model: model, file };
 }
 
@@ -171,9 +179,9 @@ export function runtimeStatus(cwd, mode, trigger, { selectionOnly = false, noHis
   const agy = findAgy();
   const rewriteSettings = rewriteModeSettings(cwd, trigger);
   const rewriteMode = rewriteSettings.rewrite_mode;
-  let promptSource, promptError;
+  let promptSource;
   try { promptSource = readEditorPrompt(cwd, rewriteMode ?? 'normal', { selectionOnly }).source; }
-  catch (error) { promptSource = 'invalid'; promptError = error.code === 'PROMPT_LINK_UNBOUND' ? 'editor_prompt_link_unbound' : 'editor_prompt_invalid'; }
+  catch { promptSource = 'invalid'; }
   const status = {
     mode, ...rewriteSettings, node_available: supportedNode(),
     codex_available: Boolean(executable('codex')), agy_available: Boolean(agy), agy_path: agy,
@@ -193,7 +201,7 @@ export function runtimeStatus(cwd, mode, trigger, { selectionOnly = false, noHis
   if (!status.agy_available) blockers.push('agy_missing');
   if (status.google_auth_method === 'unsupported') blockers.push('unsupported_google_auth');
   if (status.gemini_model === null) blockers.push('gemini_model_invalid');
-  if (promptError) blockers.push(promptError);
+  if (promptSource === 'invalid') blockers.push('editor_prompt_invalid');
   if (googleAuth === 'gemini-api-key') {
     const key = process.env.GEMINI_API_KEY;
     if (!key?.trim()) blockers.push('gemini_key_missing');
@@ -293,14 +301,14 @@ const commands = {
   'project-hook': ['', '输出项目提醒配置', 'print the project hook definition'],
   mode: ['--cwd DIR', '查看什么时候触发改写', 'show when replies are rewritten'],
   'set-mode': ['{auto,manual,off} --cwd DIR', '设置什么时候改写回复', 'choose when replies are rewritten'],
-  'set-rewrite-mode': ['{normal,turbo} --cwd DIR', '选择自动润色用普通还是 Turbo 模式', 'choose Normal or Turbo for automatic polishing'],
+  'set-rewrite-mode': ['(normal | turbo | --reset) (--cwd DIR | --profile)', '选择自动润色模式，或恢复默认模式', 'choose an automatic rewrite mode or restore its default'],
   'set-history-turns': ['N --cwd DIR', '设置 Gemini 润色时能看到几轮历史（0 到 10 轮）', 'choose how many earlier exchanges Gemini receives (0–10)'],
   'set-decisions': ['{auto,off} --cwd DIR', '设置是否让 OpenAI 判断原稿是否需要润色', 'choose whether OpenAI decides if a draft needs editing'],
-  'set-model': ['(MODEL_ID | --reset) --cwd DIR', '选择项目的 Gemini 改写模型，或恢复默认模型 ' + DEFAULT_GEMINI_MODEL, 'choose a Gemini model or reset to ' + DEFAULT_GEMINI_MODEL],
-  prompt: ['--cwd DIR', '查看当前生效的润色提示词和来源', 'show the effective editing prompt and its source'],
-  'set-prompt': ['[--link FILE | --reset] --cwd DIR', '从标准输入保存提示词、连接提示词文件或恢复默认', 'save a prompt from stdin, link a prompt file or restore the default'],
+  'set-model': ['(MODEL_ID | --reset) (--cwd DIR | --profile)', '选择 Gemini 改写模型，或恢复默认模型', 'choose a Gemini model or restore its default'],
+  prompt: ['--profile', '查看当前 Codex 配置的润色提示词和来源', 'show the editing prompt for this Codex profile and its source'],
+  'set-prompt': ['[--reset] --profile', '从标准输入保存所有项目共用的润色提示词，或恢复默认', 'save an editing prompt from stdin for all projects in this profile or restore the default'],
   'set-language': ['{auto,zh,en} --cwd DIR', '选择设置和提示的显示语言（auto 自动识别，zh 中文，en 英文）', 'choose the language for settings and messages (auto detects, zh Chinese, en English)'],
-  check: ['--cwd DIR [--trigger {auto,explicit}] [--selection-only] [--no-history]', '查看当前设置和缺少的依赖', 'check project settings and local requirements'],
+  check: ['(--cwd DIR | --profile) [--trigger {auto,explicit}] [--selection-only] [--no-history]', '查看当前设置和缺少的依赖', 'check project settings and local requirements'],
   decision: ['judge --trigger {auto,explicit} --cwd DIR [--route {acp,decisions}] [--rewrite-mode {normal,turbo}] [--model MODEL_ID] [--no-history]', '判断原稿是否需要润色', 'decide whether to rewrite a draft'],
 };
 
@@ -310,7 +318,7 @@ function printHelp(command, t) {
     const [syntax, zh, en] = commands[command];
     console.log(`${prefix}preferences.mjs ${command} ${syntax}\n\n${t(zh, en)}`);
   } else {
-    console.log(`${prefix}preferences.mjs COMMAND [OPTIONS]\n\n${t('管理项目的回复润色设置。', 'Manage Codex Polish settings for a project.')}\n`);
+    console.log(`${prefix}preferences.mjs COMMAND [OPTIONS]\n\n${t('管理回复润色的用户和项目设置。', 'Manage Codex Polish profile and project settings.')}\n`);
     for (const [name, [, zh, en]] of Object.entries(commands)) console.log(`  ${name.padEnd(18)} ${t(zh, en)}`);
   }
   console.log(`\n  -h, --help  ${t('显示帮助并退出', 'show this help message and exit')}`);
@@ -320,7 +328,7 @@ async function main(args) {
   if (args.length === 1 && args[0] === 'hook') return runHook();
   const cwdOption = args.findIndex(arg => arg === '--cwd' || arg.startsWith('--cwd='));
   const location = cwdOption < 0 ? undefined : args[cwdOption] === '--cwd' ? args[cwdOption + 1] : args[cwdOption].slice(6);
-  const lang = language(location);
+  const lang = language(args.includes('--profile') ? null : location);
   const t = (zh, en) => tr(zh, en, lang);
   const [command, ...rest] = args;
   const usageError = message => { console.error(message); return 2; };
@@ -328,10 +336,11 @@ async function main(args) {
   if (!Object.hasOwn(commands, command)) return usageError(t('请提供有效的命令。使用 --help 查看帮助。', 'Provide a valid command. Use --help to see available commands.'));
   if (rest.includes('--help') || rest.includes('-h')) { printHelp(command, t); return 0; }
   const options = {};
-  if (commands[command][0]) options.cwd = { type: 'string' };
-  if (command === 'set-model' || command === 'set-prompt') options.reset = { type: 'boolean' };
+  const profileOnly = command === 'prompt' || command === 'set-prompt';
+  if (commands[command][0] && !profileOnly) options.cwd = { type: 'string' };
+  if (profileOnly || ['check', 'set-rewrite-mode', 'set-model'].includes(command)) options.profile = { type: 'boolean' };
+  if (['set-model', 'set-rewrite-mode', 'set-prompt'].includes(command)) options.reset = { type: 'boolean' };
   if (command === 'set-prompt' || command === 'decision') options['host-input'] = { type: 'boolean' };
-  if (command === 'set-prompt') options.link = { type: 'string' };
   if (command === 'decision' || command === 'check') options.trigger = { type: 'string' };
   if (command === 'check') options['selection-only'] = { type: 'boolean' };
   if (command === 'check' || command === 'decision') options['no-history'] = { type: 'boolean' };
@@ -346,9 +355,9 @@ async function main(args) {
   } catch {
     return usageError(t('参数无效或缺少参数值。使用 --help 查看用法。', 'Invalid option or missing option value. Use --help for usage.'));
   }
-  if (options.cwd && !values.cwd) return usageError(t('缺少必填参数 --cwd', 'The --cwd option is required.'));
-  if (values.link !== undefined && (values.reset || !values.link.trim()))
-    return usageError(t('请使用 --link FILE 或 --reset。', 'Choose --link FILE or --reset.'));
+  if (values.profile && values.cwd !== undefined) return usageError(t('请选择 --profile 或 --cwd DIR。', 'Choose either --profile or --cwd DIR.'));
+  if (profileOnly && !values.profile) return usageError(t('缺少必填参数 --profile。', 'The --profile option is required.'));
+  if (options.cwd && !values.profile && !values.cwd) return usageError(t('缺少必填参数 --cwd', 'The --cwd option is required.'));
   const expected = (command.startsWith('set-') && command !== 'set-prompt') || command === 'decision' ? 1 : 0;
   if (positionals.length !== (values.reset ? 0 : expected)) return usageError(t('参数组合无效。使用 --help 查看用法。', 'Invalid arguments. Use --help for usage.'));
   let value = positionals[0];
@@ -356,7 +365,7 @@ async function main(args) {
     value = value.trim().toLowerCase();
   if (command === 'set-decisions' && value === 'on') value = 'auto';
   const choices = { 'set-mode': MODES, 'set-rewrite-mode': REWRITE_MODES, 'set-language': LANGUAGES, 'set-decisions': ['auto', 'off'], decision: ['judge'] };
-  const toCheck = [[value, choices[command]]];
+  const toCheck = values.reset ? [] : [[value, choices[command]]];
   if (command === 'decision' || values.trigger !== undefined) toCheck.push([values.trigger, REWRITE_TRIGGERS]);
   if (command === 'decision') {
     if (values['rewrite-mode'] !== undefined) toCheck.push([values['rewrite-mode'], REWRITE_MODES]);
@@ -368,7 +377,7 @@ async function main(args) {
       return usageError(t(`值 '${selected ?? ''}' 无效，请从 ${valid} 中选择`, `Invalid choice '${selected ?? ''}' (choose from ${valid}).`));
     }
   }
-  const { cwd } = values;
+  const cwd = values.profile ? null : values.cwd;
   if (command === 'hook') return runHook();
   if (command === 'project-hook') {
     const definition = JSON.parse(fs.readFileSync(new URL('./hooks.json', import.meta.url), 'utf8'));
@@ -390,14 +399,11 @@ async function main(args) {
   if (command === 'prompt') {
     try { console.log(JSON.stringify(readEditorPrompt(cwd))); }
     catch (error) {
-      console.error(error.code === 'PROMPT_LINK_UNBOUND'
-        ? t('这个提示词链接还没绑定。请用 set-prompt --link FILE 指定要使用的文件。',
-          'This prompt link has no saved target. Use set-prompt --link FILE to choose the file.')
-        : error.message === 'rewrite_mode_invalid'
+      console.error(error.message === 'rewrite_mode_invalid'
         ? t('无法读取有效的改写模式。请用 set-rewrite-mode 选择 normal 或 turbo。',
           'Could not read a valid rewrite mode. Use set-rewrite-mode to choose normal or turbo.')
-        : t('无法读取有效的润色提示词。可用 set-prompt --reset 恢复默认。',
-          'Could not read a valid editing prompt. Use set-prompt --reset to restore the default.'));
+        : t('无法读取有效的润色提示词。可用 set-prompt --reset --profile 恢复默认。',
+          'Could not read a valid editing prompt. Use set-prompt --reset --profile to restore the default.'));
       return 1;
     }
     return 0;
@@ -414,12 +420,17 @@ async function main(args) {
     console.log(JSON.stringify(output));
     return code;
   }
-  const save = (file, data) => writeProjectSetting(cwd, file, data, lang);
+  const save = (file, data) => values.profile ? writeProfileDefault(file, data) : writeProjectSetting(cwd, file, data, lang);
   let result;
   try {
     switch (command) {
       case 'set-mode': result = { mode: value, file: save(MODE_FILE, value) }; break;
-      case 'set-rewrite-mode': result = { rewrite_mode: value, file: save(REWRITE_MODE_FILE, value) }; break;
+      case 'set-rewrite-mode': {
+        const mode = value ?? (values.profile ? 'normal' : null);
+        const file = save(REWRITE_MODE_FILE, mode);
+        result = { rewrite_mode: projectRewriteMode(cwd), file };
+        break;
+      }
       case 'set-decisions': result = { decisions_mode: value, file: save(DECISIONS_FILE, value) }; break;
       case 'set-history-turns': {
         const turns = parseHistoryTurns(value, lang);
@@ -427,14 +438,8 @@ async function main(args) {
         break;
       }
       case 'set-language': result = { file: save(LANGUAGE_FILE, value), ...languageSettings(cwd) }; break;
-      case 'set-model': result = setProjectModel(cwd, values.reset ? DEFAULT_GEMINI_MODEL : value, lang); break;
+      case 'set-model': result = setModel(cwd, values.reset ? null : value, lang); break;
       case 'set-prompt': {
-        if (values.link !== undefined) {
-          const target = path.resolve(cwd, values.link);
-          const file = writeProjectSetting(cwd, PROMPT_FILE, target, lang, 'link');
-          result = { prompt_source: 'custom', file };
-          break;
-        }
         let data;
         if (values.reset) data = null;
         else {
@@ -454,8 +459,9 @@ async function main(args) {
       }
     }
   } catch (error) {
-    if (error.code === 'INVALID_PROMPT_TARGET') {
-      console.error(t('请选择包含非空 UTF-8 文本的普通文件。', 'Choose a regular file containing nonempty UTF-8 text.'));
+    if (values.profile && !(error instanceof RangeError)) {
+      console.error(t('无法保存默认设置。请检查 Codex 用户目录的写入权限。',
+        'Could not save your defaults. Check write access to your Codex profile.'));
       return 1;
     }
     if (windows && error.syscall === 'rename' && ['EBUSY', 'EPERM', 'EACCES'].includes(error.code)) {

@@ -1,6 +1,5 @@
 import fs from 'node:fs';
-import { PROMPT_FILE, readProjectSetting } from './project_setting.mjs';
-import { isPromptReference } from './prompt_link.mjs';
+import { PROMPT_FILE, readProfileSetting } from './project_setting.mjs';
 import { projectRewriteMode } from './rewrite_mode.mjs';
 import { readLimited, utf8 } from '../skills/codex-polish/scripts/cli_io.mjs';
 
@@ -13,10 +12,6 @@ const turboPrompt = 'If present, `question` is the user message that `draft` ans
   + 'Always rewrite `draft` so it reads naturally and the user can grasp its main point and follow the rest on the first read. '
   + 'If present, follow the user’s editing directions in `rewrite_request`. '
   + 'Keep the original meaning and language. Return only the rewritten reply.';
-
-function projectPromptBytes(cwd) {
-  return readProjectSetting(cwd, PROMPT_FILE, undefined, { raw: true })[0];
-}
 
 function customText(bytes) {
   if (!Buffer.isBuffer(bytes)) throw new Error('invalid_editor_prompt');
@@ -39,7 +34,7 @@ export function readEditorPrompt(cwd, mode = projectRewriteMode(cwd), { selectio
     if (mode !== 'turbo') throw new Error('rewrite_mode_invalid');
     return { source: 'default', text: turboPrompt };
   }
-  const bytes = projectPromptBytes(cwd);
+  const bytes = readProfileSetting(PROMPT_FILE);
   if (bytes === null) {
     if (!mode) throw new Error('rewrite_mode_invalid');
     return { source: 'default', text: mode === 'turbo' ? turboPrompt : readBundledEditorRole().text };
@@ -50,6 +45,5 @@ export function readEditorPrompt(cwd, mode = projectRewriteMode(cwd), { selectio
 export async function readPromptInput(input) {
   const bytes = await readLimited(input);
   customText(bytes);
-  if (isPromptReference(bytes)) throw new Error('invalid_editor_prompt');
   return bytes;
 }

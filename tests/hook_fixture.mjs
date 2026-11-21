@@ -43,6 +43,22 @@ export function temporary(t) {
   return dir;
 }
 
+export function useTestProfile(t, directory = path.join(temporary(t), 'profile')) {
+  const previous = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = directory;
+  t.after(() => {
+    if (previous === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = previous;
+  });
+  return directory;
+}
+
+export function writeTestPrompt(profile, content) {
+  const settings = path.join(profile, 'codex-polish', 'settings');
+  fs.mkdirSync(settings, { recursive: true });
+  fs.writeFileSync(path.join(settings, 'codex-polish.prompt.md'), content);
+}
+
 export function makeProject(t) {
   const home = temporary(t);
   const project = path.join(home, '有 空格');

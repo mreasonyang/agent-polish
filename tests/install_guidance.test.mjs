@@ -3,11 +3,12 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import { join, parse } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
-import { homedir, tmpdir } from 'node:os';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { tmpdir } from 'node:os';
 import { PassThrough } from 'node:stream';
 import { setImmediate } from 'node:timers/promises';
-import { chooseSetupModel, chooseSetupMode, configurationSteps, showSetupGuidance, doctor } from '../scripts/install.mjs';
+import { chooseSetupModel, chooseSetupMode, setupIssues, showSetupGuidance, doctor } from '../scripts/install.mjs';
+import { projectGeminiModel } from '../plugins/codex-polish/hooks/preferences.mjs';
 import { rewriteModeSettings } from '../plugins/codex-polish/hooks/rewrite_mode.mjs';
 import { catalog } from '../plugins/codex-polish/skills/codex-polish/scripts/acp_models.mjs';
 import { makeProject, windows, homeEnv } from './hook_fixture.mjs';
@@ -25,77 +26,72 @@ const checks = {
   codex_available: true,
   node_available: true,
   gemini_model: 'gemini-4-hydrogen',
+  gemini_model_configured: true,
   history_turns: 2,
   language_mode: 'auto'
 };
-test('bilingual setup and doctor distinguish auth, project model, history, decision checks and temporary service failures', () => {
+test('doctor explains modes, decisions, history, model and Google authentication in the selected language', () => {
   for (const lang of ['zh', 'en']) {
     const data = { ...checks, ui_language: lang };
-    const summarize = (extra) => configurationSteps({ ...data, ...extra })[0].join('\n');
-    assert.match(summarize({}), lang === 'en' ? /go straight to Gemini/ : /直接交给 Gemini/);
-    assert.match(summarize({ openai_key_malformed: true }), /OPENAI_API_KEY/);
-    const withOpenAI = summarize({ decisions_enabled: true });
+    const report = (extra = {}) => doctor({ ...data, ...extra });
+    const defaults = report();
+    assert.match(defaults, lang === 'en' ? /go straight to Gemini/ : /直接交给 Gemini/);
+    assert.match(defaults, lang === 'en' ? /reuses your Antigravity account/ : /复用 Antigravity 里的登录/);
+    assert.match(defaults, lang === 'en' ? /Gemini receives up to 2 earlier completed exchanges/ : /Gemini 改写时最多带上最近 2 轮完整问答/);
+    assert.match(report({ openai_key_malformed: true }), /OPENAI_API_KEY/);
+    const withOpenAI = report({ decisions_enabled: true });
     assert.match(
       withOpenAI,
       lang === 'en' ? /OpenAI uses only the current question, draft, and any custom polishing prompt/ : /OpenAI 只用本轮问题、草稿和已设置的自定义润色提示词/
     );
     assert.doesNotMatch(withOpenAI, /meaning|原意/);
-    const turbo = { rewrite_mode: 'turbo', mode: 'manual' };
-    const turboSummary = summarize(turbo);
-    assert.match(turboSummary, lang === 'en' ? /Requested rewrites use Turbo/ : /点名润色会用 Turbo/);
-    assert.doesNotMatch(turboSummary, /Set up OpenAI Decisions|配置 OpenAI Decisions/);
-    const manualDoctor = doctor({ ...data, ...turbo });
+    const manualDoctor = report({ rewrite_mode: 'turbo', mode: 'manual' });
+    assert.match(manualDoctor, lang === 'en' ? /Requested rewrites use Turbo/ : /点名润色会用 Turbo/);
+    assert.doesNotMatch(manualDoctor, /Set up OpenAI Decisions|配置 OpenAI Decisions/);
     assert.match(manualDoctor, lang === 'en' ? /When to polish: only when asked/ : /润色时机：只在我要求时/);
     assert.match(manualDoctor, lang === 'en' ? /Automatic rewrite mode: turbo/ : /自动润色的改写模式：turbo/);
     for (const mode of ['manual', 'off']) {
-      const saved = { mode, openai_key_configured: true, decisions_enabled: false };
-      for (const summary of [summarize(saved), doctor({ ...data, ...saved })]) {
-        assert.match(summary, lang === 'en' ? /configured OpenAI Decisions/ : /已配置的 OpenAI Decisions/);
-        assert.doesNotMatch(summary, /Set up OpenAI Decisions|「配置 OpenAI Decisions」/);
-      }
+      const saved = report({ mode, openai_key_configured: true, decisions_enabled: false });
+      assert.match(saved, lang === 'en' ? /configured OpenAI Decisions/ : /已配置的 OpenAI Decisions/);
+      assert.doesNotMatch(saved, /Set up OpenAI Decisions|「配置 OpenAI Decisions」/);
     }
-    const invalidMode = { rewrite_mode: null, blockers: ['rewrite_mode_invalid'] };
-    assert.match(summarize(invalidMode), lang === 'en' ? /rewrite mode is invalid/ : /改写模式无效/);
-    assert.doesNotMatch(summarize(invalidMode), /go straight to Gemini|直接交给 Gemini/);
-    assert.match(doctor(data), lang === 'en' ? /Gemini receives up to 2 earlier completed exchanges/ : /Gemini 改写时最多带上最近 2 轮完整问答/);
-    assert.match(summarize({}), lang === 'en' ? /Explain what DNS does in one sentence\./ : /用一句话解释 DNS。/);
-    assert.match(summarize({ mode: 'manual' }), lang === 'en' ? /then polish your reply/ : /再把你的回复润色一下/);
-    assert.match(summarize({ mode: 'off' }), lang === 'en' ? /Switch to on-demand rewrites/ : /改回手动润色/);
-    const enterprise = summarize({ google_auth_method: 'agent-platform' });
+    const invalidMode = report({ rewrite_mode: null, blockers: ['rewrite_mode_invalid'] });
+    assert.match(invalidMode, lang === 'en' ? /rewrite mode is invalid/ : /改写模式无效/);
+    assert.doesNotMatch(invalidMode, /go straight to Gemini|直接交给 Gemini/);
+    const enterprise = report({ google_auth_method: 'agent-platform' });
     assert.doesNotMatch(enterprise, /GEMINI_API_KEY|https:/);
     assert.match(enterprise, lang === 'en' ? /enterprise/ : /企业/);
+    const key = report({ google_auth_method: 'gemini-api-key', gemini_key_configured: true, history_turns: 0, gemini_model: 'gemini-4-argon' });
+    for (const detail of ['Node.js 22.16+', 'gemini-4-argon']) assert.ok(key.includes(detail));
+    assert.match(key, lang === 'en' ? /Gemini API key: configured/ : /Gemini API 密钥：已配置/);
+    assert.match(key, lang === 'en' ? /History is off/ : /历史记录设为 0/);
+    assert.ok(!key.includes('api_timeout'));
+  }
+});
+
+test('setup reports actionable blockers and offers the relevant official key page', () => {
+  for (const lang of ['zh', 'en']) {
+    const data = { ...checks, ui_language: lang };
+    assert.deepEqual(setupIssues(data), [[], []]);
     for (const [code, fragment] of [
-      ['agy_missing', 'setup --install-agy'],
+      ['agy_missing', '--install-agy'],
+      ['agy_unsupported', '1.2.1'],
       ['unsupported_node', 'Node.js 22.16'],
       ['unsupported_google_auth', 'CODEX_POLISH_AGY_AUTH'],
       ['mode_invalid', 'codex-polish.mode'],
+      ['rewrite_mode_invalid', lang === 'en' ? 'rewrite mode is invalid' : '改写模式无效'],
       ['history_turns_invalid', 'codex-polish.history-turns'],
       ['decisions_mode_invalid', 'codex-polish.decisions'],
-      ['editor_prompt_link_unbound', lang === 'en' ? 'prompt link' : '提示词链接'],
       ['gemini_model_invalid', lang === 'en' ? 'Choose a rewrite model' : '选择改写模型']
     ]) {
-      const [lines, pages] = configurationSteps({ ...data, blockers: [code] });
+      const [lines, pages] = setupIssues({ ...data, blockers: [code] });
       assert.ok(lines.join('\n').includes(fragment));
       assert.deepEqual(pages, []);
     }
     for (const code of ['gemini_key_missing', 'gemini_key_invalid']) {
-      const [lines, pages] = configurationSteps({ ...data, google_auth_method: 'gemini-api-key', blockers: [code] });
+      const [lines, pages] = setupIssues({ ...data, google_auth_method: 'gemini-api-key', blockers: [code] });
       assert.match(lines.join('\n'), /GEMINI_API_KEY/);
       assert.deepEqual(pages, ['https://aistudio.google.com/apikey']);
-    }
-    for (const mode of ['off', 'auto']) {
-      const report = doctor({
-        ...data,
-        decisions_mode: mode,
-        decisions_enabled: mode === 'auto',
-        google_auth_method: 'gemini-api-key',
-        gemini_key_configured: true,
-        history_turns: 0,
-        gemini_model: 'gemini-4-argon'
-      });
-      for (const detail of ['Node.js 22.16+', 'gemini-4-argon']) assert.ok(report.includes(detail));
-      assert.match(report, lang === 'en' ? /History is off/ : /历史记录设为 0/);
-      assert.ok(!report.includes('api_timeout'));
     }
   }
 });
@@ -123,7 +119,7 @@ test('rewrite mode picker responds to arrows, Enter and cancellation and restore
       t.after(() => { input.destroy(); output.destroy(); });
       let display = '';
       output.setEncoding('utf8').on('data', (chunk) => { display += chunk; });
-      const selection = chooseSetupMode('/project', lang, input, output);
+      const selection = chooseSetupMode(lang, input, output);
       await setImmediate();
       assert.equal(input.isRaw, true);
       assert.match(display, /Normal/);
@@ -149,7 +145,7 @@ test('closing the terminal during selection cancels the picker', async () => {
   const input = new PassThrough(), output = new PassThrough();
   input.isTTY = output.isTTY = true;
   input.setRawMode = () => input;
-  const selection = chooseSetupMode('/project', 'en', input, output);
+  const selection = chooseSetupMode('en', input, output);
   input.destroy();
   assert.equal(await selection, null);
   output.destroy();
@@ -199,40 +195,87 @@ test('account picker shows both IDs when provider labels differ only in surround
   input.destroy(); output.destroy();
 });
 
-test('first setup from a subdirectory saves the model once for the whole repository', async t => {
-  const { project, cwd, check } = makeProject(t);
-  t.mock.method(console, 'log', () => {});
-  const chooseModel = t.mock.fn(() => 'gemini-4-argon');
-  const setup = where => showSetupGuidance({
-    cwd: where, interactive: true, check: dir => ({ ...check({ where: dir }), agy_available: true, blockers: [] }),
-    chooseMode: () => 'normal', chooseModel, prompt: () => assert.fail('unexpected question')
-  });
-  await setup(cwd);
-  assert.equal(check({ where: project }).gemini_model, 'gemini-4-argon');
-  await setup(project);
-  assert.equal(chooseModel.mock.callCount(), 1);
-  assert.equal(fs.existsSync(join(cwd, '.codex')), false);
+test('interactive setup saves mode and model once in the Codex profile from any launch directory', async t => {
+  const { home, project, cwd } = makeProject(t);
+  const downloads = join(home, 'Downloads');
+  const extracted = join(downloads, 'codex-polish');
+  const newProject = join(home, 'another project');
+  const bin = join(home, 'bin');
+  fs.mkdirSync(extracted, { recursive: true });
+  fs.mkdirSync(join(newProject, '.git'), { recursive: true });
+  fs.mkdirSync(bin);
+  if (windows) fs.copyFileSync(process.execPath, join(bin, 'agy.exe'));
+  else fs.writeFileSync(join(bin, 'agy'), '#!/bin/sh\necho agy 1.2.1\n', { mode: 0o700 });
+  for (const folder of ['scripts', 'plugins'])
+    fs.cpSync(new URL('../' + folder, import.meta.url), join(extracted, folder), { recursive: true });
+  const packaged = await import(pathToFileURL(join(extracted, 'scripts/install.mjs')).href);
+  const localSettings = join(project, '.codex');
+  fs.writeFileSync(join(localSettings, 'codex-polish.rewrite-mode'), 'normal\n');
+  fs.writeFileSync(join(localSettings, 'codex-polish.model'), 'gemini-4-neon\n');
+
+  for (const [launch, directory] of [
+    ['home', home], ['root', parse(home).root], ['downloads', downloads],
+    ['finder', project], ['extracted', extracted], ['project', cwd]
+  ]) {
+    await t.test(launch, async t => {
+      const profile = join(home, 'profile-' + launch);
+      const env = {
+        ...homeEnv(home), CODEX_HOME: profile, PATH: bin, LC_ALL: 'en_US.UTF-8',
+        CODEX_POLISH_AGY_AUTH: 'existing-session', CODEX_POLISH_INSTALL_WINDOW: launch === 'finder' ? '1' : '0'
+      };
+      for (const [key, value] of Object.entries(env)) {
+        const previous = process.env[key];
+        process.env[key] = value;
+        t.after(() => { if (previous === undefined) delete process.env[key]; else process.env[key] = previous; });
+      }
+      const previousDirectory = process.cwd();
+      process.chdir(directory);
+      t.after(() => process.chdir(previousDirectory));
+      const log = t.mock.method(console, 'log', () => {});
+      const choices = [];
+      const setup = launch === 'extracted' ? packaged.showSetupGuidance : showSetupGuidance;
+      const options = {
+        interactive: true,
+        chooseMode(lang) { assert.equal(lang, 'en'); choices.push('mode'); return 'turbo'; },
+        chooseModel() { choices.push('model'); return 'gemini-4-argon'; },
+        prompt: message => assert.fail('Unexpected question: ' + message)
+      };
+      assert.equal(await setup(options), true);
+      process.chdir(project);
+      assert.equal(await setup(options), true);
+      assert.deepEqual(choices, ['mode', 'model']);
+      assert.equal(log.mock.callCount(), 0);
+      const defaults = join(profile, 'codex-polish', 'settings');
+      assert.equal(fs.readFileSync(join(defaults, 'codex-polish.rewrite-mode'), 'utf8'), 'turbo\n');
+      assert.equal(fs.readFileSync(join(defaults, 'codex-polish.model'), 'utf8'), 'gemini-4-argon\n');
+      assert.equal(rewriteModeSettings(newProject).rewrite_mode, 'turbo');
+      assert.equal(projectGeminiModel(newProject), 'gemini-4-argon');
+      assert.equal(rewriteModeSettings(cwd).rewrite_mode, 'normal');
+      assert.equal(projectGeminiModel(cwd), 'gemini-4-neon');
+      for (const dir of [cwd, home, downloads, extracted, newProject]) assert.equal(fs.existsSync(join(dir, '.codex')), false);
+    });
+  }
 });
 
-test('first interactive setup chooses a mode before agy, saves it and refreshes its guidance', async (t) => {
+test('interactive setup chooses an unsaved mode before offering to install agy', async (t) => {
   for (const [lang, expected] of [['en', 'normal'], ['zh', 'turbo']]) {
     await t.test(lang, async (t) => {
-      const { project, cwd } = makeProject(t);
-      const transcript = [], questions = [], reads = [];
-      t.mock.method(console, 'log', (line) => transcript.push(line));
+      const questions = [];
+      const log = t.mock.method(console, 'log', () => {});
+      const saveRewriteMode = t.mock.fn();
       const ok = await showSetupGuidance({
-        cwd: project,
         interactive: true,
-        check(where) {
-          reads.push(where);
-          return { ...checks, ...rewriteModeSettings(where), ui_language: lang, blockers: ['agy_missing'], agy_available: false };
-        },
-        chooseMode(where, language) {
-          assert.equal(where, project);
+        check: () => ({
+          ...checks, ui_language: lang, rewrite_mode_configured: saveRewriteMode.mock.callCount() > 0,
+          gemini_model_configured: false, blockers: ['agy_missing'], agy_available: false
+        }),
+        chooseMode(language) {
           assert.equal(language, lang);
           questions.push('mode');
           return expected;
         },
+        saveRewriteMode,
+        chooseModel: () => assert.fail('agy is unavailable'),
         install: () => assert.fail('the user declined the dependency installation'),
         prompt(message) {
           assert.match(message, /agy/i);
@@ -242,70 +285,36 @@ test('first interactive setup chooses a mode before agy, saves it and refreshes 
       });
       assert.equal(ok, true);
       assert.deepEqual(questions, ['mode', 'agy']);
-      assert.deepEqual(reads, [project, project]);
-      assert.equal(fs.readFileSync(join(project, '.codex/codex-polish.rewrite-mode'), 'utf8'), expected + '\n');
-      assert.deepEqual(rewriteModeSettings(cwd), { rewrite_mode: expected, rewrite_mode_configured: true });
-      assert.match(transcript.at(-1), expected === 'normal' ? /go straight to Gemini/ : /Turbo 会跳过 OpenAI 检查/);
+      assert.deepEqual(saveRewriteMode.mock.calls.map(call => call.arguments), [[expected]]);
+      assert.match(log.mock.calls.map(call => call.arguments.join(' ')).join('\n'), /--install-agy/);
     });
   }
 });
 
-test('inherited modes, invalid settings, noninteractive and dependency-only setup skip mode selection', async (t) => {
-  const { project, cwd } = makeProject(t);
-  const setting = join(project, '.codex/codex-polish.rewrite-mode');
-  const chooseMode = t.mock.fn(() => null), saveRewriteMode = t.mock.fn();
-  t.mock.method(console, 'log', () => {});
-  const setup = (options = {}) => showSetupGuidance({
-    cwd, interactive: true, chooseMode, saveRewriteMode,
-    prompt: () => assert.fail('unexpected text prompt'),
-    check: (where) => ({ ...checks, ...rewriteModeSettings(where) }), ...options
-  });
-  await setup({ interactive: false });
-  await setup({ dependencyOnly: true });
-  for (const value of ['normal', 'turbo', 'invalid']) {
-    fs.writeFileSync(setting, value + '\n');
-    await setup();
-    assert.equal(fs.readFileSync(setting, 'utf8'), value + '\n');
+test('interactive setup offers only missing defaults and cancellation leaves them unsaved', async () => {
+  const fresh = { ...checks, rewrite_mode_configured: false, gemini_model_configured: false };
+  for (const [options, status, expected] of [
+    [{ interactive: false }, fresh, []],
+    [{ dependencyOnly: true }, fresh, []],
+    [{}, { ...fresh, rewrite_mode_configured: true }, ['model']],
+    [{}, { ...fresh, gemini_model_configured: true }, ['mode']],
+    [{}, fresh, ['mode', 'model']]
+  ]) {
+    const offered = [];
+    const ok = await showSetupGuidance({
+      interactive: true, ...options, check: () => status,
+      chooseMode() { offered.push('mode'); return null; },
+      chooseModel() { offered.push('model'); return null; },
+      saveRewriteMode: () => assert.fail('no mode selected'),
+      saveModel: () => assert.fail('no model selected'),
+      prompt: () => assert.fail('unexpected text prompt')
+    });
+    assert.equal(ok, true);
+    assert.deepEqual(offered, expected);
   }
-  assert.equal(chooseMode.mock.callCount(), 0);
-  fs.unlinkSync(setting);
-  await setup();
-  assert.equal(chooseMode.mock.callCount(), 1, 'a cancelled choice leaves the project unconfigured');
-  assert.equal(saveRewriteMode.mock.callCount(), 0);
-  assert.equal(fs.existsSync(join(cwd, '.codex')), false);
-});
-
-test('setup outside a project lets the user defer or choose a project directory', async (t) => {
-  const { project } = makeProject(t);
-  const fresh = { ...checks, rewrite_mode_configured: false };
-  const saveRewriteMode = t.mock.fn(), chooseMode = t.mock.fn(() => 'normal');
-  t.mock.method(console, 'log', () => {});
-  for (const [cwd, answer] of [[homedir(), ''], [parse(homedir()).root, null], [join(homedir(), 'Downloads'), '']]) {
-    const prompt = t.mock.fn(() => answer);
-    await showSetupGuidance({ cwd, interactive: true, check: () => fresh, saveRewriteMode, chooseMode, prompt });
-    assert.equal(prompt.mock.callCount(), 1);
-    assert.equal(chooseMode.mock.callCount(), 0);
-    assert.equal(saveRewriteMode.mock.callCount(), 0);
-  }
-  const answers = [join(project, 'missing'), homedir(), parse(homedir()).root, project];
-  await showSetupGuidance({
-    cwd: homedir(), interactive: true,
-    check: (where) => ({
-      ...fresh, rewrite_mode_configured: saveRewriteMode.mock.calls.some(call => call.arguments[1] === where)
-    }),
-    saveRewriteMode, chooseMode,
-    prompt() {
-      assert.ok(answers.length, 'unexpected prompt');
-      return answers.shift();
-    }
-  });
-  assert.deepEqual(answers, []);
-  assert.deepEqual(chooseMode.mock.calls.map(call => call.arguments), [[project, 'en']]);
-  assert.deepEqual(saveRewriteMode.mock.calls.map(call => call.arguments), [['normal', project]]);
 });
 
 test('interactive dependency prompts, opt-ins, browser consent, failure messaging and noninteractive behavior', async (t) => {
-  const { project } = makeProject(t);
   const output = [];
   t.mock.method(console, 'log', (...args) => output.push(args.join(' ')));
   t.mock.method(console, 'error', (...args) => output.push(args.join(' ')));
@@ -325,7 +334,6 @@ test('interactive dependency prompts, opt-ins, browser consent, failure messagin
       installed = false;
     output.length = 0;
     const ok = await showSetupGuidance({
-      cwd: project,
       interactive,
       installDependency,
       dependencyOnly,
@@ -367,7 +375,7 @@ test('interactive dependency prompts, opt-ins, browser consent, failure messagin
   }
   result = await setup({ answer: '' });
   assert.deepEqual([result.reads, result.installs, result.prompts, result.opens], [2, 1, 1, 0]);
-  assert.match(result.text, /Your local setup checks out/);
+  assert.match(result.text, /agy is installed/);
   result = await setup({ key: true });
   assert.deepEqual([result.prompts, result.opens], [2, 1]);
   assert.match(result.text, /Visit https:\/\/aistudio.google.com/);
@@ -382,6 +390,14 @@ test('interactive dependency prompts, opt-ins, browser consent, failure messagin
   assert.equal(result.ok, false);
   assert.ok(!result.text.includes('private error'));
   assert.match(result.text, /--install-agy/);
+  output.length = 0;
+  const unsupported = await showSetupGuidance({
+    interactive: false, installDependency: true,
+    check: () => ({ ...checks, agy_available: false, blockers: ['agy_unsupported'] }),
+    install: () => assert.fail('unsupported existing agy must be updated')
+  });
+  assert.equal(unsupported, false);
+  assert.match(output.join('\n'), /1\.2\.1 or later/);
   for (const requested of [false, true]) {
     output.length = 0;
     assert.equal(

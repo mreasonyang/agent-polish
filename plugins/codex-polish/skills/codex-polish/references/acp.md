@@ -1,6 +1,6 @@
 # 用宿主执行工具操作 Antigravity ACP
 
-当前 Codex agent 直接调用官方 `agy acp`，每一帧都由当前 agent 提交。以下步骤适用于 T3、Codex App 和 CLI。每次改写只启动一个进程，提交一次草稿。需要 Antigravity CLI 1.2.1+。准备脚本创建本轮的编辑角色，并按当前系统生成宿主命令。Windows 使用 PowerShell，macOS 和 Linux 使用系统 shell。
+当前 Codex agent 直接调用官方 `agy acp`，每一帧都由当前 agent 提交。以下步骤适用于 T3、Codex App 和 CLI。每次改写只启动一个进程，提交一次草稿。需要 Antigravity CLI 1.2.1+。改写整条回复时，准备脚本优先使用当前 Codex 配置保存的完整润色提示词创建编辑角色。明确要求只发送选段时使用内置 Turbo 角色。脚本按当前系统生成宿主命令。Windows 使用 PowerShell，macOS 和 Linux 使用系统 shell。
 
 ## 1. 取得启动参数
 

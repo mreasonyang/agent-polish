@@ -1,11 +1,11 @@
-import { readProjectSetting } from './project_setting.mjs';
+import { readSettingWithDefault } from './project_setting.mjs';
 
 export const REWRITE_MODE_FILE = 'codex-polish.rewrite-mode';
 export const REWRITE_MODES = ['normal', 'turbo'];
 export const REWRITE_TRIGGERS = ['auto', 'explicit'];
 
 export function rewriteModeSettings(cwd, trigger) {
-  const [value] = readProjectSetting(cwd, REWRITE_MODE_FILE, 16);
+  const value = readSettingWithDefault(cwd, REWRITE_MODE_FILE, 16);
   const normalized = value?.toLowerCase();
   const configuredMode = REWRITE_MODES.includes(normalized) ? normalized : null;
   const automaticMode = value === null ? 'normal' : configuredMode;

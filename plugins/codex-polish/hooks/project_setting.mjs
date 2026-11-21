@@ -5,22 +5,17 @@ import os from 'node:os';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { windows, openRegular, sameEntry, replaceSettingFile } from './platform.mjs';
-import { readPromptLink, savePromptLink, resolvePromptBytes } from './prompt_link.mjs';
 
 export const PROMPT_FILE = 'codex-polish.prompt.md';
 
 const { O_RDONLY, O_DIRECTORY, O_NOFOLLOW } = fs.constants;
 
-function accessSetting(project, operation, filename, value) {
-  const target = filename;
-  if (operation === 'read' || operation === 'read-bytes') {
-    if (operation === 'read-bytes' && filename === PROMPT_FILE && fs.lstatSync(target).isSymbolicLink())
-      return readPromptLink(project, target);
+function accessSetting(operation, target, value) {
+  if (operation === 'read') {
     const fd = openRegular(target);
     try {
       const stat = fs.fstatSync(fd);
-      if (!stat.isFile() || (operation === 'read-bytes' && stat.nlink > 1)) return '';
-      if (operation === 'read-bytes' && value === undefined) return resolvePromptBytes(project, target, fs.readFileSync(fd));
+      if (value === undefined) return stat.nlink === 1 ? fs.readFileSync(fd) : '';
       const raw = Buffer.alloc(value + 1);
       let size = 0;
       while (size < raw.length) {
@@ -30,42 +25,40 @@ function accessSetting(project, operation, filename, value) {
       }
       if (size > value) return '';
       const bytes = raw.subarray(0, size);
-      return operation === 'read-bytes' ? bytes : bytes.toString('latin1').replace(/^[\t-\r ]+|[\t-\r ]+$/g, '');
+      return bytes.toString('latin1').replace(/^[\t-\r ]+|[\t-\r ]+$/g, '');
     } finally {
       fs.closeSync(fd);
     }
   }
-  if (!['write', 'remove', 'link'].includes(operation)) throw new Error('invalid operation');
-  if (operation === 'link') {
-    if (filename !== PROMPT_FILE) throw new Error('invalid setting');
-    return savePromptLink(project, target, value);
-  }
+  if (!['write', 'remove'].includes(operation)) throw new Error('invalid operation');
   if (operation === 'remove') {
     const current = fs.lstatSync(target, { throwIfNoEntry: false });
-    if (current && !current.isFile() && !(filename === PROMPT_FILE && current.isSymbolicLink()))
+    if (current && !current.isFile())
       throw Object.assign(new Error('invalid setting'), { code: 'EINVAL' });
     if (current) fs.unlinkSync(target);
     return null;
   }
-  const temporary = '.' + filename + '-' + randomBytes(12).toString('hex');
+  const temporary = '.' + target + '-' + randomBytes(12).toString('hex');
   const fd = fs.openSync(temporary, 'wx', 0o600);
   let published = false;
+  let staged;
   try {
     try {
       if (Buffer.isBuffer(value)) fs.writeFileSync(fd, value);
       else fs.writeFileSync(fd, value + '\n', 'ascii');
+      staged = fs.fstatSync(fd, { bigint: true });
     } finally {
       fs.closeSync(fd);
     }
-    replaceSettingFile(temporary, target, filename === PROMPT_FILE);
+    replaceSettingFile(temporary, target);
     published = true;
   } finally {
     if (!published) fs.rmSync(temporary, { force: true });
   }
-  return null;
+  return { staged };
 }
 
-export function accessProjectSetting(directory, operation, filename, value) {
+export function withSettingsDirectory(directory, use) {
   const previous = process.cwd();
   const expected = fs.lstatSync(directory, { bigint: true });
   if (!expected.isDirectory()) throw Object.assign(new Error('invalid settings directory'), { code: 'EINVAL' });
@@ -78,13 +71,17 @@ export function accessProjectSetting(directory, operation, filename, value) {
       if (!sameEntry(fd === null ? expected : fs.fstatSync(fd, { bigint: true }), fs.statSync('.', { bigint: true }))) {
         throw new Error('project settings directory changed');
       }
-      return accessSetting(path.dirname(directory), operation, filename, value);
+      return use(accessSetting);
     } finally {
       process.chdir(previous);
     }
   } finally {
     if (fd !== null) fs.closeSync(fd);
   }
+}
+
+export function accessProjectSetting(directory, operation, filename, value) {
+  return withSettingsDirectory(directory, access => access(operation, filename, value));
 }
 
 // Git worktrees and nested repositories each own their project preferences.
@@ -98,7 +95,8 @@ export function projectRoot(cwd) {
   return directory;
 }
 
-export function readProjectSetting(cwd, filename, maxBytes, { raw = false } = {}) {
+export function readProjectSetting(cwd, filename, maxBytes) {
+  if (cwd === null) return [null, null]; // A profile-only check has no current project.
   let base;
   try {
     base = projectRoot(cwd);
@@ -107,9 +105,44 @@ export function readProjectSetting(cwd, filename, maxBytes, { raw = false } = {}
     if (fs.lstatSync(settings).isSymbolicLink() &&
         fs.statSync(settings, { throwIfNoEntry: false })?.isDirectory() &&
         !fs.lstatSync(path.join(settings, filename), { throwIfNoEntry: false })) return [null, base];
-    return [accessProjectSetting(settings, raw ? 'read-bytes' : 'read', filename, maxBytes), base];
+    return [accessProjectSetting(settings, 'read', filename, maxBytes), base];
   } catch (error) {
-    if (error.code === 'PROMPT_LINK_UNBOUND') throw error;
     return [base && error.code === 'ENOENT' ? null : '', base ?? null];
   }
+}
+
+function profileSettingsDirectory(create) {
+  const profile = path.resolve(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'));
+  if (create) fs.mkdirSync(profile, { recursive: true, mode: 0o700 });
+  let dir = profile;
+  for (const part of ['codex-polish', 'settings']) {
+    dir = path.join(dir, part);
+    if (create) fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const entry = fs.lstatSync(dir, { throwIfNoEntry: false });
+    if (entry && !entry.isDirectory()) throw new Error('invalid profile settings directory');
+  }
+  return dir;
+}
+
+export function readProfileSetting(filename, maxBytes) {
+  try {
+    return accessProjectSetting(profileSettingsDirectory(false), 'read', filename, maxBytes);
+  } catch (error) {
+    return error.code === 'ENOENT' ? null : '';
+  }
+}
+
+export function readSettingWithDefault(cwd, filename, maxBytes) {
+  const [projectValue] = readProjectSetting(cwd, filename, maxBytes);
+  return projectValue ?? readProfileSetting(filename, maxBytes);
+}
+
+export function writeProfileDefault(filename, value) {
+  const directory = profileSettingsDirectory(value !== null);
+  try {
+    accessProjectSetting(directory, value === null ? 'remove' : 'write', filename, value);
+  } catch (error) {
+    if (value !== null || error.code !== 'ENOENT') throw error;
+  }
+  return path.join(directory, filename);
 }

@@ -13,7 +13,7 @@
 - 用户问“Turbo 怎么用”、讨论插件实现或引用别人的指令时，按实际问题回答。只有用户要求设置项目默认值时才保存。
 - 如果用户只想看 GPT 原稿，直接展示对话中可核实的原稿，也可在本地运行 `previous_reply.mjs --cwd "<原项目目录>" --turns-back N --require-gpt` 查找。没有可核实的原稿就如实说明，这条请求不启动 Gemini。
 
-用户本轮只想查看或设置项目模式、提示词时，使用设置技能。用户说“这轮别润色”或禁止外发时直接交付原稿。用户取消就结束。本轮明确要求只给 JSON、命令、补丁或逐字引用时，按指定格式交付。用户要求改写某段代码、JSON 或引文时，以指定的原文为草稿。句数、篇幅和语气属于编辑要求。用户明确只想看润色正文时只交付正文，否则在最终消息中展示润色结果和原稿。
+用户本轮只想查看或设置项目模式或全局润色提示词时，使用设置技能。用户说“这轮别润色”或禁止外发时直接交付原稿。用户取消就结束。本轮明确要求只给 JSON、命令、补丁或逐字引用时，按指定格式交付。用户要求改写某段代码、JSON 或引文时，以指定的原文为草稿。句数、篇幅和语气属于编辑要求。用户明确只想看润色正文时只交付正文，否则在最终消息中展示润色结果和原稿。
 
 改写旧回复时，先按下节在本地定位原稿，再根据返回的是整条问答还是选区检查设置。用户要求只发送指定片段时，在检查设置、准备编辑角色和组装 ACP 请求这三处均加 `--selection-only`。运行 `node …/hooks/preferences.mjs check --cwd "<原项目目录>" --trigger <本轮触发方式>`（Node.js 22.16+）。普通选区或用户指定本轮省略历史时，给 `check` 加 `--no-history`。如果是整条回答且本轮省略历史，调用 Decisions 时也给 `decision judge` 加 `--no-history`。`mode=off` 或仅由提醒触发且 `mode=manual` 时按普通回复交付。记下 `check.rewrite_mode`、`gemini_model`、`google_auth_method` 和本轮的显示语言。语言为自动时跟随用户的语言，无法判断时用 `check.ui_language`。
 
@@ -33,7 +33,7 @@
 
 1. 选好原稿后，按本轮的 `check.decisions_enabled` 选择路由。问题、草稿、选区和本次编辑要求均使用原文。
    - 为假时使用 `route=acp`，直接进入第 2 步。所有主动请求都走这条路径，不调用 `decision judge`。
-   - 为真时才运行 `node …/hooks/preferences.mjs decision judge --cwd "<原项目目录>" --trigger auto --route decisions --rewrite-mode normal --model <check.gemini_model>`。标准输入传原始 `question` 和 `draft`，OpenAI 只接收这两项和项目已设置的自定义提示词。概率大于 50% 时继续，平局保留原稿。返回 `action: "rewrite"` 时用返回的 `route` 进入第 2 步，包括 `reason: "decision_unavailable"`。返回 `already_clear` 时交付原稿，说明 OpenAI 判断无需润色。其他停止原因按实际情况交代。
+   - 为真时才运行 `node …/hooks/preferences.mjs decision judge --cwd "<原项目目录>" --trigger auto --route decisions --rewrite-mode normal --model <check.gemini_model>`。标准输入传原始 `question` 和 `draft`，OpenAI 只接收这两项和当前 Codex 配置保存的自定义提示词。概率大于 50% 时继续，平局保留原稿。返回 `action: "rewrite"` 时用返回的 `route` 进入第 2 步，包括 `reason: "decision_unavailable"`。返回 `already_clear` 时交付原稿，说明 OpenAI 判断无需润色。其他停止原因按实际情况交代。
 2. 阅读 [ACP 操作步骤](references/acp.md)。**当前 agent 是 ACP 客户端**。在原项目上为本轮运行 `scripts/acp_workspace.mjs --cwd "<原项目>" --trigger "<本轮触发方式>" --agy-path "<check.agy_path>" --auth "<check.google_auth_method>" --model "<check.gemini_model>" --route "<上一步选定的 route>" --rewrite-mode "<check.rewrite_mode>" --display "<zh、en 或 body-only>"`，并带上本轮范围参数（如 `--no-history`、`--turns-back N`、`--selection` 或 `--selection-only`）。中文答复用 `zh`，英文答复用 `en`，其他语言按当前界面语言选。只有用户要求只看正文或指定严格格式时才用 `body-only`。整条答复取自当前可见文字且无法核实为 GPT 原稿时加 `--quoted-source`。选段和按轮查找的答复由工具标注来源。
    - 用宿主 `exec_command` 原样执行返回的 `start`，保存其进程句柄。每条 `send.exec` 也由当前 agent 原样执行。空读同一进程句柄查看下一步。
    - 见到 `submit` 后，原样执行 `submit.exec`，待 `input_ready` 后向这个**材料输入句柄**发送一行已序列化的原稿 JSON 和行末换行。写完后继续空读原 ACP 句柄。`delivery.markdown` 就是最终消息，直接原样发送。见到 `answer_pages` 时依次读完各页，原样拼接每页的 `text` 后发送。收到完整结果后，本轮的工具操作到此结束。

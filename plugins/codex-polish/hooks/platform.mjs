@@ -76,12 +76,12 @@ export function openRegular(file) {
 // MoveFileExW can briefly reject replacement while another process has the
 // destination open without delete sharing. Keep the completed source intact and
 // recheck the destination on every attempt. Never unlink the old setting first.
-export function replaceSettingFile(source, target, allowLink = false) {
+export function replaceSettingFile(source, target) {
   const staged = windows ? fs.lstatSync(source, { bigint: true }) : null;
   for (let delay = 5; ; delay *= 2) {
     try {
       const current = fs.lstatSync(target, { throwIfNoEntry: false });
-      if (current && !current.isFile() && !(allowLink && current.isSymbolicLink()))
+      if (current && !current.isFile())
         throw Object.assign(new Error('invalid setting'), { code: 'EINVAL' });
       fs.renameSync(source, target);
       return;

@@ -9,7 +9,9 @@ import { Readable } from 'node:stream';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { decide, MAX_DECISION_DATA_BYTES, MAX_RESPONSE_BYTES } from '../plugins/codex-polish/skills/codex-polish/scripts/decisions.mjs';
-import { makeProject } from './hook_fixture.mjs';
+import { makeProject, temporary, useTestProfile, writeTestPrompt } from './hook_fixture.mjs';
+
+test.beforeEach(t => { useTestProfile(t); });
 
 const script = fileURLToPath(new URL('../plugins/codex-polish/skills/codex-polish/scripts/decisions.mjs', import.meta.url));
 const draft = {
@@ -106,19 +108,20 @@ test('standalone judge respects project-wide and OpenAI-specific opt-outs', asyn
   assert.equal(mock.calls(), 0);
 });
 
-test('custom project editing goals reach the judge as evidence', async t => {
-  const { cwd, project } = makeProject(t);
+test('custom profile editing goals reach the judge as evidence', async t => {
+  const { cwd } = makeProject(t);
   const prompt = 'Lead with the result.\nUse short sentences.\n';
   const mock = mockResponse(t);
   mock.set(reply('needs_rewrite', 1));
-  async function inspect() {
-    const out = await cli(['judge', '--cwd', cwd], draft);
+  async function inspect(project = cwd) {
+    const out = await cli(['judge', '--cwd', project], draft);
     assert.equal(out.action, 'rewrite');
     return JSON.parse(mock.requests.at(-1).body);
   }
   const defaultJudge = await inspect();
-  fs.writeFileSync(path.join(project, '.codex/codex-polish.prompt.md'), prompt);
+  writeTestPrompt(process.env.CODEX_HOME, prompt);
   const customJudge = await inspect();
+  assert.deepEqual(await inspect(temporary(t)), customJudge);
   assert.deepEqual(customJudge.input, [{role:'user', content:[{type:'input_json', data:{...draft, editor_prompt:prompt}}]}]);
   assert.equal(customJudge.questions[0].name, 'needs_rewrite');
   assert.notEqual(customJudge.questions[0].instructions, defaultJudge.questions[0].instructions);
@@ -128,14 +131,13 @@ test('custom project editing goals reach the judge as evidence', async t => {
 });
 
 test('only validated evidence within the Decisions per-field limit reaches HTTPS', async t => {
-  const { cwd, project } = makeProject(t);
+  const { cwd } = makeProject(t);
   const mock = mockResponse(t);
-  const file = path.join(project, '.codex/codex-polish.prompt.md');
-  fs.writeFileSync(file, Buffer.from([0xff]));
+  writeTestPrompt(process.env.CODEX_HOME, Buffer.from([0xff]));
   assert.deepEqual(await cli(['judge', '--cwd', cwd], draft), failure('editor_prompt_invalid'));
   assert.equal(mock.calls(), 0);
   const editor_prompt = 'Use short sentences.';
-  fs.writeFileSync(file, editor_prompt);
+  writeTestPrompt(process.env.CODEX_HOME, editor_prompt);
   const input = { question:'q'.repeat(140 * 1024), draft:'' };
   input.draft = 'x'.repeat(MAX_DECISION_DATA_BYTES - Buffer.byteLength(JSON.stringify({...input, editor_prompt})));
   mock.set(reply('needs_rewrite', 0.7));
@@ -251,7 +253,7 @@ test('CLI exits at the wall-clock deadline even with a trickling reply', () => {
     };
   `;
   const result = spawnSync(process.execPath,['--import','data:text/javascript,'+encodeURIComponent(preload),
-    script,'judge','--timeout','0.10'],{input:JSON.stringify(draft),env:{OPENAI_API_KEY:'test-key'},
+    script,'judge','--timeout','0.10'],{input:JSON.stringify(draft),env:{CODEX_HOME:process.env.CODEX_HOME, OPENAI_API_KEY:'test-key'},
     encoding:'utf8',timeout:3000});
   assert.equal(result.status,1);
   assert.deepEqual(JSON.parse(result.stdout),failure('api_timeout'));

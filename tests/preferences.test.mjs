@@ -72,7 +72,7 @@ test('closer overrides and nested repository boundaries', t => {
   assert.equal(getMode(), 'off');
 });
 
-test('model selection is scoped and explicit reset restores Hydrogen', t => {
+test('a project model override can be reset to the default', t => {
   const { project, cwd, check, call } = fixture(t);
   const def = 'gemini-4-hydrogen';
   assert.equal(check().gemini_model, def);
@@ -86,9 +86,43 @@ test('model selection is scoped and explicit reset restores Hydrogen', t => {
   assert.equal(json(call(['set-model', '--reset'])).gemini_model, def); assert.equal(check().gemini_model, def);
   assert.equal(child.file, parent.file);
   assert.equal(check({ where: project }).gemini_model, def);
-  assert.equal(check({ where: project }).gemini_model_configured, true);
-  fs.unlinkSync(child.file); fs.writeFileSync(path.join(cwd, '.git'), 'gitdir: ../.git');
+  assert.equal(check({ where: project }).gemini_model_configured, false);
+  assert.ok(!fs.existsSync(child.file));
+  fs.writeFileSync(path.join(cwd, '.git'), 'gitdir: ../.git');
   assert.equal(check().gemini_model, def);
+});
+
+test('profile settings work without a project, stay isolated by profile, and yield to project overrides', t => {
+  const { cwd, env, check, call } = makeProject(t);
+  const key = 'synthetic-key-only-in-the-environment';
+  const profile = (args, other = {}) => run(preferences, [...args, '--profile'], { cwd, env: { ...env, OPENAI_API_KEY: key, ...other } });
+  const mode = json(profile(['set-rewrite-mode', 'turbo']));
+  const model = json(profile(['set-model', 'gemini-4-argon']));
+  assert.equal(path.dirname(mode.file), path.join(env.CODEX_HOME, 'codex-polish', 'settings'));
+  assert.equal(fs.readFileSync(mode.file, 'utf8'), 'turbo\n');
+  assert.equal(fs.readFileSync(model.file, 'utf8'), 'gemini-4-argon\n');
+  assert.deepEqual(fs.readdirSync(path.dirname(mode.file)).sort(), ['codex-polish.model', 'codex-polish.rewrite-mode']);
+  assert.equal(check().gemini_model, 'gemini-4-argon');
+  assert.equal(check().rewrite_mode, 'turbo');
+  json(call(['set-model', 'gemini-4-neon']));
+  json(call(['set-rewrite-mode', 'normal']));
+  assert.equal(check().gemini_model, 'gemini-4-neon');
+  assert.equal(check().rewrite_mode, 'normal');
+  const defaults = json(profile(['check']));
+  assert.equal(defaults.gemini_model, 'gemini-4-argon');
+  assert.equal(defaults.rewrite_mode, 'turbo');
+  assert.equal(defaults.openai_key_configured, true);
+  assert.ok(!JSON.stringify(defaults).includes(key));
+  assert.equal(call(['set-rewrite-mode', '--reset', 'turbo']).status, 2);
+  assert.equal(json(call(['set-rewrite-mode', '--reset'])).rewrite_mode, 'turbo');
+  assert.equal(check().rewrite_mode, 'turbo');
+  assert.equal(json(profile(['set-rewrite-mode', '--reset'])).rewrite_mode, 'normal');
+  assert.equal(check().rewrite_mode, 'normal');
+  assert.equal(json(call(['set-model', '--reset'])).gemini_model, 'gemini-4-argon');
+  assert.equal(json(profile(['check'], { CODEX_HOME: path.join(env.CODEX_HOME, 'other') })).rewrite_mode, 'normal');
+  assert.equal(profile(['set-model', 'invalid id']).status, 1);
+  assert.notEqual(profile(['set-model', 'gemini-4-hydrogen', '--cwd', cwd]).status, 0);
+  assert.equal(json(profile(['set-model', '--reset'])).gemini_model, 'gemini-4-hydrogen');
 });
 
 test('invalid ids preserve model; corrupt settings block rewrites; links are handled safely', t => {
@@ -203,9 +237,7 @@ test('invalid or linked automatic rewrite settings block automatic polishing and
     assert.equal(explicit.rewrite_mode, 'turbo');
     assert.equal(explicit.decisions_enabled, false);
     assert.ok(!explicit.blockers.includes('rewrite_mode_invalid'));
-    const prompt = call(['prompt'], options);
-    assert.equal(prompt.status, 1);
-    assert.match(prompt.stderr, /set-rewrite-mode/);
+    assert.equal(json(run(preferences, ['prompt', '--profile'], options)).source, 'default');
   };
   fs.writeFileSync(file, 'Normal'); assert.equal(check().rewrite_mode,'normal');
   fs.writeFileSync(file, 'typo'); inspect();
@@ -217,21 +249,22 @@ test('invalid or linked automatic rewrite settings block automatic polishing and
   assert.equal(fs.readFileSync(parent.file, 'utf8'), 'normal\n');
 });
 
-test('prompt shows the default for the current rewrite mode and keeps the custom style across modes', t => {
-  const { call } = fixture(t);
-  const prompt = () => json(call(['prompt']));
+test('the profile prompt shows the default for the saved mode and keeps a custom prompt across modes', t => {
+  const { env } = fixture(t);
+  const profile = (args, input) => json(run(preferences, [...args, '--profile'], { env, input }));
+  const prompt = () => profile(['prompt']);
   const normal = prompt();
-  json(call(['set-rewrite-mode', 'turbo']));
+  profile(['set-rewrite-mode', 'turbo']);
   const turbo = prompt();
   assert.equal(turbo.source, 'default');
   assert.notEqual(turbo.text, normal.text);
   assert.match(turbo.text, /rephrase|rewrite/i);
   const custom = 'Keep each paragraph short.';
-  json(call(['set-prompt'], { input: custom }));
+  profile(['set-prompt'], custom);
   assert.deepEqual(prompt(), { source: 'custom', text: custom });
-  json(call(['set-rewrite-mode', 'normal']));
+  profile(['set-rewrite-mode', 'normal']);
   assert.deepEqual(prompt(), { source: 'custom', text: custom });
-  json(call(['set-prompt', '--reset']));
+  profile(['set-prompt', '--reset']);
   assert.deepEqual(prompt(), normal);
 });
 

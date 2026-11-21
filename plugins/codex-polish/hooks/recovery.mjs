@@ -58,13 +58,13 @@ export function sqliteModule() {
   return sqlite;
 }
 
-function initializeDatabase(file, DatabaseSync) {
+export function initializeDatabase(file, DatabaseSync, applicationId = APPLICATION_ID) {
   const temporary = path.join(path.dirname(file), '.new-db-' + randomBytes(16).toString('hex'));
   fs.closeSync(fs.openSync(temporary, 'wx', 0o600));
   try {
     const db = new DatabaseSync(temporary);
     try {
-      db.exec('PRAGMA application_id=' + APPLICATION_ID);
+      db.exec('PRAGMA application_id=' + applicationId);
     } finally {
       db.close();
     }
@@ -167,7 +167,7 @@ export function removeProfileCache() {
     const retained = withCache('write', db => {
       db.exec('BEGIN EXCLUSIVE');
       const objects = db.prepare('SELECT type, name FROM sqlite_master WHERE sql IS NOT NULL').all();
-      if (objects.some(row => row.type !== 'table' || !['history_source', 'reply_origin', 'prompt_link'].includes(row.name))) return file;
+      if (objects.some(row => row.type !== 'table' || !['history_source', 'reply_origin'].includes(row.name))) return file;
       if (db.prepare('PRAGMA journal_mode').get().journal_mode !== 'delete') return file;
       if (!windows) fs.unlinkSync(file);
       return null;

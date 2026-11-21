@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { test as nodeTest } from 'node:test';
+import { useTestProfile, writeTestPrompt } from './hook_fixture.mjs';
 import { fileURLToPath } from 'node:url';
 import { prepareWorkspace } from '../plugins/codex-polish/skills/codex-polish/scripts/acp_workspace.mjs';
 import { editorRole } from '../plugins/codex-polish/skills/codex-polish/scripts/editor_role.mjs';
@@ -23,7 +24,8 @@ function fixture(t, program = 'exit 0') {
   t.after(() => fs.rmSync(cwd, { recursive: true, force: true }));
   const agyPath = join(cwd, 'agy');
   fs.writeFileSync(agyPath, '#!/bin/sh\n' + program + '\n', { mode: 0o700 });
-  return { cwd, agyPath };
+  const profile = useTestProfile(t);
+  return { cwd, agyPath, profile };
 }
 
 function prepare(t, options) {
@@ -38,9 +40,9 @@ function launch(start) {
 }
 
 test('one CLI call prepares private pipes and stages the exact role for this turn', t => {
-  const { cwd, agyPath } = fixture(t);
-  fs.mkdirSync(join(cwd, '.codex'));
-  fs.writeFileSync(join(cwd, '.codex', 'codex-polish.prompt.md'), "  Custom\n'$(false)'\r\n");
+  const { cwd, agyPath, profile } = fixture(t);
+  const custom = "  Custom\n'$(false)'\r\n";
+  writeTestPrompt(profile, custom);
   for (const selectionOnly of [false, true]) {
     const args = [join(scripts, 'acp_workspace.mjs'), '--agy-path', agyPath, '--cwd', cwd, '--trigger', 'explicit',
       '--auth', base.auth, '--model', base.model, '--route', base.route, '--rewrite-mode', base.rewriteMode, '--display', base.display];
@@ -56,7 +58,9 @@ test('one CLI call prepares private pipes and stages the exact role for this tur
     assert.ok(displayPipe.isFIFO());
     assert.equal(displayPipe.mode & 0o777, 0o600);
     assert.equal(fs.statSync(editor_role_file).mode & 0o777, 0o600);
-    assert.equal(fs.readFileSync(editor_role_file, 'utf8'), editorRole(cwd, 'explicit', { selectionOnly }));
+    const staged = fs.readFileSync(editor_role_file, 'utf8');
+    assert.equal(staged, editorRole(cwd, 'explicit', { selectionOnly }));
+    assert.equal(staged.includes(custom), !selectionOnly);
     assert.equal(start.workdir, workspace);
     assert.equal(start.tty, true);
     assert.equal(start.login, false);

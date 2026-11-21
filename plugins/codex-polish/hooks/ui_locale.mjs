@@ -42,6 +42,7 @@ export function systemLanguage(env = process.env) {
 }
 
 export function languageSettings(cwd, env = process.env) {
+  if (cwd === null) return { language_mode: 'auto', ui_language: systemLanguage(env) };
   let directory;
   try {
     directory = path.resolve(cwd ?? '.');

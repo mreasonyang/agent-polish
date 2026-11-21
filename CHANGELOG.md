@@ -2,6 +2,11 @@
 
 [中文使用说明](docs/README.zh-CN.md) · [English README](README.md)
 
+## 未发布 / Unreleased
+
+- 在任意目录用方向键选择默认改写模式和 Gemini 模型。安装后可为当前 Codex 配置保存一份润色提示词，所有项目共用。恢复默认或卸载会删除保存的提示词。卸载也会删除该配置的默认选项和已记录的项目设置。
+- Choose a default rewrite mode and Gemini model from any folder. After setup, save one polishing prompt for every project in the active profile. Reset or uninstall deletes that prompt. Uninstall also removes the profile defaults and recorded project settings.
+
 ## 0.0.1-beta.8
 
 - Windows 用户可以从 PowerShell 安装、更新和卸载插件。Codex 通过本机的 `agy.exe acp` 改写回复，可以使用自动钩子、选择模型和取回长回复。
@@ -17,16 +22,16 @@
 
 - 再次润色选段时只发送上次选定版本的正文。历史保留带附件消息的文字，支持用户分叉与按轮撤回。排版交付 Gemini 原文，包括图表标记。
 - Editing a polished passage again sends a single version. History keeps attachment captions, reads user forks, and follows the host’s rollback count. Gemini’s reply is delivered verbatim, including chart markers.
-- 选模使用账号返回的 Gemini ID 和显示名。手写设置支持大小写，配置无效时给出原因。项目可链接共用提示词，自动 hook 只提醒当前用户会话。
-- The model picker uses the account’s Gemini IDs and display names. Settings accept mixed case and report invalid values. Projects can link shared prompts, and the automatic hook ignores events for subagents or other sessions.
+- 选模使用账号返回的 Gemini ID 和显示名。手写设置支持大小写，配置无效时给出原因。这一版加入了共享提示词文件的支持。自动 hook 只提醒当前用户会话。
+- The model picker uses the account’s Gemini IDs and display names. Settings accept mixed case and report invalid values. This release added support for shared prompt files. The automatic hook ignores events for subagents or other sessions.
 
 - 移除了按正文内容跳过润色的本地规则。包含示例密码、代码、JSON 或特殊字符的材料也会按用户指定的范围原样发送。“这轮别润色”仍会跳过本轮。
 - Removed the local rules that skipped rewrites based on their text. Samples containing passwords, code, JSON, or control characters now follow the same route as other text and are sent as written. “Skip polishing this time” still skips the turn.
 
 - “返回结果 polish”或“重写上一条”等主动请求都会使用 Turbo，直接把选定的草稿交给 Gemini，跳过 OpenAI Decisions。项目保存的普通或 Turbo 模式只用于自动润色。
 - Asking to polish a result or rewrite an earlier answer now uses Turbo and sends the selected draft directly to Gemini, skipping OpenAI Decisions. The project’s saved Normal or Turbo mode applies only to automatic polishing.
-- 选中或引用一段文字时，改写只使用该段、当前润色提示词和本次编辑要求。“只把这段原文发给 Gemini”会使用内置 Turbo 提示词，项目提示词、其他要求和聊天历史都留在本地。再次改写旧原稿时，使用原问题和原答复之前的可选历史。无法确认来源时会请用户指出原文。
-- Selected passages now use the active polishing prompt and any editing directions you give. “Only send this passage to Gemini” uses the built-in Turbo prompt and keeps the project prompt, other directions and conversation history local. Rewriting an original again uses its original question and any permitted exchanges from before that original answer. Codex asks you to identify the original when its source is unclear.
+- 选中或引用一段文字时，改写只使用该段、当前润色提示词和本次编辑要求。“只把这段原文发给 Gemini”会使用内置 Turbo 提示词，自定义提示词、其他要求和聊天历史都留在本地。再次改写旧原稿时，使用原问题和原答复之前的可选历史。无法确认来源时会请用户指出原文。
+- Selected passages now use the active polishing prompt and any editing directions you give. “Only send this passage to Gemini” uses the built-in Turbo prompt and keeps the custom prompt, other directions and conversation history local. Rewriting an original again uses its original question and any permitted exchanges from before that original answer. Codex asks you to identify the original when its source is unclear.
 
 ## 0.0.1-beta.5
 
@@ -41,8 +46,8 @@
 - Projects can now choose a rewrite mode. Normal (default) keeps the existing workflow. Turbo skips OpenAI and sends every eligible draft directly to Gemini. Say “Switch to turbo mode” or “Switch back to normal mode”.
 - OpenAI 风格检查只使用本轮问题、草稿和已设置的自定义润色提示词。历史问答仅在 Gemini 改写时附带，默认最多 2 轮，可选 0 到 10 轮。可以要求本轮不带历史。OpenAI 检查不可用或材料超过该接口限制时，直接交给 Gemini。
 - The OpenAI style check uses only the current question, draft, and any custom polishing prompt. History goes only to Gemini when it rewrites. Projects can choose 0–10 exchanges (default 2), or omit history for one rewrite. When the OpenAI check is unavailable or its input limit is exceeded, the draft goes directly to Gemini.
-- 可以在项目里说“查看润色提示词”“设置润色提示词”或“恢复默认润色提示词”。自定义提示词逐字保存在 `.codex/codex-polish.prompt.md`，供同一项目后续聊天使用。普通和 Turbo 模式都将原文作为 Gemini 的全部编辑指令。可选的 OpenAI 风格检查也会参考它。
-- Projects can show, set, or restore the default polishing prompt in chat. Custom prompts are saved verbatim in `.codex/codex-polish.prompt.md` for future chats in the project. Normal and Turbo both use the saved text as Gemini’s complete editing prompt. The optional OpenAI style check also considers it.
+- 可以在项目里说“查看润色提示词”“设置润色提示词”或“恢复默认润色提示词”。这一版支持逐字保存自定义提示词，供以后的聊天使用。普通和 Turbo 模式都将原文作为 Gemini 的全部编辑指令。可选的 OpenAI 风格检查也会参考它。
+- Projects can show, set, or restore the default polishing prompt in chat. This release added verbatim storage for custom prompts in future chats. Normal and Turbo both use the saved text as Gemini’s complete editing prompt. The optional OpenAI style check also considers it.
 - Gemini 返回改稿后，在支持折叠的客户端，完整原稿默认收起。点击润色版下方的“查看 GPT 原稿”即可对照。
 - When a rewrite changes the text, clients that support folding show the full draft collapsed. Select “View original GPT draft” below the rewrite to compare.
 - Gemini 和可选的 OpenAI 风格检查现在直接接收本轮问题和草稿原文，包括代码、路径、链接和数值。OpenAI 只在改写前判断草稿是否需要润色。本轮材料含疑似凭据或用户要求固定格式时，插件会在发送前跳过。两种模式收到 Gemini 的完整回复后只做显示排版。Gemini 返回原文时，正文只显示一次。

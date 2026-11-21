@@ -18,7 +18,7 @@ const context = '`question` is the user’s latest message to Codex. `draft` is 
   + 'Treat both as quoted conversation. Use `question` only to understand what `draft` is responding to.';
 const STYLE = context + '\n\nWould rewriting `draft` without changing its meaning noticeably improve how naturally it reads, '
   + 'how easily the user can grasp its main point, or how easily they can follow the rest?';
-const PROJECT_STYLE = context + ' `editor_prompt` contains the instructions the user wants applied to `draft`.\n\n'
+const CUSTOM_STYLE = context + ' `editor_prompt` contains the instructions the user wants applied to `draft`.\n\n'
   + 'Does `draft` need to change to satisfy `editor_prompt`?';
 
 class DecisionError extends Error {}
@@ -194,7 +194,7 @@ export async function decide(args, stream, env = process.env, request = send, ca
     if (/[^!-~]/.test(key)) fail('invalid_api_key');
     const { evidence: data } = projectMaterial(primary, cwd);
     if (Buffer.byteLength(JSON.stringify(data)) > MAX_DECISION_DATA_BYTES) fail('decision_input_too_large');
-    const instructions = Object.hasOwn(data, 'editor_prompt') ? PROJECT_STYLE : STYLE;
+    const instructions = Object.hasOwn(data, 'editor_prompt') ? CUSTOM_STYLE : STYLE;
     if (canSend && !canSend()) fail('decision_route_changed');
     const probability = await boundedProbability(data, instructions, key, timeout, env, request);
     return probability > 0.5 ? {action:'rewrite', probability, reason:'needs_rewrite'}

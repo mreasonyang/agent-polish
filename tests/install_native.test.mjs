@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { executable } from '../plugins/codex-polish/hooks/platform.mjs';
 import { windows, homeEnv } from './hook_fixture.mjs';
-import { ROOT, INDEX, PRODUCT, GUIDE, NAME, MARKET, PLUGIN_ID, nativeConfig } from '../scripts/install.mjs';
+import { ROOT, INDEX, PRODUCT, NAME, MARKET, PLUGIN_ID, nativeConfig } from '../scripts/install.mjs';
 
 function tool(command) {
   if (command === 'codex') return executable(command);
@@ -26,6 +26,26 @@ if (process.env.CI && !canRun) throw new Error('The native installer tests requi
 const nativeTest = (name, fn) => test(name, { skip: !canRun && 'requires native Codex CLI, npm, npx and tar' }, fn);
 const exampleEn = 'Explain what DNS does in one sentence, then polish your reply.';
 const exampleZh = '用一句话解释 DNS，再把你的回复润色一下。';
+const guide = join(PRODUCT, 'skills/codex-polish-setup/references/credentials.md');
+
+function checkInstallMessage(output, version, status, lang) {
+  const lines = output.trim().split(/\r?\n/).filter(Boolean);
+  assert.match(lines[0], status);
+  assert.ok(lines[0].includes(version), lines[0]);
+  assert.match(output, /UserPromptSubmit/);
+  assert.match(output, /\/hooks\b/);
+  if (lang === 'zh') {
+    assert.match(output, /信任/);
+    assert.match(output, /新.*(?:聊天|对话|会话)/);
+    assert.doesNotMatch(output, /\b(?:installed|updated|trust|new chat)\b/i);
+  } else {
+    assert.match(output, /\btrust\b/i);
+    assert.match(output, /\bnew (?:chat|conversation|session)\b/i);
+    assert.doesNotMatch(output, /\p{Script=Han}/u);
+  }
+  assert.ok(lines.length <= 8, output);
+  assert.doesNotMatch(output, /credentials(?:\.en)?\.md\b|\bDNS\b|返回结果 polish|Polish the result|Turbo.*OpenAI/i);
+}
 
 function isolated(t) {
   const base = fs.realpathSync.native(fs.mkdtempSync(join(tmpdir(), 'codex-polish-native-')));
@@ -45,12 +65,12 @@ function isolated(t) {
     npm_config_audit: 'false',
     npm_config_fund: 'false'
   };
-  function invoke(cmd, args, { cwd = base, expect = 0 } = {}) {
+  function invoke(cmd, args, { cwd = base, expect = 0, input } = {}) {
     const bin = tool(cmd);
     const result = spawnSync(bin.command, [...bin.args, ...args], {
       cwd,
       env,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'], input,
       encoding: 'utf8',
       timeout: 90_000
     });
@@ -89,30 +109,16 @@ nativeTest(
     const script = join(download, 'scripts/install.mjs');
     env.LC_ALL = 'zh_CN.UTF-8';
     const chinese = windows ? invoke(process.execPath, [script, 'setup']) : invoke(join(download, '安装回复润色.command'), []);
-    assert.ok(chinese.includes('用一句话解释 DNS。'));
-    assert.match(chinese, /未设置模式的项目默认自动润色/);
-    assert.match(chinese, /主动要求.*Turbo.*跳过 OpenAI/);
-    assert.ok(chinese.includes('返回结果 polish'));
-    assert.match(chinese, /默认还会附带这份答复之前最多 2 轮问答/);
-    assert.match(chinese, /密钥或令牌，也会原样发出/);
-    assert.match(chinese, /\/hooks.*信任.*UserPromptSubmit.*新开/);
-    assert.ok(chinese.includes('复用你现有的 Antigravity 登录'));
-    assert.ok(chinese.includes(join(snapshot(), GUIDE)));
+    checkInstallMessage(chinese, pack.version, /安装/, 'zh');
+    checkInstallMessage(invoke(process.execPath, [script, 'update']), pack.version, /更新/, 'zh');
     assert.doesNotMatch(chinese, /GEMINI_API_KEY|aistudio.google.com/);
-    invoke(process.execPath, [script, 'uninstall']);
+    assert.match(invoke(process.execPath, [script, 'uninstall']), /已卸载/);
     env.LC_ALL = 'en_US.UTF-8';
     const englishSetup = () => windows ? invoke(process.execPath, [script, 'setup']) : invoke(join(download, 'Install Codex Polish.command'), []);
-    const english = englishSetup();
-    assert.ok(english.includes('Explain what DNS does in one sentence.'));
-    assert.match(english, /without a saved mode default to automatic polishing/);
-    assert.match(english, /polish or rewrite.*Turbo.*skips OpenAI/i);
-    assert.match(english, /Polish the result/i);
-    assert.match(english, /up to two exchanges that preceded the draft/);
-    assert.match(english, /keys or tokens in the text are sent as written/);
-    assert.match(english, /trust.*UserPromptSubmit.*\/hooks.*new chat/);
+    checkInstallMessage(englishSetup(), pack.version, /\binstalled\b/i, 'en');
+    checkInstallMessage(invoke(process.execPath, [script, 'update']), pack.version, /\bupdated\b/i, 'en');
     const first = snapshot();
     assert.ok(first.startsWith(join(profile,'codex-polish','sources') + sep));
-    assert.ok(english.includes(join(first, GUIDE.replace('credentials.md', 'credentials.en.md'))));
     assert.equal(rows()[0].enabled, true);
     const rpc = (method, params) => nativeConfig(method, params, { env, cwd: base, experimental: true });
     const { plugin } = await rpc('plugin/read', { pluginName: NAME, marketplacePath: join(marketplace(), INDEX) });
@@ -133,7 +139,7 @@ nativeTest(
     assert.ok(fs.statSync(join(polishing, 'WORKFLOW.md')).isFile());
     assert.match(fs.readFileSync(join(polishing, 'SKILL.md'), 'utf8'), /\]\((?:\.\/)?WORKFLOW\.md\)/);
     fs.writeFileSync(join(cache, 'user-note'), 'edited cache');
-    fs.appendFileSync(join(download, GUIDE), '\n<!-- replacement build -->');
+    fs.appendFileSync(join(download, guide), '\n<!-- replacement build -->');
     assert.match(englishSetup(), /disabled/);
     const changed = snapshot();
     assert.notEqual(first, changed);
@@ -169,6 +175,48 @@ nativeTest(
     for (const p of [first, changed, cache]) assert.ok(!fs.existsSync(p), p);
   }
 );
+nativeTest('uninstall clears the single global prompt, profile defaults and configured project settings', (t) => {
+  const { base, profile, invoke, snapshot, local } = isolated(t);
+  local('setup');
+  const script = join(snapshot(), PRODUCT, 'hooks/preferences.mjs');
+  const set = (...args) => invoke(process.execPath, [script, ...args]);
+  const first = join(base, 'first project'), second = join(base, 'second project');
+  fs.mkdirSync(first);
+  fs.mkdirSync(second);
+  set('set-rewrite-mode', 'turbo', '--profile');
+  set('set-model', 'gemini-4-hydrogen', '--profile');
+  set('set-mode', 'manual', '--cwd', first);
+  const { file: promptFile } = JSON.parse(invoke(process.execPath, [script, 'set-prompt', '--profile'], { input: 'Use short sentences.' }));
+  set('set-history-turns', '4', '--cwd', second);
+  const defaults = join(profile, 'codex-polish', 'settings');
+  assert.equal(promptFile, join(defaults, 'codex-polish.prompt.md'));
+  for (const project of [first, second]) {
+    assert.equal(JSON.parse(set('check', '--cwd', project)).prompt_source, 'custom');
+    assert.ok(!fs.existsSync(join(project, '.codex', 'codex-polish.prompt.md')));
+  }
+  const unrelated = [join(first, '.codex', 'instructions.md'), join(defaults, 'my notes')];
+  for (const file of unrelated) fs.writeFileSync(file, 'keep me');
+  const removed = [
+    join(defaults, 'codex-polish.rewrite-mode'), join(defaults, 'codex-polish.model'),
+    join(first, '.codex', 'codex-polish.mode'), join(second, '.codex', 'codex-polish.history-turns'), promptFile
+  ];
+  for (const file of removed) assert.ok(fs.existsSync(file), file);
+  const ledger = join(profile, 'codex-polish', 'owned-settings.sqlite');
+  fs.renameSync(ledger, ledger + '.backup');
+  fs.writeFileSync(ledger, 'interrupted ownership data');
+  const failed = invoke(process.execPath, [join(ROOT, 'scripts/install.mjs'), 'uninstall'], { expect: 1 });
+  assert.match(failed, /uninstall again/i);
+  assert.ok(failed.includes(ledger), failed);
+  assert.ok(fs.existsSync(join(first, '.codex', 'codex-polish.mode')));
+  fs.unlinkSync(ledger);
+  fs.renameSync(ledger + '.backup', ledger);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    assert.match(local('uninstall'), /uninstalled/i);
+    assert.ok(!fs.existsSync(ledger));
+    for (const file of removed) assert.equal(fs.lstatSync(file, { throwIfNoEntry: false }), undefined, file);
+    for (const file of unrelated) assert.equal(fs.readFileSync(file, 'utf8'), 'keep me');
+  }
+});
 nativeTest('native hook trust survives identical content and reports package, editor prompt and hook changes until reviewed', async (t) => {
   const { base, env, invoke, marketplace } = isolated(t);
   const root = join(base, 'release');
@@ -183,7 +231,7 @@ nativeTest('native hook trust survives identical content and reports package, ed
   const approve = (h) => rpc('config/value/write', {
     keyPath: 'hooks.state."' + h.key + '".trusted_hash', value: h.currentHash, mergeStrategy: 'upsert'
   });
-  assert.match(install('setup'), /trust UserPromptSubmit/);
+  assert.match(install('setup'), /trust UserPromptSubmit/i);
   const fixedMarket = marketplace();
   let initial = await hook();
   assert.equal(initial.trustStatus, 'untrusted');
@@ -193,7 +241,7 @@ nativeTest('native hook trust survives identical content and reports package, ed
   assert.equal((await hook()).currentHash, initial.currentHash);
   assert.equal((await hook()).trustStatus, 'trusted');
   const files = [
-    [GUIDE, '\nUpdated setup guide.\n'],
+    [guide, '\nUpdated setup guide.\n'],
     [PRODUCT + '/skills/codex-polish/references/codex-polish-editor.md', '\nUpdated editorial prompt.\n'],
     [PRODUCT + '/hooks/preferences.mjs', '\n// Updated hook implementation.\n'],
     [PRODUCT + '/hooks/hooks.json', null]

@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { closeSync, constants, mkdirSync, openSync, readFileSync, readSync, rmSync, writeFileSync, unlinkSync } from 'node:fs';
 import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { agyName, homeEnv, json, run, temporary } from './hook_fixture.mjs';
+import { agyName, homeEnv, json, run, temporary, useTestProfile, writeTestPrompt } from './hook_fixture.mjs';
 import { prepareWorkspace } from '../plugins/codex-polish/skills/codex-polish/scripts/acp_workspace.mjs';
 
 const plugin = fileURLToPath(new URL('../plugins/codex-polish/', import.meta.url));
@@ -80,13 +80,13 @@ function setup(t) {
   const session = randomUUID();
   const turn = randomUUID();
   const project = join(root,'project');
-  mkdirSync(project);
+  mkdirSync(join(project, '.codex'), { recursive: true });
   const bin = join(root, 'bin');
   mkdirSync(bin);
   // The payload policy checks availability but never starts the provider.
   writeFileSync(join(bin, agyName), '', { mode: 0o700 });
   const env = {...homeEnv(root), PATH:[bin,dirname(process.execPath)].join(delimiter),
-    CODEX_HOME:join(root,'codex'),CODEX_THREAD_ID:session,XDG_CACHE_HOME:join(root,'cache')};
+    CODEX_HOME:useTestProfile(t, join(root,'codex')),CODEX_THREAD_ID:session,XDG_CACHE_HOME:join(root,'cache')};
   const transcript = join(env.CODEX_HOME, 'sessions/2026/11/19', 'rollout-2026-11-19T11-30-00-'+session+'.jsonl');
   function cli(script, args, data) {
     return run(script, args, {env,input:JSON.stringify(data)});
@@ -155,8 +155,7 @@ function setup(t) {
     return requests[0];
   }
   function setPrompt(text) {
-    mkdirSync(join(project,'.codex'), {recursive:true});
-    writeFileSync(join(project,'.codex/codex-polish.prompt.md'), text);
+    writeTestPrompt(env.CODEX_HOME, text);
   }
   return {root,project,transcript,env,cli,configure,judge,render,workflowFlags,assertProviders,setPrompt};
 }
@@ -233,7 +232,7 @@ test('Gemini receives all configured exchanges even when their combined text exc
   ctx.assertProviders({geminiHistory:history(exchanges)});
 });
 
-test('one-turn history opt-out preserves the project prompt and leaves the next turn at its configured history count', t => {
+test('one-turn history opt-out preserves the profile prompt and leaves the next turn at its configured history count', t => {
   const ctx = setup(t);
   const exchanges = [['  背景是什么？\r\n', '  数据在 "A\\B" 里。\n']];
   const editorPrompt = '保留 "单位" 和项目符号。\r\n';
@@ -261,7 +260,7 @@ test('the Decisions input limit does not trim the ACP frame or staged editor rol
   assert.ok(role.stdout.endsWith(editorPrompt));
 });
 
-test('ACP checks the staged Gemini role against the current project prompt before creating a frame', t => {
+test('ACP checks the staged Gemini role against the current profile prompt before creating a frame', t => {
   const ctx = setup(t);
   const roleFile = join(ctx.root,'staged-agent.md');
   const styleA = '保留代码块。\r\n';
@@ -352,7 +351,7 @@ test('explicit selections send the exact passage and only the separately permitt
   const ctx = setup(t);
   const selection = '  password=示例值\u202e\r\n\r\n`draft` 和 `question` 是原文。  \r\n';
   const directions = 'Keep the sample token=example-value.';
-  const custom = 'PROJECT-PROMPT-CANARY';
+  const custom = 'PROFILE-PROMPT-CANARY';
   const excluded = ['PRIOR-QUESTION-CANARY', 'PRIOR-REPLY-CANARY', 'SURROUNDING-TEXT-CANARY', 'LOCAL-NOTE-CANARY'];
   ctx.configure([[excluded[0], excluded[1]]], [excluded[2], selection, directions, excluded[3]].join('\n'));
   ctx.setPrompt(custom);
@@ -376,13 +375,13 @@ test('explicit selections send the exact passage and only the separately permitt
   render('--selection', {selection});
   render('--selection-only', {selection});
   render('--selection-only', {selection}, ['--no-history']);
-  ctx.setPrompt(key);
+  ctx.setPrompt(Buffer.from([0xff]));
   render('--selection-only', {selection});
 });
 
 test('the selection CLI rejects mixed inputs, history targeting, automatic triggers, and a mismatched role', t => {
   const ctx = setup(t);
-  ctx.setPrompt('Private project style.');
+  ctx.setPrompt('Private profile style.');
   const explicit = ctx.workflowFlags(ctx.project, [], 'explicit');
   const strict = ctx.workflowFlags(ctx.project, ['--selection-only'], 'explicit');
   const automatic = ctx.workflowFlags(ctx.project);
@@ -394,7 +393,7 @@ test('the selection CLI rejects mixed inputs, history targeting, automatic trigg
   }
 
   blocked(selected, explicit);
-  blocked(selected, [...explicit, '--selection-only']); // Staged role contains the project prompt.
+  blocked(selected, [...explicit, '--selection-only']); // Staged role contains the profile prompt.
   blocked({...selected, rewrite_request:'These directions must stay local.'}, strict);
   blocked({...selected, rewrite_request:null}, strict);
   blocked(selected, [...strict, '--selection']);

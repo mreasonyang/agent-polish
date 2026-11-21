@@ -12,7 +12,6 @@ import {
   MARKET,
   PLUGIN_ID,
   INDEX,
-  GUIDE,
   PRODUCT,
   SetupError,
   manage,
@@ -44,7 +43,7 @@ function fixture(t) {
   const setVersion = (version) => write(manifest, JSON.stringify({ name: NAME, version }));
   write(join(source, INDEX), fs.readFileSync(join(ROOT, INDEX)));
   write(join(product, 'signature'), 'original');
-  write(join(source, GUIDE), 'instructions');
+  write(join(product, 'skills/codex-polish-setup/references/credentials.md'), 'instructions');
   setVersion('1.0.0');
   const state = {
     market: null, version: null, enabled: true, commands: [], fail: null, bad: 0,
@@ -107,7 +106,8 @@ test('persistent snapshots survive extracted folder removal, update changed byte
   write(join(source, 'tests/example'), 'test');
   const [message] = await call('setup');
   const first = state.source;
-  assert.ok(message.includes(first));
+  assert.ok(!message.includes(first));
+  assert.equal(fs.readFileSync(join(first, PRODUCT, 'skills/codex-polish-setup/references/credentials.md'), 'utf8'), 'instructions');
   assert.equal(dirname(first), store);
   assert.ok(!fs.existsSync(join(first, 'tests')));
   await call('setup');

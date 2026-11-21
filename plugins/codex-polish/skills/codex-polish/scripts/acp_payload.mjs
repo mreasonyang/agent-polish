@@ -1,17 +1,18 @@
 // Prepare one JSON-RPC prompt locally. The agent sends the resulting text itself.
+import { isAbsolute } from 'node:path';
 import { parseArgs } from 'node:util';
-import { DEFAULT_THINKING_LEVEL, projectHistoryTurns, historySource, workflowPolicy } from '../../../hooks/preferences.mjs';
+import { DEFAULT_THINKING_LEVEL, historyTurns, historySource, workflowPolicy } from '../../../hooks/preferences.mjs';
 import { readHistory } from '../../../hooks/history.mjs';
 import { lookupReplyOrigin } from '../../../hooks/reply_origin.mjs';
 import { effectiveRewriteMode } from '../../../hooks/rewrite_mode.mjs';
 import { previousReply } from './previous_reply.mjs';
 import { isMain, readHostLine, readLimited, record, utf8, writeHostPages } from './cli_io.mjs';
-import { primaryMaterial, projectMaterial, selectedMaterial, validateSourceText } from './rewrite_material.mjs';
+import { primaryMaterial, editingMaterial, selectedMaterial, validateSourceText } from './rewrite_material.mjs';
 import { checkStagedEditorRole } from './editor_role.mjs';
 
 function promptHistory(cwd) {
   try {
-    const turns = projectHistoryTurns(cwd);
+    const turns = historyTurns();
     if (!turns) return [];
     const source = historySource(cwd);
     if (!source) return [];
@@ -49,11 +50,11 @@ export async function promptFrame(payload, cwd, options = {}) {
     validateSourceText(rewrite_request);
     material.rewrite_request = rewrite_request;
   }
-  const mode = effectiveRewriteMode(cwd ?? process.cwd(), trigger);
-  const { prompt } = projectMaterial(material, cwd, mode, { selectionOnly });
+  const mode = effectiveRewriteMode(trigger);
+  const { prompt } = editingMaterial(material, mode, { selectionOnly });
   if (editorRoleFile !== undefined) {
-    if (!cwd || !rewriteMode || !trigger || !route || !model) throw new Error('missing_workflow_settings');
-    const policy = workflowPolicy(cwd, { trigger, route, rewriteMode, model, thinkingLevel, selectionOnly, noHistory: options.noHistory || selected });
+    if (!cwd || !isAbsolute(cwd) || !rewriteMode || !trigger || !route || !model) throw new Error('missing_workflow_settings');
+    const policy = workflowPolicy({ trigger, route, rewriteMode, model, thinkingLevel, selectionOnly, noHistory: options.noHistory || selected });
     if (policy.action !== 'accept') throw new Error(policy.reason);
     checkStagedEditorRole(editorRoleFile, prompt);
   }

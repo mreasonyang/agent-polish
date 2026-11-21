@@ -30,7 +30,7 @@ test('stage an editor role without a provider executable or IPC endpoints, then 
     if (selectionOnly) args.push('--selection-only');
     const { workspace, editor_role_file, cleanup_token } = prepare(t, args);
     const staged = fs.readFileSync(editor_role_file, 'utf8');
-    assert.equal(staged, editorRole(cwd, 'explicit', { selectionOnly }));
+    assert.equal(staged, editorRole('explicit', { selectionOnly }));
     assert.equal(staged.includes(custom), !selectionOnly);
     for (const item of fs.readdirSync(workspace, { recursive: true, withFileTypes: true }))
       assert.ok(item.isFile() || item.isDirectory(), item.name);

@@ -2,12 +2,13 @@
 // Judge whether a draft needs a rewrite with the OpenAI Decisions API.
 import http from 'node:http';
 import https from 'node:https';
+import { isAbsolute } from 'node:path';
 import tls from 'node:tls';
 import { parseArgs } from 'node:util';
 import { openAIKeyStatus, readOpenAIKey } from '../../../hooks/openai_credentials.mjs';
-import { projectRewriteMode } from '../../../hooks/rewrite_mode.mjs';
+import { effectiveRewriteMode } from '../../../hooks/rewrite_mode.mjs';
 import { isMain, readLimited, utf8 } from './cli_io.mjs';
-import { MaterialError, primaryMaterial, projectMaterial } from './rewrite_material.mjs';
+import { MaterialError, primaryMaterial, editingMaterial } from './rewrite_material.mjs';
 
 export const API_URL = 'https://api.openai.com/v1/decisions';
 export const MODEL = 'gpt-6-luna';
@@ -169,28 +170,28 @@ function options(args) {
     } });
   } catch { fail('invalid_options'); }
   if (parsed.positionals.length !== 1 || parsed.positionals[0] !== 'judge') fail('invalid_options');
+  if (parsed.values.cwd !== undefined && !isAbsolute(parsed.values.cwd)) fail('invalid_options');
   const raw = parsed.values.timeout;
   const seconds = raw === undefined ? undefined : Number(raw);
   if (raw !== undefined && (!Number.isFinite(seconds) || seconds <= 0 || seconds > Number.MAX_SAFE_INTEGER / 1000))
     fail('invalid_options');
-  return {timeout: seconds, cwd: parsed.values.cwd};
+  return { timeout: seconds };
 }
 
 export async function decide(args, stream, env = process.env, request = send, canSend) {
   try {
-    const { timeout, cwd } = options(args);
+    const { timeout } = options(args);
     const primary = await readEvidence(stream);
-    const directory = cwd ?? process.cwd();
-    const rewriteMode = projectRewriteMode(directory);
+    const rewriteMode = effectiveRewriteMode();
     if (rewriteMode === null) fail('rewrite_mode_invalid');
     if (rewriteMode === 'turbo') fail('decision_route_changed');
     if (!canSend) {
-      // Standalone judge calls also respect the project's opt-outs.
-      const { projectSettings, projectDecisionsMode } = await import('../../../hooks/preferences.mjs');
-      if (projectSettings(directory)[0] !== 'auto') fail('project_mode');
-      if (projectDecisionsMode(directory) !== 'auto') fail('decision_route_changed');
+      // Standalone judge calls also respect the profile’s opt-outs.
+      const { triggerMode, decisionsMode } = await import('../../../hooks/preferences.mjs');
+      if (triggerMode() !== 'auto') fail('trigger_mode');
+      if (decisionsMode() !== 'auto') fail('decision_route_changed');
     }
-    const { evidence: data } = projectMaterial(primary, cwd);
+    const { evidence: data } = editingMaterial(primary, rewriteMode);
     if (Buffer.byteLength(JSON.stringify(data)) > MAX_DECISION_DATA_BYTES) fail('decision_input_too_large');
     const instructions = Object.hasOwn(data, 'editor_prompt') ? CUSTOM_STYLE : STYLE;
     const key = readOpenAIKey();

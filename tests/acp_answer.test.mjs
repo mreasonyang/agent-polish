@@ -1,14 +1,15 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { completedAnswer } from '../plugins/codex-polish/skills/codex-polish/scripts/acp_answer.mjs';
+import { writeProfileSetting } from '../plugins/codex-polish/hooks/profile_setting.mjs';
+import { LANGUAGE_FILE } from '../plugins/codex-polish/hooks/ui_locale.mjs';
 import { Fixture, SESSION } from './fixture_acp.mjs';
+import { temporary, useTestProfile } from './hook_fixture.mjs';
 
 const program = fileURLToPath(new URL('../plugins/codex-polish/skills/codex-polish/scripts/acp_answer.mjs', import.meta.url));
 const model = 'gemini-4-hydrogen';
@@ -18,8 +19,8 @@ const chunk = (text, sessionId = SESSION, sessionUpdate = 'agent_message_chunk')
 const end = (stopReason = 'end_turn') => line({ id: 6, result: { stopReason } });
 
 function scope(t) {
-  const cwd = mkdtempSync(join(tmpdir(), 'polish-offline-answer-'));
-  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  const cwd = temporary(t);
+  useTestProfile(t, join(cwd, 'profile'));
   return { cwd, sessionId: SESSION, model, thinkingLevel: 'medium' };
 }
 
@@ -41,6 +42,18 @@ test('offline rendering accepts only the completed text for the submitted sessio
   assert.throws(() => completedAnswer(input, { ...options, turnsBack: 1, selection: true }), /invalid_options/);
 });
 
+test('an explicit rewrite keeps the comparison when the agent omits the language; only a body-only request hides it', t => {
+  const opts = { ...scope(t), trigger: 'explicit', selection: true };
+  const input = { draft: '原文', output: chunk('改稿') + end() };
+  for (const [lang, label] of [['zh', '查看原文'], ['en', 'View original text']]) {
+    writeProfileSetting(LANGUAGE_FILE, lang);
+    const rendered = completedAnswer(input, opts);
+    assert.ok(rendered.startsWith('改稿\n\n<details>'));
+    assert.ok(rendered.includes(label) && rendered.includes('原文'));
+    assert.equal(completedAnswer(input, { ...opts, bodyOnly: true }), '改稿');
+  }
+});
+
 test('the offline CLI forwards the trigger when Gemini returns a user selection unchanged', t => {
   const { cwd } = scope(t);
   const args = [program, '--cwd', cwd, '--model', model, '--thinking-level', 'medium', '--session-id', SESSION];
@@ -52,6 +65,9 @@ test('the offline CLI forwards the trigger when Gemini returns a user selection 
   const selected = run('--trigger', 'explicit', '--selection');
   assert.equal(selected.status, 0, selected.stderr);
   assert.equal(selected.stdout, 'Gemini returned the original text.\n\n' + draft);
+  const bodyOnly = run('--trigger', 'explicit', '--selection', '--body-only');
+  assert.equal(bodyOnly.status, 0, bodyOnly.stderr);
+  assert.equal(bodyOnly.stdout, draft);
   const automatic = run('--trigger', 'auto');
   assert.equal(automatic.status, 0, automatic.stderr);
   assert.equal(automatic.stdout, draft);

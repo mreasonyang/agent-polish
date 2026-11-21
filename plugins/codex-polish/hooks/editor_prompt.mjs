@@ -1,6 +1,6 @@
 import fs from 'node:fs';
-import { PROMPT_FILE, readProfileSetting } from './project_setting.mjs';
-import { projectRewriteMode } from './rewrite_mode.mjs';
+import { PROMPT_FILE, readProfileSetting } from './profile_setting.mjs';
+import { effectiveRewriteMode } from './rewrite_mode.mjs';
 import { readLimited, utf8 } from '../skills/codex-polish/scripts/cli_io.mjs';
 
 export { PROMPT_FILE };
@@ -29,7 +29,7 @@ export function readBundledEditorRole() {
   return { header, text };
 }
 
-export function readEditorPrompt(cwd, mode = projectRewriteMode(cwd), { selectionOnly = false } = {}) {
+export function readEditorPrompt(mode = effectiveRewriteMode(), { selectionOnly = false } = {}) {
   if (selectionOnly) {
     if (mode !== 'turbo') throw new Error('rewrite_mode_invalid');
     return { source: 'default', text: turboPrompt };

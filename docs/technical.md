@@ -2,54 +2,54 @@
 
 [English](technical.en.md) · [项目首页](README.zh-CN.md)
 
-Codex Polish 支持 Windows、macOS 和 Linux。本地脚本使用 Node.js 22.16 或更高版本的内置模块。自动 hook 让 Codex 在原稿写完后直接执行[润色流程](../plugins/codex-polish/skills/codex-polish/WORKFLOW.md)，只在最终回复中展示结果。用户点名润色时，[改写技能](../plugins/codex-polish/skills/codex-polish/SKILL.md) 执行同一份流程。[设置技能](../plugins/codex-polish/skills/codex-polish-setup/SKILL.md) 检查运行环境并保存项目设置。
+Codex Polish 支持 Windows、macOS 和 Linux。本地脚本使用 Node.js 22.16 或更高版本的内置模块。自动 hook 让 Codex 在原稿写完后直接执行[润色流程](../plugins/codex-polish/skills/codex-polish/WORKFLOW.md)，只在最终回复中展示结果。用户点名润色时，[改写技能](../plugins/codex-polish/skills/codex-polish/SKILL.md) 执行同一份流程。[设置技能](../plugins/codex-polish/skills/codex-polish-setup/SKILL.md) 检查运行环境并保存当前 Codex 配置的润色设置。
 
-## 模式、配置文件与查找规则
+## 润色设置
 
-Git 项目的设置保存在最近的仓库根目录的 `.codex/`。同一仓库的子目录共用这份设置，嵌套仓库和独立工作树分别保存。没有 Git 仓库时，设置保存在所选目录。
+聊天、终端和 Finder 安装器共用当前 Codex 配置中的一套润色设置。从任意目录保存后，更改立即对使用这份 Codex 配置的所有聊天生效。每次改写的问题、原稿和可选历史仍取自本次聊天。
 
-自动润色的改写模式优先使用项目设置，其次是当前 Codex 配置的默认值，最后是插件内置默认值。Gemini 模型和思考等级一起保存，查找顺序相同。安装器把默认设置保存在 `$CODEX_HOME/codex-polish/settings/` 下的 `codex-polish.rewrite-mode` 和 `codex-polish.model`。未设置 `CODEX_HOME` 时使用 `~/.codex`。
+以下文件保存在 `$CODEX_HOME/codex-polish/settings/` 下。未设置 `CODEX_HOME` 时使用 `~/.codex`。尚未选择的设置采用各自的内置默认值。
 
 | 配置文件 | 取值范围与默认值 | 运行行为 |
 | --- | --- | --- |
-| `.codex/codex-polish.mode` | `auto`（默认）、`manual`、`off` | 未保存模式时使用 `auto`。在 Codex 的 **设置 → Hooks** 或 CLI `/hooks` 中信任插件的 `UserPromptSubmit`，再新开聊天，普通提问就会触发润色流程。`manual` 仅在点名时触发。两种模式都可以点名润色本轮问答，无需 hook。`off` 跳过所有润色请求。 |
-| `.codex/codex-polish.rewrite-mode` | `normal`（内置默认值）、`turbo` | 仅用于自动 hook。两种模式都无须 OpenAI 密钥，未启用检查时都直接交由 Gemini 处理。使用内置提示词时，`normal` 可保留清晰原稿并支持可选的 OpenAI Decisions 检查，`turbo` 则跳过 Decisions 并请 Gemini 改写草稿。 |
-| `.codex/codex-polish.model` | Gemini 模型和思考等级，默认 `gemini-4-hydrogen`、`medium` | 选模型时可以选择该模型支持的思考等级。普通和 Turbo 模式都使用这组设置。若下次改写时模型或等级已不可用，本轮保留原稿。 |
-| `.codex/codex-polish.history-turns` | `0`–`10` 的整数，默认 `2` | 控制 Gemini 改写整条回复时附带的最近完整问答轮数，从下次改写起生效。设为 `0` 就不附历史问答。保存大于 `10` 的值会报错。手动写入无效值时，插件会报告配置错误和可用范围。无论手动还是自动模式，读取历史都需要受信任的 `UserPromptSubmit` hook。 |
-| `.codex/codex-polish.decisions` | `auto`（默认）、`off` | 仅在 hook 自动触发润色并使用普通模式时生效。`auto` 在当前 Codex 配置保存了格式有效的插件密钥时调用 OpenAI，`off` 始终只用 ACP。 |
-| `.codex/codex-polish.language` | `auto`（默认）、`zh`、`en` | 控制插件设置与终端提示语言。`auto` 下，设置对话优先跟随本条消息所用的中文或英文。只点击菜单或回复数字时沿用对话语言。两者都无法判断时使用系统语言。项目诊断使用项目的语言设置。安装器使用系统语言，未识别出中文或英文时用英文。 |
+| `codex-polish.mode` | `auto`（默认）、`manual`、`off` | 未保存模式时使用 `auto`。在 Codex 的 **设置 → Hooks** 或 CLI `/hooks` 中信任插件的 `UserPromptSubmit`，再新开聊天，普通提问就会触发润色流程。`manual` 仅在点名时触发。两种模式都可以点名润色本轮问答，无需 hook。`off` 跳过所有润色请求。 |
+| `codex-polish.rewrite-mode` | `normal`（内置默认值）、`turbo` | 仅用于自动 hook。两种模式都无须 OpenAI 密钥，未启用检查时都直接交由 Gemini 处理。使用内置提示词时，`normal` 可保留清晰原稿并支持可选的 OpenAI Decisions 检查，`turbo` 则跳过 Decisions 并请 Gemini 改写草稿。 |
+| `codex-polish.model` | Gemini 模型和思考等级，默认 `gemini-4-hydrogen`、`medium` | 选模型时可以选择该模型支持的思考等级。普通和 Turbo 模式都使用这组设置。若下次改写时模型或等级已不可用，本轮保留原稿。 |
+| `codex-polish.history-turns` | `0`–`10` 的整数，默认 `2` | 控制 Gemini 改写整条回复时附带的最近完整问答轮数，从下次改写起生效。设为 `0` 就不附历史问答。保存大于 `10` 的值会报错。手动写入无效值时，插件会报告配置错误和可用范围。无论手动还是自动模式，读取历史都需要受信任的 `UserPromptSubmit` hook。 |
+| `codex-polish.decisions` | `auto`（默认）、`off` | 仅在 hook 自动触发润色并使用普通模式时生效。`auto` 在当前 Codex 配置保存了格式有效的插件密钥时调用 OpenAI，`off` 始终只用 ACP。 |
+| `codex-polish.language` | `auto`（默认）、`zh`、`en` | 控制插件设置与终端提示语言。`auto` 下，设置对话优先跟随本条消息所用的中文或英文。只点击菜单或回复数字时沿用对话语言。两者都无法判断时使用系统语言。设置菜单和插件诊断使用已保存的语言设置。自动识别时，终端提示跟随系统语言，未识别出中文或英文时使用英文。 |
 
 触发模式、自动改写模式和 Decisions 的设置值接受大小写变体，Decisions 也接受 `on` 表示启用。无效值会指出具体文件与可选值。
 
-在聊天中说“切换到 Turbo 模式”或“恢复普通模式”即可保存项目偏好。要从源码目录切换，可运行 `node plugins/codex-polish/hooks/preferences.mjs set-rewrite-mode turbo --cwd /path/to/project`，恢复时将 `turbo` 换为 `normal`。用 `check --cwd /path/to/project` 查看生效的 `rewrite_mode`。值无效时，自动润色会暂停，重新选择任一模式即可恢复。点名润色仍然使用 Turbo。
+在聊天中说“切换到 Turbo 模式”，即可为自动润色保存这个选项。从源码目录运行 `node plugins/codex-polish/hooks/preferences.mjs set-rewrite-mode turbo` 有相同效果。切回普通模式时，将 `turbo` 换成 `normal`。运行 `node plugins/codex-polish/hooks/preferences.mjs check` 可查看当前设置。润色时，`check` 也可通过 `--cwd` 检查本轮的运行环境。改写模式无效时，自动润色会暂停，重新选择任一模式即可恢复。点名润色仍然使用 Turbo。
 
-例如，`set-model gemini-4-hydrogen --thinking-level high --cwd /path/to/project` 会把该项目设为 Hydrogen 和高思考等级。用 `--profile` 代替 `--cwd` 可更改整份 Codex 配置的默认值。用 `set-model --reset --cwd /path/to/project` 让项目重新沿用全局的模型和等级。改写模式可用 `set-rewrite-mode --reset --cwd /path/to/project` 单独恢复。
+`set-model gemini-4-hydrogen --thinking-level high` 会同时保存 Hydrogen 模型和高思考等级。用 `set-model --reset` 恢复内置的 Gemini 4 Hydrogen 和中等思考等级。用 `set-rewrite-mode --reset` 可将自动改写模式恢复为普通模式。
 
-“返回结果 polish”要求润色当前回复，“让 Gemini 重写刚才讲缓存的那条”指定同一聊天里的旧回复。两者都使用 `--trigger explicit`，按 Turbo 模式通过 ACP 把选定的草稿直接交给 Gemini。点名改写只对本次生效，在 `auto` 和 `manual` 下都可以使用。Codex 会结合上下文判断意图，例如“解释一下 Turbo”是在询问功能。普通提问由 hook 以 `--trigger auto` 自动触发，使用该项目当前生效的改写模式。项目设为 `off` 时，两种触发都会跳过。
+“返回结果 polish”要求润色当前回复，“让 Gemini 重写刚才讲缓存的那条”指定同一聊天里的旧回复。两者都使用 `--trigger explicit`，按 Turbo 模式通过 ACP 把选定的草稿直接交给 Gemini。点名改写只对本次生效，在 `auto` 和 `manual` 下都可以使用。Codex 会结合上下文判断意图，例如“解释一下 Turbo”是在询问功能。普通提问由 hook 以 `--trigger auto` 自动触发，使用已保存的改写模式。将触发模式设为 `off` 时，两种触发都会跳过。
 
 有关 Codex 如何加载插件、注册 hook 以及取得用户信任，参见 [Codex 插件与 hook](https://developers.openai.com/plugins/build/plugins) 和 [项目 hook 和信任机制](https://learn.chatgpt.com/docs/hooks#where-codex-looks-for-hooks)。
 
 ### 查看、设置或恢复润色提示词
 
-每份 Codex 配置可以保存一份润色提示词。可以在聊天里说“查看我的润色提示词”“把我的润色提示词设为：先写结论，再讲依据。”或“恢复默认润色提示词”。安装时沿用内置提示词，你可以随后自行设置。改写整条回复时，普通和 Turbo 模式都会用你提供的全文替换内置提示词，适用于所有项目。明确要求只发送选段时使用内置 Turbo 提示词。
+每份 Codex 配置可以保存一份润色提示词。可以在聊天里说“查看我的润色提示词”“把我的润色提示词设为：先写结论，再讲依据。”或“恢复默认润色提示词”。安装时沿用内置提示词，你可以随后自行设置。改写整条回复时，普通和 Turbo 模式都会用你提供的全文替换内置提示词。明确要求只发送选段时使用内置 Turbo 提示词。
 
 以下命令依次用于查看、保存和恢复默认。设置命令会从标准输入完整复制 UTF-8 文本到 `$CODEX_HOME/codex-polish/settings/codex-polish.prompt.md`，包括换行和首尾空白。从文件导入后，如要采用原文件的新内容，再导入一次即可。恢复默认和卸载都会删除保存的副本。
 
 ```sh
-node plugins/codex-polish/hooks/preferences.mjs prompt --profile
-node plugins/codex-polish/hooks/preferences.mjs set-prompt --profile < my-prompt.md
-node plugins/codex-polish/hooks/preferences.mjs set-prompt --reset --profile
+node plugins/codex-polish/hooks/preferences.mjs prompt
+node plugins/codex-polish/hooks/preferences.mjs set-prompt < my-prompt.md
+node plugins/codex-polish/hooks/preferences.mjs set-prompt --reset
 ```
 
 在 Windows PowerShell 中，可以用 Node 将原文件字节传给命令，保留 UTF-8 文本和换行格式。
 
 ```powershell
-node -e "child_process.execFileSync(process.execPath, ['plugins/codex-polish/hooks/preferences.mjs', 'set-prompt', '--profile'], { input: fs.readFileSync(process.argv[1]), stdio: ['pipe', 'inherit', 'inherit'] })" "C:\path\to\my-prompt.md"
+node -e "child_process.execFileSync(process.execPath, ['plugins/codex-polish/hooks/preferences.mjs', 'set-prompt'], { input: fs.readFileSync(process.argv[1]), stdio: ['pipe', 'inherit', 'inherit'] })" "C:\path\to\my-prompt.md"
 ```
 
 ## 改写流程与判定阈值
 
-插件支持直接 ACP 和 OpenAI Decisions 加 ACP 两条路径。点名润色或以 Turbo 自动润色时，插件会跳过 OpenAI，将草稿直接交给 Gemini。Turbo 的内置提示词要求 Gemini 主动改写。以普通模式自动润色时，如果当前 Codex 配置没有可用的 OpenAI 密钥，或项目已关闭风格检查，插件直接使用 ACP。此时由 `agy` 联系 Google，本地 Node.js 脚本不发网络请求。开启 Decisions 时，Node.js 脚本只在改写前调用一次 OpenAI `gpt-6-luna`，判断草稿是否需要润色。每轮最多提交一次含草稿的 ACP 请求。当前 Codex agent 负责启动和回收进程，并在同一会话中收发协议消息。[ACP 操作步骤](../plugins/codex-polish/skills/codex-polish/references/acp.md)
+插件支持直接 ACP 和 OpenAI Decisions 加 ACP 两条路径。点名润色或以 Turbo 自动润色时，插件会跳过 OpenAI，将草稿直接交给 Gemini。Turbo 的内置提示词要求 Gemini 主动改写。以普通模式自动润色时，如果当前 Codex 配置没有可用的 OpenAI 密钥，或已关闭风格检查，插件直接使用 ACP。此时由 `agy` 联系 Google，本地 Node.js 脚本不发网络请求。开启 Decisions 时，Node.js 脚本只在改写前调用一次 OpenAI `gpt-6-luna`，判断草稿是否需要润色。每轮最多提交一次含草稿的 ACP 请求。当前 Codex agent 负责启动和回收进程，并在同一会话中收发协议消息。[ACP 操作步骤](../plugins/codex-polish/skills/codex-polish/references/acp.md)
 
 | 阶段 | 行为 |
 | --- | --- |
@@ -100,20 +100,20 @@ Codex agent 用宿主进程工具直接启动官方 `agy acp`，向同一进程�
 | Decisions 不可用、密钥无效、响应无效或材料超过接口限额 | 使用原稿继续调用 Gemini。每一轮独立判断。 |
 | ACP 握手失败、未登录、所选模型或思考等级不可用，或中途发生变更 | 当前 agent 结束本次 ACP 请求，回收进程并交付原稿。 |
 | 生成耗时较长或中断 | 进程仍在运行时继续等待。宿主或服务端明确超时、取消、断流或返回不完整时丢弃候选，同一请求最多发送一次。 |
-| 本轮中途停用、修改要求或取消 | 外发前重新核对项目模式。收到新要求时丢弃旧候选，按新要求作答。用户取消则结束本轮。若只有服务端取消，用户仍在等待，就交付原稿。 |
+| 本轮中途停用、修改要求或取消 | 外发前重新核对当前触发模式。收到新要求时丢弃旧候选，按新要求作答。用户取消则结束本轮。若只有服务端取消，用户仍在等待，就交付原稿。 |
 
 ## 安装、更新和卸载
 
-在任意目录运行 `npx @kyun.si/codex-polish@beta setup` 即可安装 npm beta 版。将最后一个参数换成 `update`、`doctor` 或 `uninstall` 即可更新、检查当前项目或卸载。Windows PowerShell 中使用 `npx.cmd`。从 GitHub 源码安装时，在仓库根目录运行 `node scripts/install.mjs setup`，其余子命令相同。[安装步骤](README.zh-CN.md#快速开始)
+在任意目录运行 `npx @kyun.si/codex-polish@beta setup` 即可安装 npm beta 版。将最后一个参数换成 `update`、`doctor` 或 `uninstall` 即可更新、检查插件设置和本地环境或卸载。Windows PowerShell 中使用 `npx.cmd`。从 GitHub 源码安装时，在仓库根目录运行 `node scripts/install.mjs setup`，其余子命令相同。[安装步骤](README.zh-CN.md#快速开始)
 
-macOS 用户也可以解压安装包，在 Finder 中双击安装脚本。从 Finder 或终端安装时，默认设置适用于同一份 Codex 配置下的所有项目。安装器会先询问尚未保存的改写模式，待 `agy` 可用后，再让你选择 Gemini 模型和思考等级。思考等级固定的模型会跳过等级选择。[Finder 安装脚本](../安装回复润色.command)
+macOS 用户也可以解压安装包，在 Finder 中双击安装脚本。每次交互运行 `setup`，都可以为当前 Codex 配置选择普通（Normal）或 Turbo 模式。`agy` 可用时，还可以选择 Gemini 模型和思考等级。再次打开时会预选已保存的值，按**回车**即可保留。思考等级固定的模型会跳过等级选择。[Finder 安装脚本](../安装回复润色.command)
 
-`setup` 和 `update` 支持 `--install-agy`，在缺少 Antigravity CLI 时可自动安装。更新会保留项目设置与插件启用状态。同一版本号的新构建也能用 `update` 覆盖或重试中断的更新。
+`setup` 和 `update` 支持 `--install-agy`，在缺少 Antigravity CLI 时可自动安装。更新会跳过设置菜单，保留已保存的润色设置与插件启用状态。同一版本号的新构建也能用 `update` 覆盖或重试中断的更新。
 
 安装器为每份 Codex 配置注册一个本地市场。更新时先准备并校验新快照，然后原子替换市场清单，再请 Codex 刷新插件缓存。刷新失败时会恢复原快照和启用状态。Codex 判断 hook 信任时会核对已安装插件的内容，所以即使命令没变，内置提示词或配置指南的改动也可能触发重新确认。安装器和 `doctor` 都从 `hooks/list` 读取实际状态。
 
 首次交互安装并选用普通模式时，安装器会询问是否启用 OpenAI Decisions API 检查，默认跳过。之后可在运行插件的机器上使用同一份 Codex 配置，运行 `npx @kyun.si/codex-polish@beta openai` 管理密钥。Windows PowerShell 中使用 `npx.cmd`。终端隐藏输入，密钥保存在 `$CODEX_HOME/codex-polish/credentials/openai.key`。插件会忽略 `OPENAI_API_KEY`。[密钥设置与 API 计费](../plugins/codex-polish/skills/codex-polish-setup/references/credentials.md#选配-openai-decisions-api)
 
-卸载会移除插件和专用市场，清除会话指针，并删除这份 Codex 配置保存的改写模式、模型、思考等级、自定义提示词和 OpenAI 密钥。卸载还会删除这份配置最后保存并记录的项目设置文件。这些文件即使由 Git 跟踪，或后来被手动就地修改，也会删除。其他应用仍可使用共用的 `agy`。
+卸载会移除插件和专用市场，清除会话指针，并删除当前 Codex 配置保存的所有润色设置、自定义提示词和 OpenAI 密钥。旧版曾在个别目录登记的设置文件若仍在原位，卸载时也会删除，包括 Git 跟踪的文件和后来被就地修改的文件。其他应用仍可使用共用的 `agy`。
 
-旧版没有记录创建项目设置的位置。如需一并清理，可到曾配置过的项目中逐项查看 `.codex/codex-polish.*` 文件。安装文件如有手动改动，卸载时会显示备份位置。使用本地打包的版本时，可将 npm 包名换成实际压缩包路径，例如 `npx --yes file:./kyun.si-codex-polish-VERSION.tgz uninstall`。
+安装文件如有手动改动，卸载时会显示备份位置。使用本地打包的版本时，可将 npm 包名换成实际压缩包路径，例如 `npx --yes file:./kyun.si-codex-polish-VERSION.tgz uninstall`。

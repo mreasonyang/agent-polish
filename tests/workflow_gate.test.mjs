@@ -8,6 +8,7 @@ import { saveOpenAIKey, clearOpenAIKey } from '../plugins/codex-polish/hooks/ope
 function fixture(t, { savedKey = true } = {}) {
   const f = makeProject(t), installed = path.join(f.home, 'installed'), bin = path.join(f.home, 'bin');
   useTestProfile(t, f.env.CODEX_HOME);
+  fs.mkdirSync(f.settings, { recursive: true });
   if (savedKey) saveOpenAIKey('plugin-test-key');
   fs.cpSync(plugin, installed, { recursive: true });
   fs.mkdirSync(bin);
@@ -29,7 +30,8 @@ export async function decide(args, stream) {
     FAULT_TEST_RESPONSE: JSON.stringify({ action: 'rewrite', reason: 'needs_rewrite', probability: 0.96 }) };
   function invoke(args, overrides = {}) {
     const input = args[0] === 'decision' ? '{"question":"q","draft":"private example"}' : undefined;
-    const result = run(script, [...args, '--cwd', f.cwd], { env: { ...env, ...overrides }, input });
+    const runtime = args[0] === 'check' || args[0] === 'decision';
+    const result = run(script, runtime ? [...args, '--cwd', f.cwd] : args, { cwd: f.cwd, env: { ...env, ...overrides }, input });
     assert.equal(result.stderr, ''); assert.ok(!result.stdout.includes('private example'));
     return [result.status, result.stdout ? JSON.parse(result.stdout) : null];
   }
@@ -53,7 +55,12 @@ test('the interactive style check consumes one host record and keeps its content
 });
 
 test('the workflow maps ordinary requests for a polish and earlier-answer rewrites to the correct trigger and draft', () => {
-  const workflow = fs.readFileSync(path.join(plugin, 'skills/codex-polish/WORKFLOW.md'), 'utf8');
+  const skill = path.join(plugin, 'skills/codex-polish');
+  const description = fs.readFileSync(path.join(skill, 'SKILL.md'), 'utf8').split('\n').find(line => line.startsWith('description:'));
+  for (const phrase of ['说人话', '重写', '润色', 'rewrite', 'polish', 'plain English']) {
+    assert.ok(description?.toLowerCase().includes(phrase.toLowerCase()), phrase);
+  }
+  const workflow = fs.readFileSync(path.join(skill, 'WORKFLOW.md'), 'utf8');
   const lines = workflow.split('\n');
   const explicit = lines.find(line => line.includes('返回结果 polish'));
   assert.ok(explicit?.includes('--trigger explicit'));
@@ -62,8 +69,11 @@ test('the workflow maps ordinary requests for a polish and earlier-answer rewrit
   const automatic = lines.find(line => line.includes('--trigger auto'));
   assert.ok(automatic?.includes('UserPromptSubmit'));
   assert.match(automatic, /普通提问/);
-  const earlier = lines.find(line => line.includes('上一条我没看懂，换个说法'));
+  const earlier = lines.find(line => line.includes('**改写已有回答**'));
   assert.ok(earlier?.includes('--turns-back'));
+  for (const phrase of ['说人话', '重写', '润色']) assert.ok(earlier.includes(phrase), phrase);
+  const current = lines.find(line => line.includes('**新的问题或任务**'));
+  assert.match(current, /说人话/);
   const judgeCommands = lines.filter(line => line.includes('preferences.mjs decision judge'));
   assert.equal(judgeCommands.length, 1);
   assert.match(judgeCommands[0], /--trigger auto --route decisions --rewrite-mode normal/);
@@ -101,7 +111,7 @@ test('missing or invalid prerequisites never invoke a provider', t => {
   assert.ok(judge()[1].blockers.includes('agy_missing')); assert.ok(!fs.existsSync(calls) && !fs.existsSync(env.XDG_CACHE_HOME));
 });
 
-test('an ambient key alone never enables the judge and the direct route enforces project policy', t => {
+test('an ambient key alone never enables the judge and the direct route enforces the profile trigger mode', t => {
   const { judge, check, mode, agy, calls } = fixture(t, { savedKey: false }), keyless = { OPENAI_API_KEY: '' };
   for (const key of [undefined, '', ' \t\n', 'ambient-valid-key']) {
     const env = { OPENAI_API_KEY: key }, status = check(env);
@@ -109,9 +119,9 @@ test('an ambient key alone never enables the judge and the direct route enforces
     assert.equal(status.decisions_enabled, false); assert.equal(status.decisions_mode, 'auto'); assert.deepEqual(status.blockers, []);
     assert.deepEqual(judge('auto', [], env), [0, { action: 'rewrite', reason: 'direct_acp', route: 'acp' }]);
   }
-  fs.writeFileSync(mode, 'manual'); assert.equal(judge('auto', [], keyless)[1].reason, 'project_mode');
+  fs.writeFileSync(mode, 'manual'); assert.equal(judge('auto', [], keyless)[1].reason, 'trigger_mode');
   assert.equal(judge('explicit', [], keyless)[1].action, 'rewrite');
-  fs.writeFileSync(mode, 'off'); assert.equal(judge('explicit', [], keyless)[1].reason, 'project_mode');
+  fs.writeFileSync(mode, 'off'); assert.equal(judge('explicit', [], keyless)[1].reason, 'trigger_mode');
   fs.writeFileSync(mode, 'auto'); fs.unlinkSync(agy);
   assert.deepEqual(judge('auto', [], keyless)[1].blockers, ['agy_missing']); assert.equal(fs.existsSync(calls), false);
 });
@@ -141,10 +151,10 @@ test('turbo always bypasses Decisions and returning to normal uses the saved pol
   }
   assert.equal(judge('auto', ['--route', 'decisions'])[1].reason, 'decision_route_changed');
   fs.writeFileSync(mode, 'manual');
-  assert.equal(judge()[1].reason, 'project_mode');
+  assert.equal(judge()[1].reason, 'trigger_mode');
   assert.equal(judge('explicit')[1].route, 'acp');
   fs.writeFileSync(mode, 'off');
-  assert.equal(judge('explicit')[1].reason, 'project_mode');
+  assert.equal(judge('explicit')[1].reason, 'trigger_mode');
   fs.writeFileSync(mode, 'auto');
   assert.equal(fs.existsSync(calls), false);
   invoke(['set-rewrite-mode', 'normal']);
@@ -200,10 +210,10 @@ test('with a saved plugin key only ordinary Normal turns ask Decisions, even if 
   }
 
   ordinaryTurn();
-  for (const projectMode of ['auto', 'manual']) {
-    fs.writeFileSync(mode, projectMode);
+  for (const triggerMode of ['auto', 'manual']) {
+    fs.writeFileSync(mode, triggerMode);
     const status = invoke(['check', '--trigger', 'explicit'], env)[1];
-    assert.deepEqual([status.rewrite_mode, status.decisions_enabled, status.mode], ['turbo', false, projectMode]);
+    assert.deepEqual([status.rewrite_mode, status.decisions_enabled, status.mode], ['turbo', false, triggerMode]);
     const args = ['--route', 'acp', '--rewrite-mode', 'turbo', '--model', status.gemini_model];
     assert.deepEqual(judge('explicit', args, env), [0, { action: 'rewrite', reason: 'direct_acp', route: 'acp' }]);
     assert.equal(judge('explicit', ['--route', 'decisions'], env)[1].reason, 'decision_route_changed');
@@ -211,20 +221,20 @@ test('with a saved plugin key only ordinary Normal turns ask Decisions, even if 
     assert.deepEqual(logged(), [endpoint]);
     assert.equal(fs.readFileSync(setting, 'utf8'), 'normal\n');
   }
-  assert.equal(judge('auto')[1].reason, 'project_mode');
+  assert.equal(judge('auto')[1].reason, 'trigger_mode');
   fs.writeFileSync(mode, 'auto');
   ordinaryTurn();
   assert.deepEqual(logged(), [endpoint, endpoint]);
 });
 
-test('explicit requests honor the project switch and runtime checks independently of the automatic rewrite mode', t => {
+test('explicit requests honor the trigger mode and runtime checks independently of the automatic rewrite mode', t => {
   const { invoke, judge, calls, mode, agy } = fixture(t);
   const setting = invoke(['set-rewrite-mode', 'normal'])[1].file;
   assert.equal(judge('explicit', ['--model', 'unselected-model'])[1].reason, 'gemini_model_changed');
   assert.equal(judge('explicit', ['--thinking-level', 'high'])[1].reason, 'thinking_level_changed');
   assert.equal(judge('explicit', ['--thinking-level', 'medium'])[1].action, 'rewrite');
   assert.equal(fs.readFileSync(setting, 'utf8'), 'normal\n');
-  for (const [value, reason] of [['off', 'project_mode'], ['broken', 'mode_invalid']]) {
+  for (const [value, reason] of [['off', 'trigger_mode'], ['broken', 'mode_invalid']]) {
     fs.writeFileSync(mode, value);
     assert.equal(judge('explicit')[1].reason, reason);
   }
@@ -257,8 +267,8 @@ test('explicit key mode validates only the configured Gemini key', t => {
 test('enterprise runtime and policy changes', t => {
   const { judge, mode, logged, calls } = fixture(t);
   assert.equal(judge('auto', [], { CODEX_POLISH_AGY_AUTH: 'agent-platform', GEMINI_API_KEY: '' })[1].action, 'rewrite');
-  fs.writeFileSync(mode, 'manual'); assert.equal(judge()[1].reason, 'project_mode');
-  fs.writeFileSync(mode, 'off'); assert.equal(judge('explicit')[1].reason, 'project_mode');
+  fs.writeFileSync(mode, 'manual'); assert.equal(judge()[1].reason, 'trigger_mode');
+  fs.writeFileSync(mode, 'off'); assert.equal(judge('explicit')[1].reason, 'trigger_mode');
   assert.deepEqual(logged(), ['judge']); assert.equal(fs.existsSync(calls + '.agy'), false);
 });
 
@@ -290,7 +300,7 @@ test('a malformed saved credential and provider-sized input use ACP without maki
   assert.deepEqual(output, { action:'rewrite', reason:'decision_unavailable', decision_error:'decision_input_too_large', route:'decisions' });
 });
 
-test('a project change or credential removal while stdin is being read prevents the OpenAI request', t => {
+test('a profile setting change or credential removal while stdin is being read prevents the OpenAI request', t => {
   const { cwd, mode, env, helper, script } = fixture(t);
   fs.copyFileSync(path.join(plugin, 'skills/codex-polish/scripts/decisions.mjs'), helper);
   const preload = `
@@ -306,7 +316,7 @@ test('a project change or credential removal while stdin is being read prevents 
   `;
   const model = path.join(path.dirname(mode), 'codex-polish.model');
   const credential = path.join(env.CODEX_HOME, 'codex-polish', 'credentials', 'openai.key');
-  for (const [file, value, reason] of [[mode, 'off', 'project_mode'], [model, 'gemini-other', 'gemini_model_changed'],
+  for (const [file, value, reason] of [[mode, 'off', 'trigger_mode'], [model, 'gemini-other', 'gemini_model_changed'],
     [credential, null, 'decision_route_changed']]) {
     const result = run('--import', ['data:text/javascript,' + encodeURIComponent(preload), script, 'decision', 'judge',
       '--trigger', 'auto', '--route', 'decisions', '--rewrite-mode', 'normal', '--model', 'gemini-4-hydrogen', '--cwd', cwd],

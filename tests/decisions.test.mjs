@@ -79,9 +79,11 @@ test('judge sends the exact original fields in one HTTPS request', async t => {
 });
 
 test('a direct judge invocation checks the rewrite policy before using credentials or sending a request', async t => {
-  const { cwd, project } = makeProject(t);
+  const { cwd } = makeProject(t);
   const mock = mockResponse(t);
-  const setting = path.join(project, '.codex/codex-polish.rewrite-mode');
+  const settings = path.join(process.env.CODEX_HOME, 'codex-polish', 'settings');
+  fs.mkdirSync(settings);
+  const setting = path.join(settings, 'codex-polish.rewrite-mode');
   for (const [value, reason] of [['turbo', 'decision_route_changed'], ['typo', 'rewrite_mode_invalid']]) {
     fs.writeFileSync(setting, value);
     assert.deepEqual(await cli(['judge', '--cwd', cwd], draft), failure(reason));
@@ -93,16 +95,18 @@ test('a direct judge invocation checks the rewrite policy before using credentia
   assert.equal(mock.calls(), 1);
 });
 
-test('standalone judge respects project-wide and OpenAI-specific opt-outs', async t => {
-  const { project, cwd } = makeProject(t);
+test('standalone judge respects the profile trigger mode and OpenAI-specific opt-out', async t => {
+  const { cwd } = makeProject(t);
   const mock = mockResponse(t);
-  const modeFile = path.join(project, '.codex/codex-polish.mode');
+  const settings = path.join(process.env.CODEX_HOME, 'codex-polish', 'settings');
+  fs.mkdirSync(settings);
+  const modeFile = path.join(settings, 'codex-polish.mode');
   for (const mode of ['off', 'manual']) {
     fs.writeFileSync(modeFile, mode);
-    assert.deepEqual(await cli(['judge', '--cwd', cwd], draft), failure('project_mode'));
+    assert.deepEqual(await cli(['judge', '--cwd', cwd], draft), failure('trigger_mode'));
   }
   fs.writeFileSync(modeFile, 'auto');
-  fs.writeFileSync(path.join(project, '.codex/codex-polish.decisions'), 'off');
+  fs.writeFileSync(path.join(settings, 'codex-polish.decisions'), 'off');
   assert.deepEqual(await cli(['judge', '--cwd', cwd], draft), failure('decision_route_changed'));
   assert.equal(mock.calls(), 0);
 });

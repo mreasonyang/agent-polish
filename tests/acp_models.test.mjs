@@ -6,6 +6,7 @@ import { catalog } from '../plugins/codex-polish/skills/codex-polish/scripts/acp
 import { MAX_CONFIG_FRAME_BYTES } from '../plugins/codex-polish/skills/codex-polish/scripts/acp_models.mjs';
 import { promptFrame } from '../plugins/codex-polish/skills/codex-polish/scripts/acp_payload.mjs';
 import { Fixture, selectOption } from './fixture_acp.mjs';
+import { useTestProfile } from './hook_fixture.mjs';
 
 const script = fileURLToPath(new URL('../plugins/codex-polish/skills/codex-polish/scripts/acp_models.mjs', import.meta.url));
 function cli(args, frame) {
@@ -28,7 +29,8 @@ function next(response, level) {
   return JSON.parse(output.stdout);
 }
 
-test('model change exposes the target thinking options, then the default Medium must be confirmed', async () => {
+test('model change exposes the target thinking options, then the default Medium must be confirmed', async t => {
+  useTestProfile(t);
   const events = [];
   const fixture = new Fixture('ok', line => events.push(JSON.parse(line)));
   const rpc = (id, method, params) => {

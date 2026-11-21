@@ -94,7 +94,7 @@ export function prepareWorkspace({ cwd, trigger, selectionOnly = false, catalog 
   if (catalog ? (cwd !== undefined || trigger !== undefined || selectionOnly) :
       (typeof cwd !== 'string' || !isAbsolute(cwd) || !['auto', 'explicit'].includes(trigger) || (selectionOnly && trigger !== 'explicit')))
     throw Error('invalid_options');
-  const role = catalog ? fs.readFileSync(stockRole) : editorRole(cwd, trigger, { selectionOnly });
+  const role = catalog ? fs.readFileSync(stockRole) : editorRole(trigger, { selectionOnly });
   const workspace = fs.mkdtempSync(join(fs.realpathSync(tmpdir()), 'codex-polish-acp-'));
   const owners = [];
   function createFile(name, contents) {

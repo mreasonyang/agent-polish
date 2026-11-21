@@ -1,13 +1,11 @@
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { executable, windows } from './platform.mjs';
 import { parseArgs } from 'node:util';
-import { projectRoot, readProjectSetting, readSettingWithDefault, writeProfileDefault } from './project_setting.mjs';
+import { readProfileSetting, writeProfileSetting } from './profile_setting.mjs';
 import { openAIKeyStatus } from './openai_credentials.mjs';
-import { changeProjectSetting } from './owned_settings.mjs';
 import { PROMPT_FILE, readEditorPrompt, readPromptInput } from './editor_prompt.mjs';
-import { REWRITE_MODES, REWRITE_MODE_FILE, REWRITE_TRIGGERS, projectRewriteMode, rewriteModeSettings } from './rewrite_mode.mjs';
+import { REWRITE_MODES, REWRITE_MODE_FILE, REWRITE_TRIGGERS, rewriteModeSettings } from './rewrite_mode.mjs';
 import { readHostLine, utf8 } from '../skills/codex-polish/scripts/cli_io.mjs';
 import { LANGUAGES, LANGUAGE_FILE, language, languageSettings, tr } from './ui_locale.mjs';
 import { cacheScope, withCache } from './recovery.mjs';
@@ -15,8 +13,9 @@ import { cacheScope, withCache } from './recovery.mjs';
 const MODES = ['auto', 'manual', 'off'];
 const MODE_FILE = 'codex-polish.mode';
 const HISTORY_FILE = 'codex-polish.history-turns';
-const DECISIONS_FILE = 'codex-polish.decisions';
+export const DECISIONS_FILE = 'codex-polish.decisions';
 export const MODEL_FILE = 'codex-polish.model';
+export const PROFILE_PREFERENCE_FILES = [MODE_FILE, REWRITE_MODE_FILE, HISTORY_FILE, DECISIONS_FILE, MODEL_FILE, LANGUAGE_FILE, PROMPT_FILE];
 export const DEFAULT_GEMINI_MODEL = 'gemini-4-hydrogen';
 export const DEFAULT_THINKING_LEVEL = 'medium';
 const THINKING_LEVELS = ['low', 'medium', 'high', 'xhigh', 'fixed'];
@@ -37,10 +36,10 @@ const LOCAL_DECISION_ERRORS = new Set([
 ]);
 const DECISION_REASONS = { rewrite: 'needs_rewrite', keep: 'already_clear' };
 
-export function projectSettings(cwd) {
-  const [value, scope] = readProjectSetting(cwd, MODE_FILE, 16);
+export function triggerMode() {
+  const value = readProfileSetting(MODE_FILE, 16);
   const mode = value?.toLowerCase() ?? 'auto';
-  return [MODES.includes(mode) ? mode : null, scope];
+  return MODES.includes(mode) ? mode : null;
 }
 
 function parseHistoryTurns(value, lang) {
@@ -52,8 +51,8 @@ function parseHistoryTurns(value, lang) {
     `Use a whole number from 0 to ${MAX_HISTORY_TURNS}. Set it to 0 to turn off history.`, lang));
 }
 
-export function projectHistoryTurns(cwd) {
-  const [value] = readProjectSetting(cwd, HISTORY_FILE, 32);
+export function historyTurns() {
+  const value = readProfileSetting(HISTORY_FILE, 32);
   if (value === null) return DEFAULT_HISTORY_TURNS;
   try {
     return parseHistoryTurns(value, 'en');
@@ -62,15 +61,15 @@ export function projectHistoryTurns(cwd) {
   }
 }
 
-export function projectDecisionsMode(cwd) {
-  const [value] = readProjectSetting(cwd, DECISIONS_FILE, 16);
+export function decisionsMode() {
+  const value = readProfileSetting(DECISIONS_FILE, 16);
   return decisionMode(value?.toLowerCase() ?? 'auto');
 }
 
-export function decisionsSettings(cwd, rewriteMode = projectRewriteMode(cwd), triggerMode = projectSettings(cwd)[0], keyStatus = openAIKeyStatus()) {
-  const mode = projectDecisionsMode(cwd);
-  return { decisions_mode: mode, ...keyStatus,
-    decisions_enabled: triggerMode === 'auto' && rewriteMode === 'normal' && mode === 'auto' && keyStatus.openai_key_configured };
+function decisionsSettings(rewriteMode, mode, keyStatus = openAIKeyStatus()) {
+  const decisions = decisionsMode();
+  return { decisions_mode: decisions, ...keyStatus,
+    decisions_enabled: mode === 'auto' && rewriteMode === 'normal' && decisions === 'auto' && keyStatus.openai_key_configured };
 }
 
 function decisionMode(value) {
@@ -87,45 +86,26 @@ export function validThinkingLevel(value) {
   return THINKING_LEVELS.includes(value);
 }
 
-function modelPreference(cwd) {
-  // Model and optional level share a single file so overrides and resets apply to the pair.
-  const value = readSettingWithDefault(cwd, MODEL_FILE, 264);
+function modelPreference() {
+  // Save model and level together so readers see a consistent pair.
+  const value = readProfileSetting(MODEL_FILE, 264);
   const [model, level = DEFAULT_THINKING_LEVEL, extra] = (value ?? DEFAULT_GEMINI_MODEL).split(' ');
   const valid = validModelId(model) && validThinkingLevel(level) && extra === undefined;
   return { gemini_model: valid ? model : null, gemini_thinking_level: valid ? level : null,
     gemini_model_configured: value !== null && valid };
 }
 
-export function projectGeminiModel(cwd) {
-  return modelPreference(cwd).gemini_model;
+export function geminiModel() {
+  return modelPreference().gemini_model;
 }
 
-function writeProjectSetting(cwd, filename, value, lang) {
-  if (!path.isAbsolute(cwd)) throw new RangeError(tr('请提供项目目录的完整路径。', 'Enter the full path to the project folder.', lang));
-  const project = projectRoot(cwd);
-  if (!fs.statSync(project).isDirectory() || path.dirname(project) === project || project === fs.realpathSync(os.homedir())) {
-    throw new RangeError(tr('请选择要配置的项目目录。', 'Choose a project folder to configure.', lang));
-  }
-  const settings = path.join(project, '.codex');
-  if (value !== null) fs.mkdirSync(settings, { mode: 0o700, recursive: true });
-  try {
-    changeProjectSetting(settings, value === null ? 'remove' : 'write', filename, value);
-  } catch (error) {
-    if (value === null && error.code === 'ENOENT') return path.join(settings, filename);
-    if (error.code === 'EINVAL') throw new RangeError(tr('项目设置路径指向了链接或特殊文件。',
-      'The settings path points to a link or another special file.', lang));
-    throw error;
-  }
-  return path.join(settings, filename);
-}
-
-export function saveModelSelection(cwd, model, thinkingLevel, lang) {
+export function saveModelSelection(model, thinkingLevel, lang) {
   if (!validModelId(model)) throw new RangeError(tr('这个模型 ID 无效，请从当前账号的 Gemini 模型列表里选一个。',
     "This model ID isn't valid. Choose a Gemini model from your account's list.", lang));
   if (!validThinkingLevel(thinkingLevel)) throw new RangeError(tr('请选择此模型支持的思考等级。',
     'Choose a thinking level supported by this model.', lang));
   const selection = model + ' ' + thinkingLevel;
-  const file = cwd === null ? writeProfileDefault(MODEL_FILE, selection) : writeProjectSetting(cwd, MODEL_FILE, selection, lang);
+  const file = writeProfileSetting(MODEL_FILE, selection);
   return { gemini_model: model, gemini_thinking_level: thinkingLevel, file };
 }
 
@@ -161,7 +141,7 @@ function rememberHistorySource(event, mode) {
 
 export function historySource(cwd) {
   const session = process.env.CODEX_THREAD_ID || '';
-  if (!SESSION_ID.test(session) || projectSettings(cwd)[0] === 'off') return null;
+  if (!SESSION_ID.test(session) || triggerMode() === 'off') return null;
   try {
     const scope = cacheScope(cwd);
     const now = Math.floor(Date.now() / 1000);
@@ -183,19 +163,19 @@ function supportedNode() {
   return major > 22 || (major === 22 && minor >= 16);
 }
 
-export function runtimeStatus(cwd, mode, trigger, { selectionOnly = false, noHistory = false, keyStatus } = {}) {
+export function runtimeStatus(mode = triggerMode(), trigger, { selectionOnly = false, noHistory = false, keyStatus } = {}) {
   const googleAuth = process.env.CODEX_POLISH_AGY_AUTH ?? 'existing-session';
   const agy = findAgy();
-  const rewriteSettings = rewriteModeSettings(cwd, trigger);
+  const rewriteSettings = rewriteModeSettings(trigger);
   const rewriteMode = rewriteSettings.rewrite_mode;
   let promptSource;
-  try { promptSource = readEditorPrompt(cwd, rewriteMode ?? 'normal', { selectionOnly }).source; }
+  try { promptSource = readEditorPrompt(rewriteMode ?? 'normal', { selectionOnly }).source; }
   catch { promptSource = 'invalid'; }
   const status = {
     mode, ...rewriteSettings, node_available: supportedNode(),
     codex_available: Boolean(executable('codex')), agy_available: Boolean(agy), agy_path: agy,
-    ...decisionsSettings(cwd, rewriteMode, mode, keyStatus), ...modelPreference(cwd), prompt_source: promptSource,
-    history_turns: noHistory || selectionOnly ? 0 : projectHistoryTurns(cwd),
+    ...decisionsSettings(rewriteMode, mode, keyStatus), ...modelPreference(), prompt_source: promptSource,
+    history_turns: noHistory || selectionOnly ? 0 : historyTurns(),
     google_auth_method: GOOGLE_AUTH_MODES.includes(googleAuth) ? googleAuth : 'unsupported',
     gemini_key_configured: googleAuth === 'existing-session' ? null : Boolean(process.env.GEMINI_API_KEY?.trim()),
   };
@@ -227,7 +207,7 @@ async function runOpenaiDecision(cwd, pinned, hostInput) {
     const { decide } = await import('../skills/codex-polish/scripts/decisions.mjs');
     const input = hostInput ? [await readHostLine()] : process.stdin;
     output = await decide(['judge', '--cwd', cwd], input, process.env, undefined, keyStatus => {
-      policy = workflowPolicy(cwd, { ...pinned, keyStatus });
+      policy = workflowPolicy({ ...pinned, keyStatus });
       return policy.action === 'accept';
     });
     if (policy?.action === 'keep') return [policy, 0];
@@ -246,14 +226,14 @@ async function runOpenaiDecision(cwd, pinned, hostInput) {
   return [{ action, reason, probability }, 0];
 }
 
-export function workflowPolicy(cwd, { trigger, route, rewriteMode, model, thinkingLevel, selectionOnly = false, noHistory = false, keyStatus }) {
-  const [mode] = projectSettings(cwd);
+export function workflowPolicy({ trigger, route, rewriteMode, model, thinkingLevel, selectionOnly = false, noHistory = false, keyStatus }) {
+  const mode = triggerMode();
   const keep = reason => ({ action: 'keep', reason });
   if (mode === null) return keep('mode_invalid');
   if (!REWRITE_TRIGGERS.includes(trigger) || mode === 'off' || (mode !== 'auto' && trigger === 'auto'))
-    return keep('project_mode');
+    return keep('trigger_mode');
   if (selectionOnly && trigger !== 'explicit') return keep('invalid_options');
-  const status = runtimeStatus(cwd, mode, trigger, { selectionOnly, noHistory, keyStatus });
+  const status = runtimeStatus(mode, trigger, { selectionOnly, noHistory, keyStatus });
   if (status.blockers.length) return { ...keep(status.blockers[0]), blockers: status.blockers };
   if (rewriteMode !== undefined && rewriteMode !== status.rewrite_mode) return keep('rewrite_mode_changed');
   if (model !== undefined && model !== status.gemini_model) return keep('gemini_model_changed');
@@ -266,7 +246,7 @@ export function workflowPolicy(cwd, { trigger, route, rewriteMode, model, thinki
 async function judgeDraft(args) {
   const pinned = { trigger: args.trigger, route: args.route, rewriteMode: args['rewrite-mode'], model: args.model,
     thinkingLevel: args['thinking-level'], noHistory: args['no-history'] };
-  const policy = workflowPolicy(args.cwd, pinned);
+  const policy = workflowPolicy(pinned);
   if (policy.action === 'keep') return [policy, 0];
   const { route } = policy;
   const [result, code] = route === 'decisions'
@@ -276,6 +256,13 @@ async function judgeDraft(args) {
   result.route = route;
   return [result, 0];
 }
+
+// Only a whole-message shortcut selects the previous reply. Longer requests need their context.
+const REWRITE_SHORTCUTS = new Set([
+  '说人话', '重写', '重写一下', '润色', '润色一下',
+  'rewrite', 'rewrite it', 'polish', 'polish it', 'speak plainly', 'plain english', 'in plain english',
+  'say it in plain english', 'say that in plain english', 'put it in plain english', 'put that in plain english',
+]);
 
 export function runHook() {
   if (!supportedNode()) {
@@ -292,34 +279,39 @@ export function runHook() {
   if (event?.hook_event_name !== 'UserPromptSubmit' || event.agent_id || event.agent_type) return;
   if (event.session_id && process.env.CODEX_THREAD_ID && event.session_id !== process.env.CODEX_THREAD_ID) return;
   if (typeof event.cwd !== 'string' || !path.isAbsolute(event.cwd)) return;
-  const [mode] = projectSettings(event.cwd);
+  const mode = triggerMode();
   rememberHistorySource(event, mode);
   if (mode === null) {
     console.log(JSON.stringify({ systemMessage: tr('Codex Polish 无法读取 codex-polish.mode。请设为 auto、manual 或 off。',
-      'Codex Polish cannot read codex-polish.mode. Set it to auto, manual or off.', language(event.cwd)) }));
+      'Codex Polish cannot read codex-polish.mode. Set it to auto, manual or off.', language()) }));
     return;
   }
-  if (mode !== 'auto') return;
-  const lang = language(event.cwd);
+  if (mode === 'off') return;
+  const command = typeof event.prompt === 'string' && event.prompt.trim().match(/^([^。.!！]+)[。.!！]*$/u);
+  const rewriteLast = command && REWRITE_SHORTCUTS.has(command[1].trimEnd().toLowerCase());
+  if (mode === 'manual' && !rewriteLast) return;
+  const lang = language();
   const workflow = JSON.stringify(path.resolve(import.meta.dirname, '../skills/codex-polish/WORKFLOW.md'));
-  const additionalContext = tr(`本项目已开启自动改写。按 ${workflow} 处理最终答复。用户主动要求润色本轮或已有回复时用 --trigger explicit，其余由本提醒触发的润色用 --trigger auto。进入 Gemini 步骤时，由当前 agent 直接启动 agy acp，并用宿主工具向同一进程写入请求。保留用户指的原稿，无需播报润色进度。收到完整的最终 Markdown 后直接交付。遵守用户指定的格式、取消或禁止外发的要求。`,
-      `Automatic rewriting is on for this project. Follow ${workflow} for the final reply. When the user asks to polish this reply or an earlier answer, use --trigger explicit. Use --trigger auto for polishing initiated by this reminder alone. For Gemini, start agy acp directly and use your host tools to write each request to that process. Keep the selected draft. Run the polishing steps without progress announcements. Deliver the final Markdown as soon as it is complete. Honor the requested format, cancellations, and requests to keep content local.`, lang);
+  const additionalContext = rewriteLast
+    ? tr(`单独的改写口令默认指上一条答复。如果用户是在回答语言选择题（如 Polish 指波兰语），按原任务继续。改写时按 ${workflow} 走 --trigger explicit，将原答复和这次的编辑要求交给 Gemini。若用户选中了文字，以选区为准；若没有可改写的内容，请用户提供原文。按聊天语言排版，直接把 acp_answer.mjs 返回的 text 作为最终回复。`,
+      `A standalone rewrite request refers to the previous reply. If the user is answering a language choice (e.g. Polish), continue that task. For a rewrite, follow ${workflow} with --trigger explicit and give Gemini the original reply and this editing request. Use a selected passage if supplied. If there is no text to rewrite, ask for it. Format in the chat language and send the text returned by acp_answer.mjs verbatim as your final reply.`, lang)
+    : tr(`已开启自动改写。按 ${workflow} 处理最终答复。用户主动要求润色本轮或已有回复时用 --trigger explicit，其余由本提醒触发的润色用 --trigger auto。进入 Gemini 步骤时，由当前 agent 直接启动 agy acp，并用宿主工具向同一进程写入请求。保留用户指的原稿，无需播报润色进度。收到完整的最终 Markdown 后直接交付。遵守用户指定的格式、取消或禁止外发的要求。`,
+      `Automatic rewriting is on. Follow ${workflow} for the final reply. When the user asks to polish this reply or an earlier answer, use --trigger explicit. Use --trigger auto for polishing initiated by this reminder alone. For Gemini, start agy acp directly and use your host tools to write each request to that process. Keep the selected draft. Run the polishing steps without progress announcements. Deliver the final Markdown as soon as it is complete. Honor the requested format, cancellations, and requests to keep content local.`, lang);
   console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext } }));
 }
 
 const commands = {
   hook: ['', '处理 Codex 回合提醒', 'process a Codex hook event'],
-  'project-hook': ['', '输出项目提醒配置', 'print the project hook definition'],
-  mode: ['--cwd DIR', '查看什么时候触发改写', 'show when replies are rewritten'],
-  'set-mode': ['{auto,manual,off} --cwd DIR', '设置什么时候改写回复', 'choose when replies are rewritten'],
-  'set-rewrite-mode': ['(normal | turbo | --reset) (--cwd DIR | --profile)', '选择自动润色模式，或恢复默认模式', 'choose an automatic rewrite mode or restore its default'],
-  'set-history-turns': ['N --cwd DIR', '设置 Gemini 润色时能看到几轮历史（0 到 10 轮）', 'choose how many earlier exchanges Gemini receives (0–10)'],
-  'set-decisions': ['{auto,off} --cwd DIR', '设置是否让 OpenAI 判断原稿是否需要润色', 'choose whether OpenAI decides if a draft needs editing'],
-  'set-model': ['(MODEL_ID [--thinking-level LEVEL] | --reset) (--cwd DIR | --profile)', '选择 Gemini 模型和思考等级（默认 medium）', 'choose a Gemini model and thinking level (default medium)'],
-  prompt: ['--profile', '查看当前 Codex 配置的润色提示词和来源', 'show the editing prompt for this Codex profile and its source'],
-  'set-prompt': ['[--reset] --profile', '从标准输入保存所有项目共用的润色提示词，或恢复默认', 'save an editing prompt from stdin for all projects in this profile or restore the default'],
-  'set-language': ['{auto,zh,en} --cwd DIR', '选择设置和提示的显示语言（auto 自动识别，zh 中文，en 英文）', 'choose the language for settings and messages (auto detects, zh Chinese, en English)'],
-  check: ['(--cwd DIR | --profile) [--trigger {auto,explicit}] [--selection-only] [--no-history]', '查看当前设置和缺少的依赖', 'check project settings and local requirements'],
+  mode: ['', '查看什么时候触发改写', 'show when replies are rewritten'],
+  'set-mode': ['{auto,manual,off}', '设置什么时候改写回复', 'choose when replies are rewritten'],
+  'set-rewrite-mode': ['(normal | turbo | --reset)', '选择自动润色模式，或恢复默认模式', 'choose an automatic rewrite mode or restore its default'],
+  'set-history-turns': ['N', '设置 Gemini 润色时能看到几轮历史（0 到 10 轮）', 'choose how many earlier exchanges Gemini receives (0–10)'],
+  'set-decisions': ['{auto,off}', '设置是否让 OpenAI 判断原稿是否需要润色', 'choose whether OpenAI decides if a draft needs editing'],
+  'set-model': ['(MODEL_ID [--thinking-level LEVEL] | --reset)', '选择 Gemini 模型和思考等级（默认 medium）', 'choose a Gemini model and thinking level (default medium)'],
+  prompt: ['', '查看当前 Codex 配置的润色提示词和来源', 'show the editing prompt for this Codex profile and its source'],
+  'set-prompt': ['[--reset]', '从标准输入保存所有对话共用的润色提示词，或恢复默认', 'save an editing prompt from stdin for all chats in this profile or restore the default'],
+  'set-language': ['{auto,zh,en}', '选择设置和提示的显示语言（auto 自动识别，zh 中文，en 英文）', 'choose the language for settings and messages (auto detects, zh Chinese, en English)'],
+  check: ['[--cwd DIR] [--trigger {auto,explicit}] [--selection-only] [--no-history]', '查看当前设置和缺少的依赖', 'check profile settings and local requirements'],
   decision: ['judge --trigger {auto,explicit} --cwd DIR [--route {acp,decisions}] [--rewrite-mode {normal,turbo}] [--model MODEL_ID] [--thinking-level LEVEL] [--no-history]', '判断原稿是否需要润色', 'decide whether to rewrite a draft'],
 };
 
@@ -327,9 +319,9 @@ function printHelp(command, t) {
   const prefix = t('用法：', 'Usage: ');
   if (command) {
     const [syntax, zh, en] = commands[command];
-    console.log(`${prefix}preferences.mjs ${command} ${syntax}\n\n${t(zh, en)}`);
+    console.log(`${prefix}preferences.mjs ${command}${syntax ? ' ' + syntax : ''}\n\n${t(zh, en)}`);
   } else {
-    console.log(`${prefix}preferences.mjs COMMAND [OPTIONS]\n\n${t('管理回复润色的用户和项目设置。', 'Manage Codex Polish profile and project settings.')}\n`);
+    console.log(`${prefix}preferences.mjs COMMAND [OPTIONS]\n\n${t('管理当前 Codex 配置的润色设置。', 'Manage Codex Polish settings for this profile.')}\n`);
     for (const [name, [, zh, en]] of Object.entries(commands)) console.log(`  ${name.padEnd(18)} ${t(zh, en)}`);
   }
   console.log(`\n  -h, --help  ${t('显示帮助并退出', 'show this help message and exit')}`);
@@ -337,9 +329,7 @@ function printHelp(command, t) {
 
 async function main(args) {
   if (args.length === 1 && args[0] === 'hook') return runHook();
-  const cwdOption = args.findIndex(arg => arg === '--cwd' || arg.startsWith('--cwd='));
-  const location = cwdOption < 0 ? undefined : args[cwdOption] === '--cwd' ? args[cwdOption + 1] : args[cwdOption].slice(6);
-  const lang = language(args.includes('--profile') ? null : location);
+  const lang = language();
   const t = (zh, en) => tr(zh, en, lang);
   const [command, ...rest] = args;
   const usageError = message => { console.error(message); return 2; };
@@ -347,9 +337,7 @@ async function main(args) {
   if (!Object.hasOwn(commands, command)) return usageError(t('请提供有效的命令。使用 --help 查看帮助。', 'Provide a valid command. Use --help to see available commands.'));
   if (rest.includes('--help') || rest.includes('-h')) { printHelp(command, t); return 0; }
   const options = {};
-  const profileOnly = command === 'prompt' || command === 'set-prompt';
-  if (commands[command][0] && !profileOnly) options.cwd = { type: 'string' };
-  if (profileOnly || ['check', 'set-rewrite-mode', 'set-model'].includes(command)) options.profile = { type: 'boolean' };
+  if (command === 'check' || command === 'decision') options.cwd = { type: 'string' };
   if (['set-model', 'set-rewrite-mode', 'set-prompt'].includes(command)) options.reset = { type: 'boolean' };
   if (command === 'set-prompt' || command === 'decision') options['host-input'] = { type: 'boolean' };
   if (command === 'decision' || command === 'check') options.trigger = { type: 'string' };
@@ -367,10 +355,10 @@ async function main(args) {
   } catch {
     return usageError(t('参数无效或缺少参数值。使用 --help 查看用法。', 'Invalid option or missing option value. Use --help for usage.'));
   }
-  if (values.profile && values.cwd !== undefined) return usageError(t('请选择 --profile 或 --cwd DIR。', 'Choose either --profile or --cwd DIR.'));
   if (values.reset && values['thinking-level'] !== undefined) return usageError(t('--reset 会同时重置模型和思考等级。', '--reset restores both the model and its thinking level.'));
-  if (profileOnly && !values.profile) return usageError(t('缺少必填参数 --profile。', 'The --profile option is required.'));
-  if (options.cwd && !values.profile && !values.cwd) return usageError(t('缺少必填参数 --cwd', 'The --cwd option is required.'));
+  if (command === 'decision' && !values.cwd) return usageError(t('缺少必填参数 --cwd', 'The --cwd option is required.'));
+  if (values.cwd !== undefined && !path.isAbsolute(values.cwd))
+    return usageError(t('请提供工作目录的完整路径。', 'Enter the full path to the working directory.'));
   const expected = (command.startsWith('set-') && command !== 'set-prompt') || command === 'decision' ? 1 : 0;
   if (positionals.length !== (values.reset ? 0 : expected)) return usageError(t('参数组合无效。使用 --help 查看用法。', 'Invalid arguments. Use --help for usage.'));
   let value = positionals[0];
@@ -391,33 +379,22 @@ async function main(args) {
       return usageError(t(`值 '${selected ?? ''}' 无效，请从 ${valid} 中选择`, `Invalid choice '${selected ?? ''}' (choose from ${valid}).`));
     }
   }
-  const cwd = values.profile ? null : values.cwd;
   if (command === 'hook') return runHook();
-  if (command === 'project-hook') {
-    const definition = JSON.parse(fs.readFileSync(new URL('./hooks.json', import.meta.url), 'utf8'));
-    const hook = definition.hooks.UserPromptSubmit[0].hooks[0];
-    const quoted = "'" + import.meta.filename.replaceAll("'", "'\\''") + "'";
-    hook.command = hook.command.replace('"$' + '{PLUGIN_ROOT}/hooks/preferences.mjs"', () => quoted);
-    const encoded = Buffer.from(import.meta.url).toString('base64');
-    hook.commandWindows = `node -e "import(Buffer.from('${encoded}','base64').toString()).then(m=>process.exitCode=m.runHook()||0)"`;
-    console.log(JSON.stringify(definition, null, 2));
-    return 0;
-  }
   if (command === 'mode') {
-    const [mode] = projectSettings(cwd);
+    const mode = triggerMode();
     if (mode === null) return usageError(t('codex-polish.mode 无效。请设为 auto、manual 或 off。',
       'Invalid codex-polish.mode. Choose auto, manual or off.'));
     console.log(mode);
     return 0;
   }
   if (command === 'prompt') {
-    try { console.log(JSON.stringify(readEditorPrompt(cwd))); }
+    try { console.log(JSON.stringify(readEditorPrompt())); }
     catch (error) {
       console.error(error.message === 'rewrite_mode_invalid'
         ? t('无法读取有效的改写模式。请用 set-rewrite-mode 选择 normal 或 turbo。',
           'Could not read a valid rewrite mode. Use set-rewrite-mode to choose normal or turbo.')
-        : t('无法读取有效的润色提示词。可用 set-prompt --reset --profile 恢复默认。',
-          'Could not read a valid editing prompt. Use set-prompt --reset --profile to restore the default.'));
+        : t('无法读取有效的润色提示词。可用 set-prompt --reset 恢复默认。',
+          'Could not read a valid editing prompt. Use set-prompt --reset to restore the default.'));
       return 1;
     }
     return 0;
@@ -426,7 +403,7 @@ async function main(args) {
     const selectionOnly = values['selection-only'];
     if (selectionOnly && values.trigger !== 'explicit')
       return usageError(t('--selection-only 需要 --trigger explicit。', '--selection-only requires --trigger explicit.'));
-    console.log(JSON.stringify({ ...runtimeStatus(cwd, projectSettings(cwd)[0], values.trigger, { selectionOnly, noHistory: values['no-history'] }), ...languageSettings(cwd) }));
+    console.log(JSON.stringify({ ...runtimeStatus(triggerMode(), values.trigger, { selectionOnly, noHistory: values['no-history'] }), ...languageSettings() }));
     return 0;
   }
   if (command === 'decision') {
@@ -434,33 +411,26 @@ async function main(args) {
     console.log(JSON.stringify(output));
     return code;
   }
-  const save = (file, data) => values.profile ? writeProfileDefault(file, data) : writeProjectSetting(cwd, file, data, lang);
   let result;
   try {
     switch (command) {
-      case 'set-mode': result = { mode: value, file: save(MODE_FILE, value) }; break;
+      case 'set-mode': result = { mode: value, file: writeProfileSetting(MODE_FILE, value) }; break;
       case 'set-rewrite-mode': {
-        const mode = value ?? (values.profile ? 'normal' : null);
-        const file = save(REWRITE_MODE_FILE, mode);
-        result = { rewrite_mode: projectRewriteMode(cwd), file };
+        const mode = value ?? 'normal';
+        const file = writeProfileSetting(REWRITE_MODE_FILE, mode);
+        result = { rewrite_mode: mode, file };
         break;
       }
-      case 'set-decisions': result = { decisions_mode: value, file: save(DECISIONS_FILE, value) }; break;
+      case 'set-decisions': result = { decisions_mode: value, file: writeProfileSetting(DECISIONS_FILE, value) }; break;
       case 'set-history-turns': {
         const turns = parseHistoryTurns(value, lang);
-        result = { history_turns: turns, file: save(HISTORY_FILE, String(turns)) };
+        result = { history_turns: turns, file: writeProfileSetting(HISTORY_FILE, String(turns)) };
         break;
       }
-      case 'set-language': result = { file: save(LANGUAGE_FILE, value), ...languageSettings(cwd) }; break;
-      case 'set-model': {
-        if (values.reset && !values.profile) {
-          const file = writeProjectSetting(cwd, MODEL_FILE, null, lang);
-          result = { ...modelPreference(cwd), file };
-        } else {
-          result = saveModelSelection(cwd, value ?? DEFAULT_GEMINI_MODEL, values['thinking-level'] ?? DEFAULT_THINKING_LEVEL, lang);
-        }
+      case 'set-language': result = { file: writeProfileSetting(LANGUAGE_FILE, value), ...languageSettings() }; break;
+      case 'set-model':
+        result = saveModelSelection(value ?? DEFAULT_GEMINI_MODEL, values['thinking-level'] ?? DEFAULT_THINKING_LEVEL, lang);
         break;
-      }
       case 'set-prompt': {
         let data;
         if (values.reset) data = null;
@@ -476,24 +446,18 @@ async function main(args) {
             throw new RangeError(t('请输入非空的 UTF-8 文本。', 'Enter nonempty UTF-8 text.'));
           }
         }
-        result = { prompt_source: values.reset ? 'default' : 'custom', file: save(PROMPT_FILE, data) };
+        result = { prompt_source: values.reset ? 'default' : 'custom', file: writeProfileSetting(PROMPT_FILE, data) };
         break;
       }
     }
   } catch (error) {
-    if (values.profile && !(error instanceof RangeError)) {
-      console.error(t('无法保存默认设置。请检查 Codex 用户目录的写入权限。',
-        'Could not save your defaults. Check write access to your Codex profile.'));
-      return 1;
-    }
     if (windows && error.syscall === 'rename' && ['EBUSY', 'EPERM', 'EACCES'].includes(error.code)) {
-      console.error(t('无法替换项目设置文件。请关闭正在使用它的程序并检查写入权限。',
-        'Could not replace the project setting. Close programs using the file and check write access.') + ` (rename ${error.code})`);
+      console.error(t('无法替换设置文件。请关闭正在使用它的程序并检查写入权限。',
+        'Could not replace the setting. Close programs using the file and check write access.') + ` (rename ${error.code})`);
       return 1;
     }
     console.error(error instanceof RangeError ? t('无法保存设置。', "Couldn't save the setting. ") + error.message :
-      t('无法保存设置。请确认项目目录存在，而且能在 .codex 目录里写入普通文件。',
-        "Couldn't save the setting. Check that the project exists and you can write to its .codex folder.") +
+      t('无法保存设置。请检查 Codex 用户目录的写入权限。', 'Could not save the setting. Check write access to your Codex profile.') +
       (error.syscall && error.code ? ` (${error.syscall} ${error.code})` : ''));
     return 1;
   }

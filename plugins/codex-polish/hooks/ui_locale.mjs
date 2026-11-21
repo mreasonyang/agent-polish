@@ -1,6 +1,5 @@
-import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { readProjectSetting } from './project_setting.mjs';
+import { readProfileSetting } from './profile_setting.mjs';
 
 export const LANGUAGE_FILE = 'codex-polish.language';
 export const LANGUAGES = ['auto', 'zh', 'en'];
@@ -41,22 +40,15 @@ export function systemLanguage(env = process.env) {
   return process.platform === 'darwin' ? macLanguage() : 'en';
 }
 
-export function languageSettings(cwd, env = process.env) {
-  if (cwd === null) return { language_mode: 'auto', ui_language: systemLanguage(env) };
-  let directory;
-  try {
-    directory = path.resolve(cwd ?? '.');
-  } catch {
-    directory = '';
-  }
-  const [saved] = readProjectSetting(directory, LANGUAGE_FILE, 16);
+export function languageSettings(env = process.env) {
+  const saved = readProfileSetting(LANGUAGE_FILE, 16);
   const normalized = saved?.toLowerCase();
   const mode = normalized === 'en' || normalized === 'zh' ? normalized : 'auto';
   return { language_mode: mode, ui_language: mode === 'auto' ? systemLanguage(env) : mode };
 }
 
-export function language(cwd, env) {
-  return languageSettings(cwd, env).ui_language;
+export function language(env) {
+  return languageSettings(env).ui_language;
 }
 
 export function tr(zh, en, lang) {

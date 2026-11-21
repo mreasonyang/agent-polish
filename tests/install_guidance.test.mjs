@@ -9,8 +9,8 @@ import { PassThrough } from 'node:stream';
 import { setImmediate } from 'node:timers/promises';
 import { chooseSetupModel, chooseSetupMode, discoverSetupModels, manageOpenAI, setupIssues, showSetupGuidance, doctor } from '../scripts/install.mjs';
 import { readOpenAIKey } from '../plugins/codex-polish/hooks/openai_credentials.mjs';
-import { projectGeminiModel } from '../plugins/codex-polish/hooks/preferences.mjs';
-import { rewriteModeSettings } from '../plugins/codex-polish/hooks/rewrite_mode.mjs';
+import { decisionsMode } from '../plugins/codex-polish/hooks/preferences.mjs';
+import { writeProfileSetting } from '../plugins/codex-polish/hooks/profile_setting.mjs';
 import { catalog } from '../plugins/codex-polish/skills/codex-polish/scripts/acp_models.mjs';
 import { makeProject, windows, homeEnv, useTestProfile } from './hook_fixture.mjs';
 
@@ -102,10 +102,12 @@ test('setup reports actionable blockers and offers the relevant official key pag
 });
 test('rewrite mode picker responds to arrows, Enter and cancellation and restores the terminal', async (t) => {
   const down = '\x1b[B', up = '\x1b[A', enter = '\r';
-  for (const [name, keys, expected, lang, initiallyRaw] of [
+  for (const [name, keys, expected, lang, initiallyRaw, current] of [
     ['Enter accepts the default', [enter], 'normal', 'en', false],
     ['Down selects Turbo', [down, enter], 'turbo', 'zh', false],
     ['Up returns to Normal', [down, up, enter], 'normal', 'en', true],
+    ['Enter keeps the saved Turbo mode', [enter], 'turbo', 'zh', false, 'turbo'],
+    ['Up switches saved Turbo back to Normal', [up, enter], 'normal', 'en', false, 'turbo'],
     ['2 leaves Normal highlighted', ['2', enter], 'normal', 'en', false],
     ['1 does not confirm a choice', ['1', down, enter], 'turbo', 'en', false],
     ['Escape cancels a pending selection', [down, '\x1b'], null, 'zh', false],
@@ -124,11 +126,12 @@ test('rewrite mode picker responds to arrows, Enter and cancellation and restore
       t.after(() => { input.destroy(); output.destroy(); });
       let display = '';
       output.setEncoding('utf8').on('data', (chunk) => { display += chunk; });
-      const selection = chooseSetupMode(lang, input, output);
+      const selection = chooseSetupMode(lang, current, input, output);
       await setImmediate();
       assert.equal(input.isRaw, true);
       assert.match(display, /Normal/);
       assert.match(display, /Turbo/);
+      if (current === 'turbo') assert.match(display, /❯ ● Turbo(?:（当前）| \(current\))/);
       assert.match(display, lang === 'en' ? /Enter/i : /回车|Enter/);
       assert.match(display, /↑/);
       assert.match(display, /↓/);
@@ -150,7 +153,7 @@ test('closing the terminal during selection cancels the picker', async () => {
   const input = new PassThrough(), output = new PassThrough();
   input.isTTY = output.isTTY = true;
   input.setRawMode = () => input;
-  const selection = chooseSetupMode('en', input, output);
+  const selection = chooseSetupMode('en', undefined, input, output);
   input.destroy();
   assert.equal(await selection, null);
   output.destroy();
@@ -217,6 +220,7 @@ test('private key entry supports enrollment, replacement, cancellation, failed v
     useTestProfile(t);
     const first = 'test-only-first', second = 'test-only-second';
     const enter = '\r', down = '\x1b[B';
+    writeProfileSetting('codex-polish.decisions', 'off');
     const enroll = await openAIFlow(lang, true, [down, enter, first, enter]);
     assert.equal(enroll.ok, true);
     assert.match(enroll.display.split('\n')[0], /OpenAI Decisions API.*Gemini/);
@@ -225,6 +229,8 @@ test('private key entry supports enrollment, replacement, cancellation, failed v
     assert.match(enroll.display, lang === 'en' ? /current question, draft, and any custom polishing prompt/ : /本轮问题、草稿和你设置的自定义润色提示词/);
     assert.match(enroll.display, lang === 'en' ? /pays for these API calls/ : /API 调用由你的 OpenAI 账号付费/);
     assert.equal(readOpenAIKey(), first);
+    assert.equal(decisionsMode(), 'auto');
+    writeProfileSetting('codex-polish.decisions', 'off');
     assert.equal((await openAIFlow(lang, true, [])).display, '');
     for (const exit of [enter, '\x03', '\x04', '\x1b', null]) {
       const keys = exit === enter ? [down, enter, enter] : [down, enter, second, exit];
@@ -241,6 +247,7 @@ test('private key entry supports enrollment, replacement, cancellation, failed v
     assert.equal(replace.ok, true);
     assert.doesNotMatch(replace.display, /test-only/);
     assert.equal(readOpenAIKey(), second);
+    assert.equal(decisionsMode(), 'off');
     assert.equal((await openAIFlow(lang, false, [down, down, enter])).ok, true);
     assert.equal(readOpenAIKey(), null);
     assert.equal((await openAIFlow(lang, true, [])).display, '');
@@ -347,7 +354,7 @@ test('model picker selects model and thinking level together, using account meta
     const discover = t.mock.fn((_, model) => model ? targetResult : accountResult);
     let display = '';
     output.on('data', bytes => { display += bytes.toString(); });
-    const selection = chooseSetupModel(checks, lang, input, output, discover);
+    const selection = chooseSetupModel({ ...checks, gemini_model_configured: false }, lang, input, output, discover);
     for (const key of keys) { await setImmediate(); input.write(key); }
     assert.deepEqual(await selection, expected);
     if (expected?.model === argon) {
@@ -362,6 +369,54 @@ test('model picker selects model and thinking level together, using account meta
     assert.equal(!!input.isRaw, false);
     input.destroy(); output.destroy();
   }
+});
+
+test('model picker reopens the saved model and thinking level and looks up the catalog only on request', async t => {
+  const enter = '\r', down = '\x1b[B', up = '\x1b[A', cancel = '\x03';
+  const hydrogen = checks.gemini_model, neon = 'gemini-4-neon', argon = 'gemini-4-argon';
+  const available = {
+    models: [{ id: neon, name: 'Neon' }, { id: argon, name: 'Argon' }],
+    current_model: neon, current_thinking_level: 'high', thinking_levels: [{ id: 'high' }, { id: 'medium' }]
+  };
+  const argonDetails = { ...available, current_model: argon };
+  const lookup = [down, down, enter];
+  async function pick({ model = argon, level = 'high', lang = 'en', keys = [enter], account = available,
+    details = argonDetails, calls = [], expected = { model, thinkingLevel: level } }) {
+    const input = new PassThrough(), output = new PassThrough();
+    input.setRawMode = enabled => { input.isRaw = enabled; };
+    const discover = t.mock.fn((_, id) => id ? details : account);
+    let display = '';
+    output.on('data', chunk => { display += chunk; });
+    try {
+      const status = { ...checks, gemini_model: model, gemini_thinking_level: level };
+      const result = chooseSetupModel(status, lang, input, output, discover);
+      for (const key of keys) { await setImmediate(); input.write(key); }
+      await setImmediate();
+      input.end();
+      assert.deepEqual(await result, expected);
+      assert.deepEqual(discover.mock.calls.map(call => call.arguments[1]), calls);
+      return display;
+    } finally { input.destroy(); output.destroy(); }
+  }
+  const savedHydrogen = await pick({ model: hydrogen, lang: 'zh', keys: [enter, enter] });
+  assert.match(savedHydrogen, /❯ ● Gemini 4 Hydrogen/);
+  assert.match(savedHydrogen, /❯ ● 高/);
+  const fixedHydrogen = await pick({ model: hydrogen, level: 'fixed', keys: [enter, enter] });
+  assert.match(fixedHydrogen, /❯ ● Fixed by the model/);
+  assert.doesNotMatch(fixedHydrogen, /Medium/);
+  assert.match(await pick({}), /❯ ● Keep gemini-4-argon · High/);
+  assert.match(await pick({ level: 'fixed', lang: 'zh' }), /❯ ● 保留 gemini-4-argon · 由模型固定/);
+  await pick({ keys: [down, enter, enter], expected: { model: hydrogen, thinkingLevel: 'medium' } });
+  const savedCatalog = await pick({ keys: [...lookup, enter, enter], calls: [undefined, argon] });
+  assert.match(savedCatalog, /❯ ● Argon/);
+  assert.match(savedCatalog, /❯ ● High/);
+  await pick({ keys: [...lookup, up, enter, enter], calls: [undefined], expected: { model: neon, thinkingLevel: 'medium' } });
+  await pick({ keys: [...lookup, enter, enter], level: 'xhigh', calls: [undefined, argon],
+    expected: { model: argon, thinkingLevel: 'medium' } });
+  await pick({ keys: [...lookup, enter], details: { current_model: argon, thinking_levels: [] },
+    calls: [undefined, argon], expected: { model: argon, thinkingLevel: 'fixed' } });
+  await pick({ keys: [...lookup, cancel], calls: [undefined], expected: null });
+  await pick({ keys: lookup, account: null, calls: [undefined], expected: null });
 });
 
 test('account picker shows both IDs when provider labels differ only in surrounding whitespace', async () => {
@@ -379,7 +434,7 @@ test('account picker shows both IDs when provider labels differ only in surround
   input.destroy(); output.destroy();
 });
 
-test('interactive setup saves mode and model once in the Codex profile from any launch directory', async t => {
+test('interactive setup can change saved profile defaults from any launch directory', async t => {
   const { home, project, cwd } = makeProject(t);
   const downloads = join(home, 'Downloads');
   const extracted = join(downloads, 'codex-polish');
@@ -394,6 +449,7 @@ test('interactive setup saves mode and model once in the Codex profile from any 
     fs.cpSync(new URL('../' + folder, import.meta.url), join(extracted, folder), { recursive: true });
   const packaged = await import(pathToFileURL(join(extracted, 'scripts/install.mjs')).href);
   const localSettings = join(project, '.codex');
+  fs.mkdirSync(localSettings, { recursive: true });
   fs.writeFileSync(join(localSettings, 'codex-polish.rewrite-mode'), 'normal\n');
   fs.writeFileSync(join(localSettings, 'codex-polish.model'), 'gemini-4-neon\n');
 
@@ -420,22 +476,29 @@ test('interactive setup saves mode and model once in the Codex profile from any 
       const setup = launch === 'extracted' ? packaged.showSetupGuidance : showSetupGuidance;
       const options = {
         interactive: true,
-        chooseMode(lang) { assert.equal(lang, 'en'); choices.push('mode'); return 'turbo'; },
+        chooseMode(lang, current) { assert.equal(lang, 'en'); choices.push(['mode', current]); return current ? 'turbo' : 'normal'; },
         chooseModel() { choices.push('model'); return { model: 'gemini-4-argon', thinkingLevel: 'high' }; },
+        offerOpenAI() {},
         prompt: message => assert.fail('Unexpected question: ' + message)
       };
       assert.equal(await setup(options), true);
       process.chdir(project);
       assert.equal(await setup(options), true);
-      assert.deepEqual(choices, ['mode', 'model']);
+      assert.deepEqual(choices, [['mode', undefined], 'model', ['mode', 'normal'], 'model']);
       assert.equal(log.mock.callCount(), 0);
       const defaults = join(profile, 'codex-polish', 'settings');
       assert.equal(fs.readFileSync(join(defaults, 'codex-polish.rewrite-mode'), 'utf8'), 'turbo\n');
       assert.equal(fs.readFileSync(join(defaults, 'codex-polish.model'), 'utf8'), 'gemini-4-argon high\n');
-      assert.equal(rewriteModeSettings(newProject).rewrite_mode, 'turbo');
-      assert.equal(projectGeminiModel(newProject), 'gemini-4-argon');
-      assert.equal(rewriteModeSettings(cwd).rewrite_mode, 'normal');
-      assert.equal(projectGeminiModel(cwd), 'gemini-4-neon');
+      const preferences = fileURLToPath(new URL('../plugins/codex-polish/hooks/preferences.mjs', import.meta.url));
+      for (const directory of [newProject, cwd]) {
+        const result = spawnSync(process.execPath, [preferences, 'check'], { cwd: directory, encoding: 'utf8' });
+        assert.equal(result.status, 0, result.stderr);
+        const status = JSON.parse(result.stdout);
+        assert.equal(status.rewrite_mode, 'turbo');
+        assert.equal(status.gemini_model, 'gemini-4-argon');
+        assert.equal(status.gemini_thinking_level, 'high');
+      }
+      assert.equal(fs.readFileSync(join(localSettings, 'codex-polish.model'), 'utf8'), 'gemini-4-neon\n');
       for (const dir of [cwd, home, downloads, extracted, newProject]) assert.equal(fs.existsSync(join(dir, '.codex')), false);
     });
   }
@@ -475,23 +538,24 @@ test('interactive setup chooses an unsaved mode before offering to install agy',
   }
 });
 
-test('interactive setup offers only missing defaults and cancellation leaves them unsaved', async () => {
+test('setup opens saved choices, never writes on Enter for unchanged settings, and stops when cancelled', async () => {
   const fresh = { ...checks, rewrite_mode_configured: false, gemini_model_configured: false };
-  for (const [options, status, expected] of [
-    [{ interactive: false }, fresh, []],
-    [{ dependencyOnly: true }, fresh, []],
-    [{}, { ...fresh, rewrite_mode_configured: true }, ['model']],
-    [{}, { ...fresh, gemini_model_configured: true }, ['mode']],
-    [{}, fresh, ['mode', 'model']]
+  for (const [options, status, selectedMode, selectedModel, expected] of [
+    [{ interactive: false }, fresh, null, null, []],
+    [{ dependencyOnly: true }, checks, null, null, []],
+    [{}, fresh, null, null, ['mode']],
+    [{}, checks, null, null, ['mode']],
+    [{}, checks, 'normal', null, ['mode', 'model']],
+    [{}, checks, 'normal', { model: checks.gemini_model, thinkingLevel: checks.gemini_thinking_level }, ['mode', 'model', 'openai']]
   ]) {
     const offered = [];
     const ok = await showSetupGuidance({
       interactive: true, ...options, check: () => status,
-      chooseMode() { offered.push('mode'); return null; },
-      chooseModel() { offered.push('model'); return null; },
-      offerOpenAI() {},
-      saveRewriteMode: () => assert.fail('no mode selected'),
-      saveModel: () => assert.fail('no model selected'),
+      chooseMode() { offered.push('mode'); return selectedMode; },
+      chooseModel() { offered.push('model'); return selectedModel; },
+      offerOpenAI() { offered.push('openai'); },
+      saveRewriteMode: () => assert.fail('no change to mode'),
+      saveModel: () => assert.fail('no change to model'),
       prompt: () => assert.fail('unexpected text prompt')
     });
     assert.equal(ok, true);
@@ -523,6 +587,8 @@ test('interactive dependency prompts, opt-ins, browser consent, failure messagin
       installDependency,
       dependencyOnly,
       offerOpenAI() {},
+      chooseMode: () => checks.rewrite_mode,
+      chooseModel: () => ({ model: checks.gemini_model, thinkingLevel: checks.gemini_thinking_level }),
       check() {
         reads++;
         return {
@@ -550,6 +616,7 @@ test('interactive dependency prompts, opt-ins, browser consent, failure messagin
   }
   let result = await setup({ interactive: false });
   assert.match(result.text, /--install-agy/);
+  assert.match(result.text, /interactive terminal/);
   assert.equal(result.prompts, 0);
   assert.equal(result.installs, 0);
   assert.equal(result.opens, 0);
@@ -569,6 +636,7 @@ test('interactive dependency prompts, opt-ins, browser consent, failure messagin
     result = await setup({ installDependency: true, interactive: false, dependencyOnly: true, missing });
     assert.equal(result.installs, Number(missing));
     assert.equal(result.prompts, 0);
+    assert.doesNotMatch(result.text, /interactive terminal/);
     assert.equal(result.ok, true);
     assert.ok(!result.text.includes('Explain what DNS'));
   }

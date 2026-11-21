@@ -82,7 +82,7 @@ function setup(t, { savedKey = false } = {}) {
   const session = randomUUID();
   const turn = randomUUID();
   const project = join(root,'project');
-  mkdirSync(join(project, '.codex'), { recursive: true });
+  mkdirSync(project);
   const bin = join(root, 'bin');
   mkdirSync(bin);
   // The payload policy checks availability but never starts the provider.
@@ -92,7 +92,7 @@ function setup(t, { savedKey = false } = {}) {
   if (savedKey) saveOpenAIKey('plugin-test-key');
   const transcript = join(env.CODEX_HOME, 'sessions/2026/11/19', 'rollout-2026-11-19T11-30-00-'+session+'.jsonl');
   function cli(script, args, data) {
-    return run(script, args, {env,input:JSON.stringify(data)});
+    return run(script, args, {cwd:project,env,input:JSON.stringify(data)});
   }
   function configure(exchanges, currentQuestion = 'current user, not previous', verifiedIndex) {
     const records = [{type:'session_meta',payload:{id:session,cwd:project}}];
@@ -189,16 +189,16 @@ test('missing, unauthorized or unreadable history falls back', t => {
   ctx.assertProviders();
 });
 
-test('the current project history count applies only to Gemini', t => {
+test('the saved profile history count applies only to Gemini', t => {
   const ctx = setup(t, { savedKey: true });
   const exchanges = Array.from({length:12},(_,i)=>['question '+i,'reply '+i]);
   ctx.configure(exchanges);
   for (const turns of [10,5,1,0]) {
-    const set = ctx.cli(hook,['set-history-turns',String(turns),'--cwd',ctx.project]);
+    const set = ctx.cli(hook,['set-history-turns',String(turns)]);
     assert.equal(set.status,0,set.stderr);
     ctx.assertProviders({geminiHistory:turns ? history(exchanges.slice(-turns)) : undefined});
   }
-  writeFileSync(join(ctx.project,'.codex/codex-polish.history-turns'),'100\n');
+  writeFileSync(join(ctx.env.CODEX_HOME, 'codex-polish/settings/codex-polish.history-turns'),'100\n');
   assert.ok(json(ctx.cli(hook,['check','--cwd',ctx.project])).blockers.includes('history_turns_invalid'));
   const flags = ['--cwd', ctx.project, ...ctx.workflowFlags(ctx.project)];
   assert.notEqual(ctx.cli(formatter,flags,prompt).status,0);
@@ -232,7 +232,7 @@ test('Gemini receives all configured exchanges even when their combined text exc
   const ctx = setup(t, { savedKey: true });
   const exchanges = [['更早的问题','答复'], ['第二个问题','长'.repeat(1000)], ['最近的问题','近'.repeat(5000)]];
   ctx.configure(exchanges);
-  const set = ctx.cli(hook,['set-history-turns','10','--cwd',ctx.project]);
+  const set = ctx.cli(hook,['set-history-turns','10']);
   assert.equal(set.status,0,set.stderr);
   ctx.assertProviders({geminiHistory:history(exchanges)});
 });
@@ -241,12 +241,15 @@ test('one-turn history opt-out preserves the profile prompt and leaves the next 
   const ctx = setup(t, { savedKey: true });
   const exchanges = [['  背景是什么？\r\n', '  数据在 "A\\B" 里。\n']];
   const editorPrompt = '保留 "单位" 和项目符号。\r\n';
+  const { file } = json(ctx.cli(hook, ['set-history-turns', '4']));
   ctx.setPrompt(editorPrompt);
   const baseline = ctx.judge().requests[0];
   ctx.configure(exchanges);
   ctx.assertProviders({acpFlags:['--no-history'], editorPrompt});
   const withHistory = ctx.assertProviders({geminiHistory:history(exchanges), editorPrompt});
   assert.deepEqual(withHistory, baseline);
+  assert.equal(json(ctx.cli(hook, ['check'])).history_turns, 4);
+  assert.equal(readFileSync(file, 'utf8'), '4\n');
 });
 
 test('the Decisions input limit does not trim the ACP frame or staged editor role', t => {
@@ -292,7 +295,7 @@ test('ACP rechecks the rewrite mode before sending and preserves the turbo histo
   const exchanges = [['上次改了什么？', '只改了文案。']];
   ctx.configure(exchanges);
   ctx.setPrompt('Keep all caveats.');
-  const mode = join(ctx.project, '.codex/codex-polish.rewrite-mode');
+  const mode = join(ctx.env.CODEX_HOME, 'codex-polish/settings/codex-polish.rewrite-mode');
   const roleFile = join(ctx.root, 'staged-agent.md');
   for (const [staged, current] of [['normal', 'turbo'], ['turbo', 'normal'], ['turbo', 'broken']]) {
     const flags = ['--editor-role-file', roleFile, '--rewrite-mode', staged];
@@ -330,7 +333,7 @@ test('no ACP frame is written when the approved route, trigger or selected model
     incomplete.splice(incomplete.indexOf(flag), 2);
     block(incomplete);
   }
-  const set = (cmd, arg) => assert.equal(ctx.cli(hook, [cmd, arg, '--cwd', ctx.project]).status, 0);
+  const set = (cmd, arg) => assert.equal(ctx.cli(hook, [cmd, arg]).status, 0);
   set('set-mode', 'manual'); block(base);
   block(base.map(x => x === 'auto' ? 'explicit' : x));
   const explicit = ['--cwd', ctx.project, ...ctx.workflowFlags(ctx.project, [], 'explicit')];
@@ -345,7 +348,7 @@ test('no ACP frame is written when the approved route, trigger or selected model
   const withDecision = base.map(x => x === 'acp' ? 'decisions' : x);
   assert.equal(render(withDecision).status, 0);
   set('set-decisions', 'off'); block(withDecision);
-  assert.equal(ctx.cli(hook, ['set-model', 'gemini-4-hydrogen', '--thinking-level', 'high', '--cwd', ctx.project]).status, 0);
+  assert.equal(ctx.cli(hook, ['set-model', 'gemini-4-hydrogen', '--thinking-level', 'high']).status, 0);
   block(base);
   assert.equal(render([...base, '--thinking-level', 'high']).status, 0);
   set('set-model', 'gemini-other'); block(base);
@@ -457,7 +460,7 @@ test('an explicit rewrite sends the selected earlier question and draft, its pre
   assert.equal(frame(edit,['--turns-back','4']), null);
   assert.deepEqual(frame({...edit,rewrite_request:key},pinned), {...target, rewrite_request:key, history:history([older])});
   assert.equal(frame({...edit,rewrite_request:[]},pinned), null);
-  ctx.cli(hook,['set-history-turns','0','--cwd',ctx.project]);
+  ctx.cli(hook,['set-history-turns','0']);
   assert.deepEqual(frame(edit,pinned), edit, 'zero history still permits a requested old reply');
   ctx.setPrompt('Keep regional spelling.');
   assert.ok(stage('explicit').endsWith('Keep regional spelling.'));
@@ -465,7 +468,7 @@ test('an explicit rewrite sends the selected earlier question and draft, its pre
 
   assert.equal(json(ctx.cli(hook,['check','--cwd',ctx.project])).rewrite_mode,'normal');
   for (const mode of ['normal', 'turbo']) {
-    json(ctx.cli(hook, ['set-rewrite-mode', mode, '--cwd', ctx.project]));
+    json(ctx.cli(hook, ['set-rewrite-mode', mode]));
     const automatic = ['--cwd', ctx.project, ...ctx.workflowFlags(ctx.project)];
     for (const [data, flags] of [[target, pinned], [edit, []]]) {
       const result = ctx.cli(formatter, [...automatic, ...flags], { sessionId:prompt.sessionId, ...data });

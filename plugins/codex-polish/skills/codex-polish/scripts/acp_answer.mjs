@@ -2,19 +2,20 @@
 import { isAbsolute } from 'node:path';
 import { parseArgs } from 'node:util';
 import { validModelId, validThinkingLevel } from '../../../hooks/preferences.mjs';
+import { language } from '../../../hooks/ui_locale.mjs';
 import { catalog, nextConfigStep } from './acp_models.mjs';
 import { readACP } from './acp_reader.mjs';
 import { isMain, readHostLine, readLimited, record, utf8, writeHostPages } from './cli_io.mjs';
 import { delivery } from './format_reply.mjs';
 import { validateSourceText } from './rewrite_material.mjs';
 
-export function completedAnswer(input, { sessionId, model, thinkingLevel, cwd, selection, turnsBack, trigger }) {
+export function completedAnswer(input, { sessionId, model, thinkingLevel, cwd, selection, turnsBack, trigger, bodyOnly = false }) {
   validateSourceText(sessionId, 4096);
   if (!validModelId(model) || !validThinkingLevel(thinkingLevel) || !isAbsolute(cwd) ||
       (turnsBack !== undefined && (selection || !Number.isSafeInteger(turnsBack) || turnsBack < 1)))
     throw Error('invalid_options');
   if (!record(input) || typeof input.output !== 'string') throw Error('invalid_input');
-  const { draft, question, display_language, source_label } = input;
+  const { draft, question, source_label } = input;
   validateSourceText(draft);
   if (turnsBack || question !== undefined) validateSourceText(question);
 
@@ -27,7 +28,11 @@ export function completedAnswer(input, { sessionId, model, thinkingLevel, cwd, s
     if (nextConfigStep(config, model, 3n, thinkingLevel).next !== 'submit_prompt')
       throw Error('acp_thinking_level_unavailable');
   }
-  const result = delivery({ draft, question, candidate: state.text, display_language, source_label },
+  // An explicit rewrite shows its source even when the host omits the label language.
+  let displayLanguage = input.display_language;
+  if (bodyOnly) displayLanguage = undefined;
+  else if (displayLanguage === undefined && trigger === 'explicit') displayLanguage = language();
+  const result = delivery({ draft, question, candidate: state.text, display_language: displayLanguage, source_label },
     { cwd, selection, turnsBack, trigger });
   return result.display_text ?? result.text;
 }
@@ -37,14 +42,14 @@ if (isMain(import.meta.url)) {
     const { values } = parseArgs({ options: {
       'session-id': { type: 'string' }, model: { type: 'string' }, 'thinking-level': { type: 'string' },
       cwd: { type: 'string' }, trigger: { type: 'string' }, selection: { type: 'boolean' }, 'turns-back': { type: 'string' },
-      'host-input': { type: 'boolean' }, help: { type: 'boolean', short: 'h' },
+      'body-only': { type: 'boolean' }, 'host-input': { type: 'boolean' }, help: { type: 'boolean', short: 'h' },
     } });
-    if (values.help) console.log('Usage: acp_answer.mjs --session-id ID --model MODEL --thinking-level LEVEL --cwd DIR [--trigger auto|explicit] [--selection | --turns-back N] [--host-input]');
+    if (values.help) console.log('Usage: acp_answer.mjs --session-id ID --model MODEL --thinking-level LEVEL --cwd DIR [--trigger auto|explicit] [--selection | --turns-back N] [--body-only] [--host-input]');
     else {
       const input = values['host-input'] ? await readHostLine() : await readLimited(process.stdin);
       const markdown = completedAnswer(JSON.parse(utf8(input)), {
         cwd: values.cwd, sessionId: values['session-id'], model: values.model, thinkingLevel: values['thinking-level'],
-        trigger: values.trigger, selection: values.selection, turnsBack: values['turns-back'] === undefined ? undefined : Number(values['turns-back']),
+        trigger: values.trigger, selection: values.selection, bodyOnly: values['body-only'], turnsBack: values['turns-back'] === undefined ? undefined : Number(values['turns-back']),
       });
       if (values['host-input']) await writeHostPages(markdown);
       else process.stdout.write(markdown);

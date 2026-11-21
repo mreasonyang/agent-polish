@@ -65,13 +65,16 @@ export function makeProject(t) {
   const cwd = path.join(project, 'src');
   fs.mkdirSync(cwd, { recursive: true });
   fs.mkdirSync(path.join(project, '.git'));
-  fs.mkdirSync(path.join(project, '.codex'));
   const env = { ...homeEnv(home), XDG_CACHE_HOME: path.join(home, 'cache'), CODEX_HOME: path.join(home, 'profile'),
     PATH: process.env.PATH, LC_ALL: 'en_US.UTF-8' };
-  const mode = path.join(project, '.codex/codex-polish.mode');
-  const call = (args, options = {}) => run(preferences, [...args, '--cwd', options.where || cwd], { env, ...options });
+  const settings = path.join(env.CODEX_HOME, 'codex-polish', 'settings');
+  const mode = path.join(settings, 'codex-polish.mode');
+  const call = (args, { where = cwd, ...options } = {}) => {
+    const runtime = args[0] === 'check' || args[0] === 'decision';
+    return run(preferences, runtime ? [...args, '--cwd', where] : args, { cwd: where, env, ...options });
+  };
   const check = opts => json(call(['check'], opts));
-  return { home, project, cwd, mode, env, call, check };
+  return { home, project, cwd, settings, mode, env, call, check };
 }
 
 export function run(script, args = [], options = {}) {

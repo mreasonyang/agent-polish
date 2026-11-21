@@ -7,7 +7,7 @@
 ## 改哪里
 
 - `scripts/install.mjs` 和两个 `.command` 启动脚本负责安装、更新、环境检查和卸载。
-- `plugins/codex-polish/` 里有插件清单、钩子和两个技能。`codex-polish` 经 ACP 把选定的草稿交给 Gemini，并排版显示完整回复。主动要求润色时使用 Turbo，仅在 hook 以普通模式自动触发时才使用可选的 OpenAI 风格检查。`codex-polish-setup` 负责设置、选择模型和检查环境，详见[首次配置与登录指南](plugins/codex-polish/skills/codex-polish-setup/references/credentials.md)。改动用户提示或文档时，请同步更新中英文。
+- `plugins/codex-polish/` 里有插件清单、钩子和两个技能。`codex-polish` 经 ACP 把选定的草稿交给 Gemini，并排版显示完整回复。主动要求润色时使用 Turbo，仅在 hook 以普通模式自动触发时才使用可选的 OpenAI 风格检查。`codex-polish-setup` 负责管理当前 Codex 配置的润色设置、选择模型和检查环境，详见[首次配置与登录指南](plugins/codex-polish/skills/codex-polish-setup/references/credentials.md)。改动用户提示或文档时，请同步更新中英文。
 - 完整源码的 `tests/` 放回归测试，`evaluation/` 放评测脚本和合成样本。[评测说明](evaluation/README.md)
 
 ## 本地测试与打包
@@ -25,7 +25,7 @@ npm pack --ignore-scripts --pack-destination dist
 
 ## 反馈问题
 
-请在 GitHub Issues 提交普通问题，附上复现步骤、预期和实际结果，并注明操作系统、Node.js、Codex CLI 和 `agy` 版本。在遇到问题的项目里对 Codex 说 **“检查回复润色环境”** 可获取诊断信息。分享前请删去密钥、登录凭据、私人路径和对话原文。[提交问题](https://github.com/mreasonyang/codex-polish/issues)
+请在 GitHub Issues 提交普通问题，附上复现步骤、预期和实际结果，并注明操作系统、Node.js、Codex CLI 和 `agy` 版本。在遇到问题的聊天里对 Codex 说 **“检查回复润色环境”** 可获取诊断信息。分享前请删去密钥、登录凭据、私人路径和对话原文。[提交问题](https://github.com/mreasonyang/codex-polish/issues)
 
 安全漏洞请私下报告。[安全说明](SECURITY.md)
 

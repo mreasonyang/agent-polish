@@ -2,9 +2,9 @@
 
 [English](credentials.en.md)
 
-在运行 Codex 的机器上，从任意目录交互运行 `setup`，或在 macOS 的 Finder 里双击安装脚本。首次安装时，用 **↑ / ↓** 选择自动润色的改写模式，按 **回车** 确认。使用内置提示词时，**普通（Normal）** 可以保留清晰原稿，也支持可选的 OpenAI Decisions API。**Turbo** 跳过这项检查，请 Gemini 改写草稿。
+在运行 Codex 的机器上，从任意目录交互运行 `setup`，或在 macOS 的 Finder 里双击安装脚本。用 **↑ / ↓** 选择自动润色的改写模式，按 **回车** 确认。使用内置提示词时，**普通（Normal）** 可以保留清晰原稿，也支持可选的 OpenAI Decisions API。**Turbo** 跳过这项检查，请 Gemini 改写草稿。
 
-`agy` 可用后，选择 Gemini 模型和思考等级。默认是 **Gemini 4 Hydrogen · 中等（Medium）**。也可以查看 Antigravity 账号的其他模型，选择该模型支持的等级。安装时的选择适用于同一份 Codex 配置下的所有项目。想单独调整时，在项目聊天里说“这个项目用 Gemini 润色时，把思考等级调到高”。
+`agy` 可用后，选择 Gemini 模型和思考等级。默认是 **Gemini 4 Hydrogen · 中等（Medium）**。也可以查看 Antigravity 账号的其他模型，选择该模型支持的等级。同一份 Codex 配置下的所有聊天和目录共用这套设置。可以在聊天里说“切换到 Turbo 模式”或“把 Gemini 的思考等级调到高”，保存后立即生效。再运行一次 `setup` 就能在终端查看这些选择，按**回车**即可保留。
 
 ## 准备 Antigravity
 
@@ -12,7 +12,7 @@
 
 只有 Antigravity 提示需要登录时，才需要在自己的终端运行 `agy` 登录。如果终端找不到命令，在 Windows PowerShell 中运行 `& "$env:LOCALAPPDATA\agy\bin\agy.exe"`，macOS 或 Linux 上运行 `~/.local/bin/agy`。登录后回 Codex 再试一次改写。[ACP 认证说明](https://antigravity.google/docs/ide/extensions/acp#authentication)
 
-项目默认自动润色。改写整条答复时，Google 收到的是那条答复、它所回答的问题，以及你这次提出的改写要求。改写材料按原文发送，包括其中的代码、命令、路径或密钥。在当前 Codex 配置中保存过自定义润色提示词时，这份提示词也会发给 Google。默认还会附上原答复之前最多 2 轮问答。润色选段时省略原问题和历史。要求“只把这段原文发给 Gemini”时，只发送选段，使用内置 Turbo 提示词。在 Codex 的 **设置 → Hooks**（CLI 输入 `/hooks`）里信任插件的 `UserPromptSubmit`，再开一个项目聊天，问 **“用一句话解释 DNS。”** 如果想自己决定何时润色，可以说 **“只在我要求时润色”**。说“返回结果 polish”就会用 Turbo，直接把草稿交给 Gemini。信任 hook 前，这次请求不附带以前的问答。想停用就说 **“关闭回复润色”**。
+默认启用自动润色。改写整条答复时，Google 收到的是那条答复、它所回答的问题，以及你这次提出的改写要求。改写材料按原文发送，包括其中的代码、命令、路径或密钥。在当前 Codex 配置中保存过自定义润色提示词时，这份提示词也会发给 Google。默认还会附上原答复之前最多 2 轮问答。润色选段时省略原问题和历史。要求“只把这段原文发给 Gemini”时，只发送选段，使用内置 Turbo 提示词。在 Codex 的 **设置 → Hooks**（CLI 输入 `/hooks`）里信任插件的 `UserPromptSubmit`，再开一个聊天，问 **“用一句话解释 DNS。”** 如果想自己决定何时润色，可以说 **“只在我要求时润色”**。说“返回结果 polish”就会用 Turbo，直接把草稿交给 Gemini。信任 hook 前，这次请求不附带以前的问答。想停用就说 **“关闭回复润色”**。
 
 ## 选配 OpenAI Decisions API
 
@@ -20,7 +20,7 @@
 
 1. 在承担费用的 OpenAI 项目中创建 API 密钥。若使用受限密钥，请允许调用 `POST /v1/decisions`，并确认项目可以使用 `gpt-6-luna`。[OpenAI API 密钥](https://platform.openai.com/api-keys) · [API 账单](https://platform.openai.com/account/billing/overview)
 2. 在安装时选择配置 OpenAI Decisions API，或在运行插件的机器上使用同一份 Codex 配置，运行 `npx @kyun.si/codex-polish@beta openai`。Windows PowerShell 中运行 `npx.cmd @kyun.si/codex-polish@beta openai`。用源码安装时，在仓库根目录运行 `node scripts/install.mjs openai`。只在终端提示隐藏输入时粘贴密钥。插件将其保存在 `$CODEX_HOME/codex-polish/credentials/openai.key`。
-3. 以后可在同一菜单里更换或移除密钥，卸载也会删除本地副本。若只想关闭本项目的检查，可说**“这个项目只用 Gemini 改写”**。
+3. 以后可在同一菜单里更换或移除密钥，卸载也会删除本地副本。要关闭这份 Codex 配置下的检查，可以说**“以后只用 Gemini 改写”**。
 
 插件会忽略 `OPENAI_API_KEY` 环境变量。
 
@@ -48,4 +48,4 @@ $env:GEMINI_API_KEY = [System.Net.NetworkCredential]::new('', (Read-Host 'Gemini
 
 用企业身份时，设置 `CODEX_POLISH_AGY_AUTH=agent-platform`，并由管理员给运行环境配好 Application Default Credentials（ADC）、Google Cloud 项目和区域。这三种方式都通过同一个官方 `agy acp` 进程提交改写。[Antigravity ACP 认证](https://antigravity.google/docs/ide/extensions/acp#authentication)
 
-更换身份后，新开项目聊天，说 **“选择改写模型”**。成功列出模型表示当前账号已连通，这一步只读取模型列表。
+更换身份后，新开聊天，说 **“选择改写模型”**。成功列出模型表示当前账号已连通，这一步只读取模型列表。

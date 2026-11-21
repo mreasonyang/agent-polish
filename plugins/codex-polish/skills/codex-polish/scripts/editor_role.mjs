@@ -11,10 +11,10 @@ function renderEditorRole({ source, text }) {
   return header + (source === 'custom' ? text : text + '\n');
 }
 
-export function editorRole(cwd, trigger, { selectionOnly = false } = {}) {
+export function editorRole(trigger, { selectionOnly = false } = {}) {
   if (trigger !== undefined && !REWRITE_TRIGGERS.includes(trigger)) throw new Error('invalid_trigger');
   if (selectionOnly && trigger !== 'explicit') throw new Error('invalid_trigger');
-  return renderEditorRole(readEditorPrompt(cwd, effectiveRewriteMode(cwd, trigger), { selectionOnly }));
+  return renderEditorRole(readEditorPrompt(effectiveRewriteMode(trigger), { selectionOnly }));
 }
 
 export function checkStagedEditorRole(file, prompt) {
@@ -42,7 +42,7 @@ if (isMain(import.meta.url)) {
     const { values } = parseArgs({ options: { cwd: { type: 'string' }, trigger: { type: 'string' }, 'selection-only': { type: 'boolean' }, help: { type: 'boolean', short: 'h' } } });
     if (values.help) console.log('Usage: editor_role.mjs --cwd PROJECT [--trigger auto|explicit] [--selection-only]');
     else if (!values.cwd || !isAbsolute(values.cwd)) process.exitCode = 2;
-    else process.stdout.write(editorRole(values.cwd, values.trigger, { selectionOnly: values['selection-only'] }));
+    else process.stdout.write(editorRole(values.trigger, { selectionOnly: values['selection-only'] }));
   } catch (error) {
     process.stderr.write(error.message === 'rewrite_mode_invalid' ? 'rewrite_mode_invalid\n' : 'editor_prompt_invalid\n');
     process.exitCode = 1;

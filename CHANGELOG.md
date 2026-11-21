@@ -2,6 +2,14 @@
 
 [中文使用说明](docs/README.zh-CN.md) · [English README](README.md)
 
+## 0.0.1-beta.13
+
+- 同一份 Codex 配置下的所有聊天和目录共用一套润色设置。在聊天或终端保存后立即生效。再运行一次交互式 `setup` 或在聊天中打开「配置回复润色」，即可查看或更改自动改写模式、Gemini 模型和思考等级。终端菜单按回车即可保留原选择。
+- All chats and folders in the same Codex profile now share one set of polishing preferences. Changes saved in chat or in the terminal take effect immediately. Rerun interactive `setup` or reopen Setup in chat to review or change the automatic rewrite mode, Gemini model and thinking level. Press Enter in the terminal menus to keep each saved choice.
+
+- 单独发“说人话”“重写”“润色”可以让 Gemini 重写上一条回复。对应的英文口令有 `Speak plainly`、`Rewrite` 和 `Polish`。改写后的正文下方默认折叠原文。要求只看正文时会省略折叠区。
+- Send `Speak plainly`, `Rewrite` or `Polish` on its own to have Gemini rewrite the previous reply. The original is collapsed below the rewrite by default. Ask for just the rewritten text to omit it.
+
 ## 0.0.1-beta.12
 
 - 自动润色保留原稿时只显示正文。Gemini 改动文字时，回复直接从改稿开始，底部的“Gemini 改写 · 查看 GPT 原稿”可展开对照。主动要求润色而文字未变时，会附上一句确认。

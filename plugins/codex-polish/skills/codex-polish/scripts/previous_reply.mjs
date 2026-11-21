@@ -2,13 +2,13 @@ import { isAbsolute } from 'node:path';
 import { parseArgs } from 'node:util';
 import { lookupReplyOrigin } from '../../../hooks/reply_origin.mjs';
 import { readPreviousReply } from '../../../hooks/history.mjs';
-import { historySource, projectHistoryTurns } from '../../../hooks/preferences.mjs';
+import { historySource, historyTurns } from '../../../hooks/preferences.mjs';
 import { isMain } from './cli_io.mjs';
 
 export function previousReply(cwd, { noHistory = false, turnsBack = 1, requireGpt = false } = {}, source = historySource(cwd)) {
   if (!source) return null;
   return readPreviousReply(source.transcript_path, source.session_id, source.turn_id,
-    noHistory ? 0 : projectHistoryTurns(cwd), turnsBack, {
+    noHistory ? 0 : historyTurns(), turnsBack, {
       requireGpt, lookupOrigin: lookupReplyOrigin.bind(null, cwd, source.session_id),
     });
 }

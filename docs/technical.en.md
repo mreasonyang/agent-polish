@@ -2,49 +2,49 @@
 
 [简体中文](technical.md) · [Overview](../README.md)
 
-Codex Polish is a Codex plugin for Windows, macOS, and Linux. Its local scripts use built-in Node.js modules and require Node.js 22.16 or newer. The automatic hook directs Codex to follow the [polishing workflow](../plugins/codex-polish/skills/codex-polish/WORKFLOW.md) once the draft is ready and show the result in the final reply. Explicit requests use the same workflow through the [rewrite skill](../plugins/codex-polish/skills/codex-polish/SKILL.md). The [setup skill](../plugins/codex-polish/skills/codex-polish-setup/SKILL.md) checks the environment and manages project settings.
+Codex Polish is a Codex plugin for Windows, macOS, and Linux. Its local scripts use built-in Node.js modules and require Node.js 22.16 or newer. The automatic hook directs Codex to follow the [polishing workflow](../plugins/codex-polish/skills/codex-polish/WORKFLOW.md) once the draft is ready and show the result in the final reply. Explicit requests use the same workflow through the [rewrite skill](../plugins/codex-polish/skills/codex-polish/SKILL.md). The [setup skill](../plugins/codex-polish/skills/codex-polish-setup/SKILL.md) checks the environment and manages the current Codex profile’s polishing settings.
 
-## Project Settings
+## Saved settings
 
-Project settings live in the nearest Git repository’s root `.codex/` directory. All directories in the same repository use those settings. Nested repositories and linked worktrees have their own settings. Outside Git, settings belong to the chosen folder.
+Chat, terminal and Finder setup share one set of preferences in the active Codex profile. A change saved from any directory takes effect immediately in all chats that use that profile. Each rewrite still draws its question, draft and optional history from its own chat.
 
-The automatic rewrite mode and the model/level pair each use the project setting first, then the Codex profile default, then the built-in default. The installer stores those profile defaults in `$CODEX_HOME/codex-polish/settings/` as `codex-polish.rewrite-mode` and `codex-polish.model`. When `CODEX_HOME` is unset, Codex uses `~/.codex`.
+The files below live in `$CODEX_HOME/codex-polish/settings/`. When `CODEX_HOME` is unset, Codex uses `~/.codex`. Each setting uses its built-in default until you choose another value.
 
 | File | Values and Default | Behavior |
 | --- | --- | --- |
-| `.codex/codex-polish.mode` | `auto` (default), `manual`, `off` | Without a saved mode, the project uses `auto`. The trusted hook triggers polishing for ordinary questions. `manual` runs only on explicit requests. `off` skips rewrites even when requested. |
-| `.codex/codex-polish.rewrite-mode` | `normal` (built-in default), `turbo` | Applies only to the automatic hook. Neither mode needs an OpenAI key, and without the check both send drafts to Gemini. With the built-in prompts, `normal` can keep a clear draft and optionally checks with OpenAI Decisions, while `turbo` skips Decisions and asks Gemini to rewrite the draft. |
-| `.codex/codex-polish.model` | Gemini model and thinking level, default `gemini-4-hydrogen` with `medium` | The picker offers the thinking levels available for the chosen model. Both Normal and Turbo apply the saved pair. If the model or level becomes unavailable, the rewrite keeps the original draft. |
-| `.codex/codex-polish.history-turns` | Integer `0`–`10`, default `2` | Maximum completed exchanges to attach when Gemini rewrites a whole reply. Use `0` to omit earlier exchanges. Saving a value above `10` returns an error. An invalid setting reports the file and the allowed range. Changes apply on the next rewrite. |
-| `.codex/codex-polish.decisions` | `auto` (default), `off` | For hook-triggered polishing in Normal mode, `auto` enables the OpenAI style check when this Codex profile has a saved plugin key that passes the local format check. With `off`, drafts go directly to Gemini. |
-| `.codex/codex-polish.language` | `auto` (default), `zh`, `en` | Sets the language for plugin prompts and setup checks. |
+| `codex-polish.mode` | `auto` (default), `manual`, `off` | The trusted hook triggers polishing for ordinary questions. `manual` runs only on explicit requests. `off` skips rewrites even when requested. |
+| `codex-polish.rewrite-mode` | `normal` (built-in default), `turbo` | Applies only to the automatic hook. Neither mode needs an OpenAI key, and without the check both send drafts to Gemini. With the built-in prompts, `normal` can keep a clear draft and optionally checks with OpenAI Decisions, while `turbo` skips Decisions and asks Gemini to rewrite the draft. |
+| `codex-polish.model` | Gemini model and thinking level, default `gemini-4-hydrogen` with `medium` | The picker offers the thinking levels available for the chosen model. Both Normal and Turbo apply the saved pair. If the model or level becomes unavailable, the rewrite keeps the original draft. |
+| `codex-polish.history-turns` | Integer `0`–`10`, default `2` | Maximum completed exchanges to attach when Gemini rewrites a whole reply. Use `0` to omit earlier exchanges. Saving a value above `10` returns an error. An invalid setting reports the file and the allowed range. Changes apply on the next rewrite. |
+| `codex-polish.decisions` | `auto` (default), `off` | For hook-triggered polishing in Normal mode, `auto` enables the OpenAI style check when this Codex profile has a saved plugin key that passes the local format check. With `off`, drafts go directly to Gemini. |
+| `codex-polish.language` | `auto` (default), `zh`, `en` | Sets the language for plugin prompts and setup checks. |
 
 Trigger mode, automatic rewrite mode, and Decisions accept mixed-case settings. Decisions also accepts `on` to enable the check. Diagnostics identify an invalid setting and list the allowed values.
 
-Say “Switch to turbo mode” or “Switch back to normal mode” to save the project preference. From a source checkout, run `node plugins/codex-polish/hooks/preferences.mjs set-rewrite-mode turbo --cwd /path/to/project`. Use `normal` to switch back. The `check --cwd /path/to/project` command reports the effective `rewrite_mode`. An invalid value pauses automatic polishing until you save either mode. Explicit requests still use Turbo.
+Say “Switch to Turbo mode” to save Turbo for automatic rewrites. From a source checkout, run `node plugins/codex-polish/hooks/preferences.mjs set-rewrite-mode turbo`. Use `normal` to switch back. Run `node plugins/codex-polish/hooks/preferences.mjs check` to see the current settings. During a rewrite, `check` can also take `--cwd` for diagnostics about that turn. An invalid rewrite mode pauses automatic polishing until you save a valid mode. Explicit requests still use Turbo.
 
-For example, `set-model gemini-4-hydrogen --thinking-level high --cwd /path/to/project` saves Hydrogen with High thinking for one project. Use `--profile` in place of `--cwd` to change the profile default. To inherit the profile’s model and level again, use `set-model --reset --cwd /path/to/project`. Use `set-rewrite-mode --reset --cwd /path/to/project` to inherit its rewrite mode.
+The command `set-model gemini-4-hydrogen --thinking-level high` saves the model and thinking level together. Use `set-model --reset` to restore Gemini 4 Hydrogen with Medium thinking, or `set-rewrite-mode --reset` to restore Normal for automatic polishing.
 
-“Polish the result” applies to the current draft. “Have Gemini rewrite the answer about caching” selects an earlier reply in the same chat. Both use `--trigger explicit` and send the selected draft directly to Gemini over ACP in Turbo mode. The request applies once and works in either `auto` or `manual`. Codex interprets requests in context, so “What does Turbo do?” asks for an explanation. The hook uses `--trigger auto` on ordinary questions and uses the project’s effective rewrite mode. The project’s `off` setting skips both triggers.
+“Polish the result” applies to the current draft. “Have Gemini rewrite the answer about caching” selects an earlier reply in the same chat. Both use `--trigger explicit` and send the selected draft directly to Gemini over ACP in Turbo mode. The request applies once and works in either `auto` or `manual`. Codex interprets requests in context, so “What does Turbo do?” asks for an explanation. The hook uses `--trigger auto` on ordinary questions and uses the saved rewrite mode. The `off` setting skips both triggers.
 
-When `.codex/codex-polish.language` is `auto`, chat prompts match the user's current message, falling back to the established chat language and then the system locale. Short replies such as menu numbers use the chat language. Project diagnostics use the project language setting. The installer uses the system locale and falls back to English.
+When `codex-polish.language` is `auto`, chat prompts match the user's current message, falling back to the established chat language and then the system locale. Short replies such as menu numbers use the chat language. Setup menus and diagnostics use the saved language setting. In automatic mode, terminal prompts follow the system locale and fall back to English.
 
 ### Show, set, or restore the polishing prompt
 
-The active Codex profile uses one custom polishing prompt. Ask “Show my polishing prompt”, “Set my polishing prompt to: Lead with the conclusion, then give the evidence”, or “Restore the default polishing prompt”. Setup uses the built-in editing instructions until you choose to save your own. For whole drafts, your text replaces the full built-in prompt in Normal and Turbo across all projects. An explicit request to send only a passage uses the built-in Turbo prompt.
+The active Codex profile uses one custom polishing prompt. Ask “Show my polishing prompt”, “Set my polishing prompt to: Lead with the conclusion, then give the evidence”, or “Restore the default polishing prompt”. Setup uses the built-in editing instructions until you choose to save your own. For whole drafts, your text replaces the full built-in prompt in Normal and Turbo. An explicit request to send only a passage uses the built-in Turbo prompt.
 
 The following commands show, save and reset the profile prompt. `set-prompt` copies the full UTF-8 text from standard input to `$CODEX_HOME/codex-polish/settings/codex-polish.prompt.md`, including line breaks and surrounding whitespace. Import a file again to pick up later changes. Reset and uninstall both delete the stored copy.
 
 ```sh
-node plugins/codex-polish/hooks/preferences.mjs prompt --profile
-node plugins/codex-polish/hooks/preferences.mjs set-prompt --profile < my-prompt.md
-node plugins/codex-polish/hooks/preferences.mjs set-prompt --reset --profile
+node plugins/codex-polish/hooks/preferences.mjs prompt
+node plugins/codex-polish/hooks/preferences.mjs set-prompt < my-prompt.md
+node plugins/codex-polish/hooks/preferences.mjs set-prompt --reset
 ```
 
 From Windows PowerShell, pass the file’s raw bytes through Node to preserve its UTF-8 text and line endings.
 
 ```powershell
-node -e "child_process.execFileSync(process.execPath, ['plugins/codex-polish/hooks/preferences.mjs', 'set-prompt', '--profile'], { input: fs.readFileSync(process.argv[1]), stdio: ['pipe', 'inherit', 'inherit'] })" "C:\path\to\my-prompt.md"
+node -e "child_process.execFileSync(process.execPath, ['plugins/codex-polish/hooks/preferences.mjs', 'set-prompt'], { input: fs.readFileSync(process.argv[1]), stdio: ['pipe', 'inherit', 'inherit'] })" "C:\path\to\my-prompt.md"
 ```
 
 ## Rewrite Routes, Stages, and Thresholds
@@ -103,20 +103,20 @@ The plugin never invokes `agy -p` and writes no draft logs of its own. Codex ses
 | Decisions unavailable, key invalid, response invalid, or input exceeds the provider limit | Continue to Gemini with the original draft. Each turn makes its own routing decision. |
 | ACP startup failure, auth failure, unavailable model or thinking level, or mid-stream configuration change | The agent aborts the rewrite, terminates the process, and delivers the original draft. |
 | Slow or interrupted generation | Wait while the ACP process is running. On an explicit timeout, cancellation, disconnect or truncated result, discard incomplete output. A request is sent at most once. |
-| Project disabled mid-turn, updated user instructions, or cancellation | Re-checks project mode before sending text out. The agent discards the old candidate on new instructions. User cancellation ends the turn. If only the server cancels while the user waits, the plugin returns the original draft. |
+| Polishing disabled mid-turn, updated user instructions, or cancellation | The plugin checks the current trigger mode before sending text out. The agent discards the old candidate on new instructions. User cancellation ends the turn. If only the server cancels while the user waits, the plugin returns the original draft. |
 
 ## Installation, Updates, and Uninstall
 
-Install the npm beta from any folder with `npx @kyun.si/codex-polish@beta setup`. Replace `setup` with `update` to upgrade, `doctor` to check the current project, or `uninstall` to remove the plugin. In Windows PowerShell, use `npx.cmd` for these commands. From a source checkout, run `node scripts/install.mjs setup` from its root. The same subcommands work there. [Quick Start](../README.md#quick-start)
+Install the npm beta from any folder with `npx @kyun.si/codex-polish@beta setup`. Replace `setup` with `update` to upgrade, `doctor` to check the plugin settings and local environment, or `uninstall` to remove the plugin. In Windows PowerShell, use `npx.cmd` for these commands. From a source checkout, run `node scripts/install.mjs setup` from its root. The same subcommands work there. [Quick Start](../README.md#quick-start)
 
-On macOS, you can also double-click the launcher in the extracted archive. Both Finder and terminal installs configure defaults for all projects in the same Codex profile. Interactive setup offers each unsaved default, first the rewrite mode and then, when `agy` is available, the Gemini model and its thinking level. For a model with a fixed level, setup skips the level picker. [Finder launcher](../Install%20Codex%20Polish.command)
+On macOS, you can also double-click the launcher in the extracted archive. Each interactive `setup` opens the rewrite mode menu (Normal or Turbo) for the active Codex profile. When `agy` is available, you can also select a Gemini model and its thinking level. Reopening setup preselects your saved choices. Press **Enter** to keep them. Models with a fixed thinking level skip the level picker. [Finder launcher](../Install%20Codex%20Polish.command)
 
-Both `setup` and `update` accept `--install-agy` to install the Google CLI when needed. Updates preserve `.codex` project settings and the plugin’s enabled state. Re-running `update` with the same version replaces the build or recovers an interrupted update.
+Both `setup` and `update` accept `--install-agy` to install the Google CLI when needed. Updates skip the settings menus and preserve your saved settings and the plugin’s enabled state. Re-running `update` with the same version replaces the build or recovers an interrupted update.
 
 The installer registers one local marketplace per Codex profile. Updates stage a verified snapshot, atomically switch the marketplace manifest to the new snapshot and refresh the native plugin cache. If the refresh fails, the installer restores the previous snapshot and enabled state. Codex checks the installed plugin’s contents when deciding hook trust. An update to a bundled prompt or setup guide can therefore require a new approval even when the hook command is unchanged. The installer and `doctor` read the current status from `hooks/list`.
 
 First interactive setup in Normal mode offers the optional OpenAI Decisions API check and skips it by default. To manage the key later, run `npx @kyun.si/codex-polish@beta openai` on the machine and Codex profile that run the plugin. In Windows PowerShell, use `npx.cmd`. Hidden terminal input saves the key to `$CODEX_HOME/codex-polish/credentials/openai.key`. The plugin ignores `OPENAI_API_KEY`. [Credential setup and API billing](../plugins/codex-polish/skills/codex-polish-setup/references/credentials.en.md#optional-openai-decisions-api)
 
-Uninstall removes the plugin, its marketplace, session pointers, and this profile’s saved rewrite mode, model, thinking level, custom prompt and OpenAI key. It also deletes project settings last saved by this profile when the recorded file is still in place. This includes Git-tracked files and files edited in place. The shared `agy` installation is available for other applications.
+Uninstall removes the plugin, its marketplace and the session pointers. It clears all plugin preferences for this Codex profile and deletes the saved custom prompt and OpenAI key. It also deletes settings files that older versions registered in individual folders if the recorded file is still in place. This includes Git-tracked files and files edited in place. Other applications can still use the shared `agy` installation.
 
-Older releases did not record where they created project settings. To clear those too, review the `.codex/codex-polish.*` files in each project you configured. The uninstaller prints the backup path for any manually edited installation files. To run an uninstaller from a locally packed release, substitute the archive path for the npm package name, for example `npx --yes file:./kyun.si-codex-polish-VERSION.tgz uninstall`.
+The uninstaller prints the backup path for any manually edited installation files. To run an uninstaller from a locally packed release, substitute the archive path for the npm package name, for example `npx --yes file:./kyun.si-codex-polish-VERSION.tgz uninstall`.

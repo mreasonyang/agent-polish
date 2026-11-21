@@ -175,61 +175,74 @@ nativeTest(
     for (const p of [first, changed, cache]) assert.ok(!fs.existsSync(p), p);
   }
 );
-nativeTest('uninstall clears the saved OpenAI key, global prompt, profile defaults and configured project settings', (t) => {
+nativeTest('settings are shared across directories and uninstall removes all plugin preferences', (t) => {
   const { base, profile, env, invoke, snapshot, local } = isolated(t);
   env.OPENAI_API_KEY = 'unrelated-key-from-another-tool';
   local('setup');
   const script = join(snapshot(), PRODUCT, 'hooks/preferences.mjs');
-  const set = (...args) => invoke(process.execPath, [script, ...args]);
-  const status = () => JSON.parse(set('check', '--profile'));
-  assert.equal(status().decisions_enabled, false);
-  assert.equal(status().openai_key_configured, false);
-  assert.equal(status().gemini_thinking_level, 'medium');
-  const credentials = pathToFileURL(join(dirname(script), 'openai_credentials.mjs')).href;
-  invoke(process.execPath, ['--input-type=module', '-e',
-    `import {saveOpenAIKey} from ${JSON.stringify(credentials)}; saveOpenAIKey('sk-test-isolated-install');`]);
-  assert.equal(status().decisions_enabled, true);
   const first = join(base, 'first project'), second = join(base, 'second project');
   fs.mkdirSync(first);
   fs.mkdirSync(second);
-  set('set-rewrite-mode', 'turbo', '--profile');
-  set('set-model', 'gemini-4-hydrogen', '--thinking-level', 'high', '--profile');
-  assert.equal(status().gemini_thinking_level, 'high');
-  set('set-mode', 'manual', '--cwd', first);
-  const { file: promptFile } = JSON.parse(invoke(process.execPath, [script, 'set-prompt', '--profile'], { input: 'Use short sentences.' }));
-  set('set-history-turns', '4', '--cwd', second);
-  const defaults = join(profile, 'codex-polish', 'settings');
-  const skippedOffer = join(defaults, 'codex-polish.openai-offer');
-  fs.writeFileSync(skippedOffer, 'seen\n');
-  assert.equal(promptFile, join(defaults, 'codex-polish.prompt.md'));
-  for (const project of [first, second]) {
-    assert.equal(JSON.parse(set('check', '--cwd', project)).prompt_source, 'custom');
-    assert.ok(!fs.existsSync(join(project, '.codex', 'codex-polish.prompt.md')));
+  const run = (cwd, args, input) => JSON.parse(invoke(process.execPath, [script, ...args], { cwd, input }));
+  const initial = run(first, ['check']);
+  assert.equal(initial.openai_key_configured, false);
+  assert.equal(initial.decisions_enabled, false);
+  assert.equal(initial.gemini_thinking_level, 'medium');
+  const credentials = pathToFileURL(join(dirname(script), 'openai_credentials.mjs')).href;
+  invoke(process.execPath, ['--input-type=module', '-e',
+    `import {saveOpenAIKey} from ${JSON.stringify(credentials)}; saveOpenAIKey('sk-test-isolated-install');`]);
+  assert.equal(run(second, ['check']).decisions_enabled, true);
+  run(first, ['set-rewrite-mode', 'turbo']);
+  run(first, ['set-model', 'gemini-4-hydrogen', '--thinking-level', 'high']);
+  run(first, ['set-mode', 'manual']);
+  run(first, ['set-prompt'], 'Use short sentences.');
+  run(second, ['set-history-turns', '4']);
+  run(second, ['set-decisions', 'off']);
+  run(second, ['set-language', 'zh']);
+  const settings = join(profile, 'codex-polish', 'settings');
+  for (const directory of [first, second]) {
+    const current = run(directory, ['check']);
+    assert.equal(current.prompt_source, 'custom');
+    assert.equal(current.mode, 'manual');
+    assert.equal(current.rewrite_mode, 'turbo');
+    assert.equal(current.gemini_thinking_level, 'high');
+    assert.equal(current.history_turns, 4);
+    assert.equal(current.decisions_mode, 'off');
+    assert.equal(current.language_mode, 'zh');
+    assert.equal(fs.existsSync(join(directory, '.codex')), false);
   }
-  const unrelated = [join(first, '.codex', 'instructions.md'), join(defaults, 'my notes')];
-  for (const file of unrelated) fs.writeFileSync(file, 'keep me');
+  const skippedOffer = join(settings, 'codex-polish.openai-offer');
+  fs.writeFileSync(skippedOffer, 'seen\n');
   const removed = [
-    join(defaults, 'codex-polish.rewrite-mode'), join(defaults, 'codex-polish.model'),
-    join(profile, 'codex-polish', 'credentials', 'openai.key'), skippedOffer,
-    join(first, '.codex', 'codex-polish.mode'), join(second, '.codex', 'codex-polish.history-turns'), promptFile
+    ...['mode', 'history-turns', 'decisions', 'language', 'rewrite-mode', 'model', 'prompt.md'].map(name =>
+      join(settings, 'codex-polish.' + name)),
+    join(profile, 'codex-polish', 'credentials', 'openai.key'), skippedOffer
   ];
   for (const file of removed) assert.ok(fs.existsSync(file), file);
+  fs.mkdirSync(join(first, '.codex'));
+  const unrelated = [join(first, '.codex', 'instructions.md'), join(settings, 'my notes')];
+  for (const file of unrelated) fs.writeFileSync(file, 'keep me');
   const ledger = join(profile, 'codex-polish', 'owned-settings.sqlite');
-  fs.renameSync(ledger, ledger + '.backup');
+  assert.equal(fs.existsSync(ledger), false);
+  assert.match(local('doctor'), /思考等级：高/);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    assert.match(local('uninstall'), attempt === 0 ? /已卸载/ : /uninstalled/i);
+    assert.equal(fs.existsSync(join(profile, 'codex-polish', 'credentials')), false);
+    for (const file of removed) assert.equal(fs.existsSync(file), false, file);
+    for (const file of unrelated) assert.equal(fs.readFileSync(file, 'utf8'), 'keep me');
+  }
+});
+nativeTest('uninstall reports an unreadable ownership database and can be retried', (t) => {
+  const { profile, invoke, local } = isolated(t);
+  local('setup');
+  const ledger = join(profile, 'codex-polish', 'owned-settings.sqlite');
   fs.writeFileSync(ledger, 'interrupted ownership data');
   const failed = invoke(process.execPath, [join(ROOT, 'scripts/install.mjs'), 'uninstall'], { expect: 1 });
   assert.match(failed, /uninstall again/i);
   assert.ok(failed.includes(ledger), failed);
-  assert.ok(fs.existsSync(join(first, '.codex', 'codex-polish.mode')));
+  assert.equal(fs.readFileSync(ledger, 'utf8'), 'interrupted ownership data');
   fs.unlinkSync(ledger);
-  fs.renameSync(ledger + '.backup', ledger);
-  for (let attempt = 0; attempt < 2; attempt++) {
-    assert.match(local('uninstall'), /uninstalled/i);
-    assert.ok(!fs.existsSync(ledger));
-    assert.ok(!fs.existsSync(join(profile, 'codex-polish', 'credentials')));
-    for (const file of removed) assert.equal(fs.lstatSync(file, { throwIfNoEntry: false }), undefined, file);
-    for (const file of unrelated) assert.equal(fs.readFileSync(file, 'utf8'), 'keep me');
-  }
+  assert.match(local('uninstall'), /uninstalled/i);
 });
 nativeTest('native hook trust survives identical content and reports package, editor prompt and hook changes until reviewed', async (t) => {
   const { base, env, invoke, marketplace } = isolated(t);

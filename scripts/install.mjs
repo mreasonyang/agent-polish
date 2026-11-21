@@ -14,10 +14,10 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { isDeepStrictEqual } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { executable, windows, agyDirectory, windowsSystemTool, openRegular, sameEntry } from '../plugins/codex-polish/hooks/platform.mjs';
-import { languageSettings, systemLanguage, tr as translate } from '../plugins/codex-polish/hooks/ui_locale.mjs';
-import { DEFAULT_GEMINI_MODEL, DEFAULT_THINKING_LEVEL, MODEL_FILE, findAgy, runtimeStatus, projectSettings, saveModelSelection } from '../plugins/codex-polish/hooks/preferences.mjs';
+import { language, languageSettings, tr } from '../plugins/codex-polish/hooks/ui_locale.mjs';
+import { DEFAULT_GEMINI_MODEL, DEFAULT_THINKING_LEVEL, DECISIONS_FILE, PROFILE_PREFERENCE_FILES, findAgy, runtimeStatus, saveModelSelection } from '../plugins/codex-polish/hooks/preferences.mjs';
 import { REWRITE_MODE_FILE, REWRITE_MODES } from '../plugins/codex-polish/hooks/rewrite_mode.mjs';
-import { accessProjectSetting, PROMPT_FILE, readProfileSetting, writeProfileDefault } from '../plugins/codex-polish/hooks/project_setting.mjs';
+import { accessSettingFile, readProfileSetting, writeProfileSetting } from '../plugins/codex-polish/hooks/profile_setting.mjs';
 import { readOpenAIKey, saveOpenAIKey, clearOpenAIKey } from '../plugins/codex-polish/hooks/openai_credentials.mjs';
 import { cleanupProjectSettings } from '../plugins/codex-polish/hooks/owned_settings.mjs';
 import { removeProfileCache, sqliteModule } from '../plugins/codex-polish/hooks/recovery.mjs';
@@ -46,7 +46,6 @@ const { O_RDONLY, O_DIRECTORY } = fs.constants;
 const isObject = (value) => !!value && typeof value === 'object' && !Array.isArray(value);
 const sha = (data) => createHash('sha256').update(data);
 const readJSON = (file) => JSON.parse(readPlain(file));
-const tr = (zh, en, lang = systemLanguage()) => translate(zh, en, lang);
 const fail = (zh, en) => new SetupError(tr(zh, en));
 export class SetupError extends Error {}
 
@@ -683,7 +682,7 @@ async function setup(root, store, run, setEnabled, action) {
       ),
       false
     ];
-  const lang = systemLanguage();
+  const lang = language();
   const status = action === 'setup'
     ? tr(`回复润色 ${version} 已安装。`, `Codex Polish ${version} is installed.`, lang)
     : tr(`回复润色已更新到 ${version}。`, `Updated Codex Polish to ${version}.`, lang);
@@ -726,16 +725,16 @@ function removeVerifiedEntries(entry, paths) {
     process.chdir(cwd);
   }
 }
-function removeProfileDefaults(directory, kept) {
+function removeProfileSettings(directory, kept) {
   const entry = statMaybe(directory);
   if (!entry) return;
   if (!entry.isDirectory()) {
     kept.push(directory);
     return;
   }
-  for (const file of [REWRITE_MODE_FILE, MODEL_FILE, PROMPT_FILE, OPENAI_OFFER_FILE]) {
+  for (const file of [...PROFILE_PREFERENCE_FILES, OPENAI_OFFER_FILE]) {
     try {
-      accessProjectSetting(directory, 'remove', file);
+      accessSettingFile(directory, 'remove', file);
     } catch (error) {
       if (error.code !== 'EINVAL') throw Object.assign(error, { path: join(directory, file) });
       kept.push(join(directory, file));
@@ -748,6 +747,7 @@ function removeProfileDefaults(directory, kept) {
   }
 }
 function cleanUninstallData(store) {
+  const lang = language();
   const kept = [],
     errors = [];
   let entries = [];
@@ -779,7 +779,7 @@ function cleanUninstallData(store) {
       errors.push(error.path || dirname(store));
     }
     try {
-      removeProfileDefaults(settings, kept);
+      removeProfileSettings(settings, kept);
     } catch (error) {
       errors.push(error.path || settings);
     }
@@ -790,11 +790,11 @@ function cleanUninstallData(store) {
       errors.push(error.path || store);
     }
   }
-  let message = tr('回复润色已卸载。', 'Uninstalled Codex Polish.');
+  let message = tr('回复润色已卸载。', 'Uninstalled Codex Polish.', lang);
   if (kept.length)
     message +=
       '\n' +
-      tr('下面这些路径有改动或额外内容，已保留：', 'Kept these paths because they have changes or extra contents:') +
+      tr('下面这些路径有改动或额外内容，已保留：', 'Kept these paths because they have changes or extra contents:', lang) +
       '\n' +
       kept.join('\n');
   if (errors.length)
@@ -803,7 +803,7 @@ function cleanUninstallData(store) {
         '\n' +
         tr(
           '没法检查或清理下面这些路径。请关闭还在用这个插件的会话，检查权限，再重新卸载：',
-          "Couldn't clean up these paths. Close any sessions using the plugin, check permissions, and run uninstall again:"
+          "Couldn't clean up these paths. Close any sessions using the plugin, check permissions, and run uninstall again:", lang
         ) +
         '\n' +
         errors.join('\n')
@@ -912,9 +912,9 @@ export async function manage(action, root, store, run = codex, setEnabled = writ
     return setup(root, store, run, setEnabled, action);
   });
 }
-function readChecks(cwd = process.cwd()) {
-  const checks = runtimeStatus(cwd, projectSettings(cwd)[0]);
-  Object.assign(checks, languageSettings(cwd));
+function readChecks() {
+  const checks = runtimeStatus();
+  Object.assign(checks, languageSettings());
   if (checks.agy_available && !supportedAgy(checks.agy_path)) {
     checks.agy_available = false;
     checks.blockers.push('agy_unsupported');
@@ -925,10 +925,10 @@ function readChecks(cwd = process.cwd()) {
 function saveSetupRewriteMode(value) {
   try {
     if (!REWRITE_MODES.includes(value)) throw new Error('invalid choice');
-    writeProfileDefault(REWRITE_MODE_FILE, value);
+    writeProfileSetting(REWRITE_MODE_FILE, value);
   } catch {
     throw new SetupError(tr('无法保存默认设置。请检查 Codex 用户目录的写入权限。',
-      'Could not save your defaults. Check write access to your Codex profile.', systemLanguage()));
+      'Could not save your defaults. Check write access to your Codex profile.', language()));
   }
 }
 async function runBootstrap(script, target, options) {
@@ -1027,7 +1027,7 @@ function decisionsSummary(checks, lang) {
   if (checks.mode === 'manual' || checks.mode === 'off') {
     const current = checks.mode === 'manual'
       ? tr('点名润色会用 Turbo，直接交给 Gemini。', 'Requested rewrites use Turbo and go straight to Gemini.', lang)
-      : tr('项目已关闭润色。', 'Polishing is off for this project.', lang);
+      : tr('已关闭润色。', 'Polishing is off.', lang);
     if (checks.rewrite_mode === 'normal' && checks.decisions_mode === 'auto' && checks.openai_key_configured && !checks.openai_key_malformed)
       return current + tr('切回自动润色后，Normal 会使用你已开启的 OpenAI Decisions API 检查。',
         ' Switching to automatic polishing will use the OpenAI Decisions API check you enabled for Normal mode.', lang);
@@ -1035,7 +1035,7 @@ function decisionsSummary(checks, lang) {
   }
   if (checks.rewrite_mode === 'turbo')
     return tr(
-      '自动润色时，Turbo 会跳过 OpenAI Decisions API 检查，把草稿直接交给 Gemini。可在项目里说「恢复普通模式」。',
+      '自动润色时，Turbo 会跳过 OpenAI Decisions API 检查，把草稿直接交给 Gemini。可在 Codex 里说「恢复普通模式」。',
       'For automatic polishing, Turbo skips the OpenAI Decisions API check and sends each draft directly to Gemini. Say “Switch back to normal mode” to restore Normal for automatic polishing.',
       lang
     );
@@ -1062,15 +1062,15 @@ function decisionsSummary(checks, lang) {
 }
 const issues = {
   mode_invalid: [
-    '项目的 codex-polish.mode 无效。请设为 auto、manual 或 off。',
+    'codex-polish.mode 无效。请设为 auto、manual 或 off。',
     'Invalid codex-polish.mode. Choose auto, manual or off.'
   ],
   history_turns_invalid: [
-    '项目的 codex-polish.history-turns 无效。请填写 0 到 10 的整数。',
+    'codex-polish.history-turns 无效。请填写 0 到 10 的整数。',
     'Invalid codex-polish.history-turns. Choose a whole number from 0 to 10.'
   ],
   decisions_mode_invalid: [
-    '项目的 codex-polish.decisions 无效。请设为 auto（使用已为插件开启的 OpenAI Decisions API 检查）或 off。',
+    'codex-polish.decisions 无效。请设为 auto（使用已为插件开启的 OpenAI Decisions API 检查）或 off。',
     'Invalid codex-polish.decisions. Choose auto (use the OpenAI Decisions API check if enabled for this plugin) or off.'
   ],
   gemini_key_missing: [
@@ -1098,12 +1098,12 @@ const issues = {
     'Unset CODEX_POLISH_AGY_AUTH to use the default Antigravity sign-in (existing-session).'
   ],
   rewrite_mode_invalid: [
-    '这个项目的自动润色改写模式无效。点名润色仍使用 Turbo。要恢复自动润色，请在 Codex 里说「恢复普通模式」或「切换到 Turbo 模式」。',
+    '自动润色的改写模式无效。点名润色仍使用 Turbo。要恢复自动润色，请在 Codex 里说「恢复普通模式」或「切换到 Turbo 模式」。',
     'The automatic rewrite mode is invalid. Explicit requests still use Turbo. To restore automatic polishing, ask Codex to “Switch back to normal mode” or “Switch to turbo mode”.'
   ],
   gemini_model_invalid: [
-    '这个项目的改写模型设置无效。请在 Codex 里说「选择改写模型」。',
-    "The project's model setting is invalid. Ask Codex to “Choose a rewrite model”."
+    '改写模型设置无效。请在 Codex 里说「选择改写模型」。',
+    "The model setting is invalid. Ask Codex to “Choose a rewrite model”."
   ],
   editor_prompt_invalid: [
     '当前 Codex 配置的润色提示词无效。请在 Codex 里说「设置润色提示词」并提供新文本，或说「恢复默认润色提示词」。',
@@ -1114,7 +1114,7 @@ const issues = {
     'Install Node.js 22.16 or later and check with node --version.'
   ]
 };
-export function setupIssues(checks, lang = checks.ui_language || systemLanguage()) {
+export function setupIssues(checks, lang = checks.ui_language || language()) {
   const lines = [],
     pages = new Set();
   for (const [code, [zh, en, url]] of Object.entries(issues))
@@ -1251,7 +1251,7 @@ export async function manageOpenAI(lang, { onboarding = false, input = process.s
         clearOpenAIKey();
         output.write(t('已移除密钥，OpenAI Decisions API 检查已关闭。\n', 'Key removed. The OpenAI Decisions API check is off.\n'));
       }
-      try { writeProfileDefault(OPENAI_OFFER_FILE, 'seen'); }
+      try { writeProfileSetting(OPENAI_OFFER_FILE, 'seen'); }
       catch {
         output.write(t('安装程序无法记住这次选择，下次安装时会再询问。\n',
           'The installer could not remember this choice and may ask again next time.\n'));
@@ -1264,6 +1264,7 @@ export async function manageOpenAI(lang, { onboarding = false, input = process.s
     const value = await readHiddenKey(lang, input, output);
     if (value === null) return true;
     saveOpenAIKey(value);
+    if (action === 'enable') writeProfileSetting(DECISIONS_FILE, null);
     output.write(t('已保存密钥。Normal 模式自动润色时可使用 OpenAI Decisions API 检查。\n',
       'Key saved. The OpenAI Decisions API check is available for automatic polishing in Normal mode.\n'));
     return true;
@@ -1276,11 +1277,13 @@ export async function manageOpenAI(lang, { onboarding = false, input = process.s
     return false;
   }
 }
-export function chooseSetupMode(lang, input, output) {
+export function chooseSetupMode(lang, current, input, output) {
+  const currentLabel = tr('（当前）', ' (current)', lang);
+  const normalLabel = current === 'normal' ? currentLabel : current ? '' : tr('（默认）', ' (default)', lang);
   return chooseOption(tr('默认怎么润色？', 'How should replies be polished by default?', lang), [
-    { id: 'normal', name: tr('Normal（默认）· 按需改写', 'Normal (default) · rewrite when useful', lang) },
-    { id: 'turbo', name: tr('Turbo · 每次都请 Gemini 改写', 'Turbo · ask Gemini to rewrite every time', lang) }
-  ], lang, input, output);
+    { id: 'normal', name: 'Normal' + normalLabel + tr(' · 按需改写', ' · rewrite when useful', lang) },
+    { id: 'turbo', name: 'Turbo' + (current === 'turbo' ? currentLabel : '') + tr(' · 每次都请 Gemini 改写', ' · ask Gemini to rewrite every time', lang) }
+  ], lang, input, output, current);
 }
 
 export async function discoverSetupModels(checks, model) {
@@ -1341,11 +1344,19 @@ export async function chooseSetupModel(checks, lang, input = process.stdin, outp
     output.write(t('正在查询 Antigravity…', 'Checking Antigravity…') + '\n');
     try { return await discover(checks, model); } catch { return null; }
   };
-  const choice = await choose(tr('选择改写用的 Gemini 模型', 'Choose the Gemini model for rewrites', lang), [
-    { id: 'default', name: tr('Gemini 4 Hydrogen（默认）', 'Gemini 4 Hydrogen (default)', lang) },
-    { id: 'lookup', name: tr('让 Codex 查询我账号的可用模型…', 'Ask Codex to list models available to my account…', lang) }
-  ]);
+  const savedModel = checks.gemini_model_configured ? checks.gemini_model : null;
+  const savedLevel = checks.gemini_thinking_level;
+  const choices = [
+    { id: 'default', name: t('Gemini 4 Hydrogen（默认）', 'Gemini 4 Hydrogen (default)') },
+    { id: 'lookup', name: t('让 Codex 查询我账号的可用模型…', 'Ask Codex to list models available to my account…') }
+  ];
+  if (savedModel && savedModel !== DEFAULT_GEMINI_MODEL) {
+    const level = t(...thinkingLabels[savedLevel]);
+    choices.unshift({ id: 'keep', name: t(`保留 ${savedModel} · ${level}`, `Keep ${savedModel} · ${level}`) });
+  }
+  const choice = await choose(t('选择改写用的 Gemini 模型', 'Choose the Gemini model for rewrites'), choices);
   if (!choice) return null;
+  if (choice === 'keep') return { model: savedModel, thinkingLevel: savedLevel };
   let model = DEFAULT_GEMINI_MODEL;
   let levels = ['low', 'medium', 'high', 'xhigh'].map(id => ({ id }));
   let current;
@@ -1359,7 +1370,7 @@ export async function chooseSetupModel(checks, lang, input = process.stdin, outp
     const rows = account.models.map(({ id, name }) => ({
       id, name: account.models.some(other => other.id !== id && other.name === name) ? name + ' (' + id + ')' : name
     }));
-    model = await choose(t('用哪个模型改写？', 'Which model should rewrite your replies?'), rows);
+    model = await choose(t('用哪个模型改写？', 'Which model should rewrite your replies?'), rows, savedModel);
     if (!model) return null;
     const selected = account.current_model === model ? account : await lookup(model);
     if (selected?.current_model !== model || !Array.isArray(selected.thinking_levels)) {
@@ -1373,12 +1384,15 @@ export async function chooseSetupModel(checks, lang, input = process.stdin, outp
       output.write(t('这个模型的思考等级固定。', 'This model has a fixed thinking level.') + '\n');
       return { model, thinkingLevel: 'fixed' };
     }
+  } else if (model === savedModel && savedLevel === 'fixed') {
+    levels = [{ id: 'fixed' }];
   }
   const rows = levels.map(({ id, name }) => {
     const label = Object.hasOwn(thinkingLabels, id) ? t(...thinkingLabels[id]) : name;
     return { id, name: id === DEFAULT_THINKING_LEVEL ? label + t('（默认）', ' (default)') : label };
   });
-  const initial = rows.some(row => row.id === DEFAULT_THINKING_LEVEL) ? DEFAULT_THINKING_LEVEL : current;
+  const defaultLevel = rows.some(row => row.id === DEFAULT_THINKING_LEVEL) ? DEFAULT_THINKING_LEVEL : current;
+  const initial = model === savedModel && rows.some(row => row.id === savedLevel) ? savedLevel : defaultLevel;
   const thinkingLevel = await choose(t('思考等级', 'Thinking level'), rows, initial);
   return thinkingLevel ? { model, thinkingLevel } : null;
 }
@@ -1387,9 +1401,9 @@ export async function showSetupGuidance({
   installDependency = false,
   dependencyOnly = false,
   interactive = process.stdin.isTTY && process.stdout.isTTY,
-  check = () => readChecks(null),
+  check = readChecks,
   saveRewriteMode = saveSetupRewriteMode,
-  saveModel = ({ model, thinkingLevel }, lang) => saveModelSelection(null, model, thinkingLevel, lang),
+  saveModel = ({ model, thinkingLevel }, lang) => saveModelSelection(model, thinkingLevel, lang),
   chooseMode = chooseSetupMode,
   chooseModel = chooseSetupModel,
   offerOpenAI = lang => manageOpenAI(lang, { onboarding: true }),
@@ -1400,19 +1414,21 @@ export async function showSetupGuidance({
   let checks, lang;
   try {
     checks = check();
-    lang = checks.ui_language || systemLanguage();
+    lang = checks.ui_language || language();
   } catch {
     console.log(
       tr(
-        '没能完成环境检查。在项目里新开一个 Codex 对话，说「配置回复润色」再试一次。',
-        "Couldn't finish the environment check. Open a new project chat in Codex and say “Set up Codex Polish” to try again."
+        '没能完成环境检查。在 Codex 里新开一个对话，说「配置回复润色」再试一次。',
+        "Couldn't finish the environment check. Open a new chat in Codex and say “Set up Codex Polish” to try again."
       )
     );
     return !installDependency;
   }
-  if (interactive && !dependencyOnly && checks.rewrite_mode_configured === false) {
-    const selected = await chooseMode(lang);
-    if (selected) {
+  if (interactive && !dependencyOnly) {
+    const current = checks.rewrite_mode_configured ? checks.rewrite_mode : undefined;
+    const selected = await chooseMode(lang, current);
+    if (!selected) return true;
+    if (selected !== current) {
       await saveRewriteMode(selected);
       checks = check();
     }
@@ -1458,9 +1474,12 @@ export async function showSetupGuidance({
   } else if (installDependency)
     console.log(tr('已找到 agy，直接使用现有安装。', 'Found agy. Your existing installation will be used.', lang));
   if (dependencyOnly) return true;
-  if (interactive && checks.gemini_model_configured === false && checks.agy_available && !checks.blockers.includes('agy_unsupported')) {
+  if (!interactive)
+    console.log(tr('要选择默认模式和模型，请在交互式终端运行 setup。', 'Run setup in an interactive terminal to choose your default mode and model.', lang));
+  if (interactive && checks.agy_available && !checks.blockers.includes('agy_unsupported')) {
     const selected = await chooseModel(checks, lang);
-    if (selected) {
+    if (!selected) return true;
+    if (!checks.gemini_model_configured || selected.model !== checks.gemini_model || selected.thinkingLevel !== checks.gemini_thinking_level) {
       await saveModel(selected, lang);
       checks = check();
     }
@@ -1492,7 +1511,7 @@ export function doctor(checks = readChecks()) {
   const lines = [
     tr('润色时机：', 'When to polish: ', lang) + tr(...(modes[checks.mode] ?? ['设置无效', 'invalid setting']), lang),
     tr('自动润色的改写模式：', 'Automatic rewrite mode: ', lang) + (checks.rewrite_mode || tr('设置无效', 'invalid setting', lang)),
-    tr('项目改写模型：', 'Rewrite model: ', lang) + (checks.gemini_model || tr('设置无效', 'invalid setting', lang)),
+    tr('改写模型：', 'Rewrite model: ', lang) + (checks.gemini_model || tr('设置无效', 'invalid setting', lang)),
     tr('思考等级：', 'Thinking level: ', lang) + (Object.hasOwn(thinkingLabels, checks.gemini_thinking_level)
       ? tr(...thinkingLabels[checks.gemini_thinking_level], lang) : checks.gemini_thinking_level || tr('设置无效', 'invalid setting', lang))
   ];
@@ -1512,7 +1531,7 @@ export function doctor(checks = readChecks()) {
         )
   );
   const detected =
-    checks.language_mode === 'auto' ? tr('自动识别', 'automatic', lang) : tr('项目设置', 'project setting', lang);
+    checks.language_mode === 'auto' ? tr('自动识别', 'automatic', lang) : tr('手动选择', 'manually selected', lang);
   lines.push(tr(`界面语言：中文（${detected}）`, `Interface language: English (${detected})`, lang));
   for (const [tool, ready] of [
     ['Node.js 22.16+', checks.node_available],
@@ -1557,13 +1576,13 @@ export function doctor(checks = readChecks()) {
 }
 function usage(lang) {
   return tr(
-    '用法：node scripts/install.mjs [setup|update|doctor|openai|uninstall] [--install-agy]\nsetup 安装（默认），update 更新，doctor 检查当前项目，openai 管理可选的 OpenAI Decisions API 检查和密钥，uninstall 卸载。\n--install-agy 在缺少 agy 时安装，仅限 setup 和 update。\n-h, --help 显示帮助并退出。',
-    'Usage: node scripts/install.mjs [setup|update|doctor|openai|uninstall] [--install-agy]\nsetup installs the plugin (default), update upgrades it, doctor checks this project, openai manages the optional OpenAI Decisions API check and its key, and uninstall removes the plugin.\n--install-agy installs Google’s Antigravity CLI if missing during setup or update.\n-h, --help shows this help.',
+    '用法：node scripts/install.mjs [setup|update|doctor|openai|uninstall] [--install-agy]\nsetup 安装并选择默认模式和模型，可重复运行（默认命令）。update 更新插件，doctor 检查插件设置和运行环境，openai 管理可选的 OpenAI Decisions API 检查和密钥，uninstall 卸载。\n--install-agy 在缺少 agy 时安装，仅限 setup 和 update。\n-h, --help 显示帮助并退出。',
+    'Usage: node scripts/install.mjs [setup|update|doctor|openai|uninstall] [--install-agy]\nsetup (default) installs the plugin. Run it again to change your default mode and model. update upgrades the plugin, doctor checks your settings and local environment, openai manages the optional OpenAI Decisions API check and its key, and uninstall removes the plugin.\n--install-agy installs Google’s Antigravity CLI if missing during setup or update.\n-h, --help shows this help.',
     lang
   );
 }
 export async function main(args = process.argv.slice(2)) {
-  const lang = systemLanguage();
+  const lang = language();
   if (args.includes('-h') || args.includes('--help')) {
     console.log(usage(lang));
     return 0;
@@ -1590,7 +1609,7 @@ export async function main(args = process.argv.slice(2)) {
     }
     const [message, enabled] = await manage(action, ROOT, snapshotStore());
     console.log(message);
-    const setup = enabled && action === 'setup';
+    const setup = action === 'setup' && (enabled || (process.stdin.isTTY && process.stdout.isTTY));
     if ((setup || installDependency) && !(await showSetupGuidance({ installDependency, dependencyOnly: !setup }))) return 1;
     if (enabled) console.log(await hookGuidance(lang, homedir()));
     return 0;
@@ -1614,5 +1633,5 @@ if (
 ) {
   process.exitCode = await main();
   if (process.env.CODEX_POLISH_INSTALL_WINDOW === '1' && process.stdin.isTTY)
-    await ask(tr('按回车关闭安装窗口。', 'Press Enter to close the installer.', systemLanguage()));
+    await ask(tr('按回车关闭安装窗口。', 'Press Enter to close the installer.', language()));
 }

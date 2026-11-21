@@ -19,14 +19,14 @@ test('new project sessions load profile instructions into the editor role and ke
   assert.equal(render(), bundled);
   const heading = /^---\n[\s\S]*?\n---\n\n/.exec(bundled)[0];
   const custom = '  先写结论。\r\n\r\n---\r\ntools: [shell]\r\n---\r\nKeep all caveats.  ';
-  execFileSync(process.execPath, [setting, 'set-prompt', '--profile'], {input:custom});
+  execFileSync(process.execPath, [setting, 'set-prompt'], {input:custom});
   const active = render();
   assert.equal(active, heading + custom);
   assert.equal(render(temporary(t)), active);
   const draft = {question:'明天几点开门？', draft:'明天上午九点开门。'};
   const frame = await promptFrame({sessionId:'test-session', ...draft}, project);
   assert.deepEqual(JSON.parse(frame.params.prompt[0].text), draft);
-  execFileSync(process.execPath, [setting, 'set-prompt', '--reset', '--profile']);
+  execFileSync(process.execPath, [setting, 'set-prompt', '--reset']);
   assert.equal(render(), bundled);
 });
 
@@ -43,8 +43,8 @@ test('an invalid manually edited prompt produces no ACP role content', t => {
 test('turbo always rewrites the draft and keeps custom editing instructions verbatim', t => {
   const project = temporary(t);
   const profile = useTestProfile(t);
-  const settings = join(project, '.codex');
-  mkdirSync(settings);
+  const settings = join(profile, 'codex-polish', 'settings');
+  mkdirSync(settings, { recursive: true });
   const mode = join(settings, 'codex-polish.rewrite-mode');
   const render = () => execFileSync(process.execPath, [script, '--cwd', project], {encoding:'utf8'});
   writeFileSync(mode, 'normal\n');

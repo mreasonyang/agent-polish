@@ -4,8 +4,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import childProcess from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
-import { systemLanguage, language, LANGUAGE_FILE } from '../plugins/codex-polish/hooks/ui_locale.mjs';
-import { makeProject, json, run, preferences, plugin } from './hook_fixture.mjs';
+import { systemLanguage, LANGUAGE_FILE } from '../plugins/codex-polish/hooks/ui_locale.mjs';
+import { makeProject, json, run, preferences, plugin, supportsFileSymlink } from './hook_fixture.mjs';
 
 test('terminal locale precedence and unsupported fallback', () => {
   for (const [env, expected] of [
@@ -47,7 +47,7 @@ test('Windows defaults to the system locale when the host provides no language o
   assert.equal(systemLanguage({ LANG: 'en_US' }), 'en');
 });
 
-test('project language persists and auto uses environment without changing rewrite behavior', t => {
+test('profile language persists and auto uses environment without changing rewrite behavior', t => {
   const { check, cwd, call, env, project } = makeProject(t);
   const before = check();
   assert.deepEqual([before.language_mode, before.ui_language], ['auto', 'en']);
@@ -66,30 +66,37 @@ test('project language persists and auto uses environment without changing rewri
   const override = check({ env: { ...env, LC_ALL: 'zh-Hant' } });
   assert.deepEqual([override.language_mode, override.ui_language], ['auto', 'zh']);
   assert.match(call(['set-history-turns', '11']).stderr, /whole number/);
-  assert.equal(language(project, { LANG: 'en' }), 'en');
+  assert.equal(check({ where: project }).ui_language, 'en');
 });
 
-test('nested repositories, invalid and linked settings do not leak language', t => {
-  const { call, project, cwd } = makeProject(t);
-  json(call(['set-language', 'zh'], { where: project }));
+test('nested repositories share the profile language and malformed or linked profile settings fall back to system language', t => {
+  const { call, project, cwd, check, env } = makeProject(t);
+  const { file } = json(call(['set-language', 'zh'], { where: project }));
   fs.writeFileSync(path.join(cwd, '.git'), '');
-  assert.equal(language(cwd, { LANG: 'en' }), 'en');
-  const file = path.join(cwd, '.codex', LANGUAGE_FILE);
-  fs.mkdirSync(path.dirname(file));
+  assert.equal(check({ where: cwd }).ui_language, 'zh');
+  const local = path.join(cwd, '.codex', LANGUAGE_FILE);
+  fs.mkdirSync(path.dirname(local));
+  fs.writeFileSync(local, 'en');
+  assert.equal(check().ui_language, 'zh');
+
   fs.writeFileSync(file, 'not-a-language');
-  assert.equal(language(cwd, { LANG: 'zh_CN' }), 'zh');
-  fs.unlinkSync(file);
-  fs.symlinkSync(path.join(project, '.codex', LANGUAGE_FILE), file);
-  assert.equal(language(cwd, { LANG: 'en' }), 'en');
-  assert.notEqual(call(['set-language', 'en']).status, 0);
-  assert.ok(fs.lstatSync(file).isSymbolicLink());
+  const chinese = { env: { ...env, LC_ALL: 'zh_CN' } };
+  assert.equal(check(chinese).ui_language, 'zh');
+  assert.equal(check().ui_language, 'en');
+  if (supportsFileSymlink()) {
+    fs.unlinkSync(file);
+    fs.symlinkSync(local, file);
+    assert.equal(check(chinese).ui_language, 'zh');
+    assert.notEqual(call(['set-language', 'en']).status, 0);
+    assert.ok(fs.lstatSync(file).isSymbolicLink());
+  }
 });
 
 test('hook localizes reminder while preserving protocol fields', t => {
   const { call, project, cwd, env } = makeProject(t);
   json(call(['set-mode', 'auto'], { where: project }));
   for (const [lang, phrase, quiet] of [
-    ['zh', '本项目已开启自动改写', /无需.*播报.*润色进度/],
+    ['zh', '已开启自动改写', /无需.*播报.*润色进度/],
     ['en', 'Automatic rewriting is on', /without progress announcements/],
   ]) {
     json(call(['set-language', lang], { where: project }));

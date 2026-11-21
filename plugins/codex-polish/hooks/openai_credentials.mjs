@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { openRegular, sameEntry, windows } from './platform.mjs';
-import { withSettingsDirectory } from './project_setting.mjs';
+import { withSettingsDirectory } from './profile_setting.mjs';
 import { createPrivateDirectory, privateFile } from './recovery.mjs';
 import { checkPrivatePaths } from '../skills/codex-polish/scripts/acp_windows_io.mjs';
 

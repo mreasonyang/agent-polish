@@ -7,9 +7,8 @@ import { PROMPT_FILE, readBundledEditorRole } from '../plugins/codex-polish/hook
 
 function fixture(t) {
   const project = makeProject(t);
-  const profile = (args, options = {}) => run(preferences, [...args, '--profile'], { env: project.env, ...options });
-  const file = path.join(project.env.CODEX_HOME, 'codex-polish', 'settings', PROMPT_FILE);
-  return { ...project, profile, file };
+  const file = path.join(project.settings, PROMPT_FILE);
+  return { ...project, profile: project.call, file };
 }
 
 test('fresh profile uses the bundled prompt, and checking or resetting creates no settings', t => {
@@ -35,6 +34,7 @@ test('one profile prompt keeps literal UTF-8 and covers every project and rewrit
   const second = path.join(home, 'another project');
   fs.mkdirSync(second);
   const oldFile = path.join(project, '.codex', PROMPT_FILE);
+  fs.mkdirSync(path.dirname(oldFile));
   fs.writeFileSync(oldFile, 'Private to the old project.');
   assert.equal(check().prompt_source, 'default');
   const text = '  \r\n用中文说明。\r\n\r\nKeep `$` and ${names} intact.\t\r\n  ';
@@ -66,8 +66,8 @@ test('host input preserves multiline prompts and project or link options are rej
   assert.equal(saved.status, 0, saved.stderr);
   assert.ok(saved.stdout.startsWith('input_ready\n'));
   for (const command of ['prompt', 'set-prompt']) {
-    for (const args of [[], ['--cwd', project], ['--profile', '--cwd', project], ['--profile', '--link', file]]) {
-      assert.equal(run(preferences, [command, ...args], { env, input: 'replace' }).status, 2);
+    for (const args of [['--cwd', project], ['--link', file]]) {
+      assert.equal(run(preferences, [command, ...args], { env, cwd: project, input: 'replace' }).status, 2);
     }
   }
   assert.equal(json(profile(['prompt'])).text, text);

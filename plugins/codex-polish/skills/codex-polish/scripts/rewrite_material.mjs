@@ -23,9 +23,9 @@ export function selectedMaterial(data) {
   return { draft: data.selection };
 }
 
-export function projectMaterial(primary, cwd, mode, { selectionOnly = false } = {}) {
+export function editingMaterial(primary, mode, { selectionOnly = false } = {}) {
   let prompt;
-  try { prompt = readEditorPrompt(cwd ?? process.cwd(), mode, { selectionOnly }); }
+  try { prompt = readEditorPrompt(mode, { selectionOnly }); }
   catch { throw new MaterialError('editor_prompt_invalid'); }
   const evidence = prompt.source === 'custom' ? { ...primary, editor_prompt: prompt.text } : primary;
   return { evidence, prompt };

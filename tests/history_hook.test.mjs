@@ -11,6 +11,7 @@ const prefURL = new URL('../plugins/codex-polish/hooks/preferences.mjs', import.
 const cacheURL = new URL('../plugins/codex-polish/hooks/recovery.mjs', import.meta.url).href;
 function fixture(t) {
   const project = makeProject(t);
+  fs.mkdirSync(project.settings, { recursive: true });
   const transcript = path.join(project.home, 'a transcript.jsonl');
   const event = { hook_event_name: 'UserPromptSubmit', cwd: project.project, session_id: SESSION, turn_id: 'turn-1',
     transcript_path: transcript, prompt: 'a private user message' };
@@ -62,9 +63,13 @@ test('source matches current thread, profile, and exact cwd', t => {
   assert.equal(hook({ turn_id: 'child' }, { CODEX_THREAD_ID: OTHER }), '');
   assert.match(hook({ session_id: undefined }, { CODEX_THREAD_ID: OTHER }), /additionalContext/);
   assert.equal(source().turn_id, 'turn-1');
+  const otherTranscript = path.join(home, 'other-transcript.jsonl');
+  hook({ cwd, transcript_path: otherTranscript, turn_id: 'other-folder' });
+  assert.deepEqual(source({}, cwd), { session_id: SESSION, turn_id: 'other-folder', transcript_path: otherTranscript });
+  assert.equal(source().turn_id, 'turn-1');
 });
 
-test('invalid source and disabled project revoke stored metadata', t => {
+test('invalid source and disabled profile revoke stored metadata', t => {
   const { hook, source, mode } = fixture(t);
   for (const fields of [{ turn_id: null }, { transcript_path: null }, { transcript_path: 'relative.jsonl' }]) {
     hook();
@@ -87,9 +92,8 @@ test('a large user message still receives the automatic hook', t => {
 });
 
 test('zero history retains only the pointer needed for an explicit earlier-answer rewrite', t => {
-  const { project, env, hook, source, transcript, database } = fixture(t);
-  const setting = path.join(project, '.codex/codex-polish.history-turns');
-  fs.writeFileSync(setting, '0');
+  const { project, env, hook, source, transcript, database, call } = fixture(t);
+  json(call(['set-history-turns', '0']));
   const event = (type, fields) => ({ type: 'event_msg', payload: { type, ...fields } });
   const exchange = (turn_id, message, answer) => [
     event('task_started', { turn_id }), event('user_message', { message }),
@@ -131,7 +135,7 @@ test('uses private cache only and prunes stale pointers', t => {
 });
 
 function conversation(t) {
-  const { project, env, transcript, hook, database, sql } = fixture(t);
+  const { project, env, transcript, hook, database, sql, call } = fixture(t);
   const scripts = path.join(plugin, 'skills/codex-polish/scripts');
   const options = { env: { ...env, CODEX_THREAD_ID: SESSION } };
   fs.writeFileSync(transcript, JSON.stringify({ type: 'session_meta', payload: { id: SESSION } }) + '\n');
@@ -141,7 +145,7 @@ function conversation(t) {
     turn = id;
     append('task_started', { turn_id: id });
     append('user_message', { message: question });
-    hook({ turn_id: id });
+    return hook({ turn_id: id, prompt: question });
   }
   function end(text) {
     append('agent_message', { phase: 'final_answer', message: text });
@@ -163,7 +167,7 @@ function conversation(t) {
       console.log(frame.params.prompt[0].text);`;
     return json(run('--input-type=module', ['-e', code, project, JSON.stringify({ sessionId: 'fixture', ...target }), String(back ?? '')], options));
   }
-  const zeroHistory = () => fs.writeFileSync(path.join(project, '.codex/codex-polish.history-turns'), '0');
+  const zeroHistory = () => json(call(['set-history-turns', '0']));
   return { begin, end, display, gemini, previous, database, sql, zeroHistory, options };
 }
 
@@ -183,7 +187,9 @@ test('successive rewrites of an earlier comparison use its original question, so
   const output = display({ ...target, candidate: 'Your browser kept the earlier image.', display_language: 'zh' }, '--turns-back', '2');
   assert.match(output, /查看 GPT 原稿/);
   end(output);
-  begin('twice', 'Try again.');
+  const reminder = JSON.parse(begin('twice', '重写')).hookSpecificOutput.additionalContext;
+  assert.match(reminder, /--trigger explicit\b/);
+  assert.doesNotMatch(reminder, /--trigger auto\b/);
   assert.deepEqual(json(previous()), { ...target, source_label: 'gpt' });
   assert.deepEqual(gemini(target, 1), { ...target, history: [before] });
 

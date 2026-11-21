@@ -1,5 +1,3 @@
-// Resolve preferences up to the closest repository boundary. A null value means
-// absent; an empty string marks a preference that cannot safely be used.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -41,13 +39,11 @@ function accessSetting(operation, target, value, checkStagedFile) {
   const temporary = '.' + target + '-' + randomBytes(12).toString('hex');
   const fd = fs.openSync(temporary, 'wx', 0o600);
   let published = false;
-  let staged;
   try {
     try {
       checkStagedFile?.(temporary, fd);
       if (Buffer.isBuffer(value)) fs.writeFileSync(fd, value);
       else fs.writeFileSync(fd, value + '\n', 'ascii');
-      staged = fs.fstatSync(fd, { bigint: true });
     } finally {
       fs.closeSync(fd);
     }
@@ -56,7 +52,6 @@ function accessSetting(operation, target, value, checkStagedFile) {
   } finally {
     if (!published) fs.rmSync(temporary, { force: true });
   }
-  return { staged };
 }
 
 export function withSettingsDirectory(directory, use) {
@@ -70,7 +65,7 @@ export function withSettingsDirectory(directory, use) {
     process.chdir(directory);
     try {
       if (!sameEntry(fd === null ? expected : fs.fstatSync(fd, { bigint: true }), fs.statSync('.', { bigint: true }))) {
-        throw new Error('project settings directory changed');
+        throw new Error('settings directory changed');
       }
       return use(accessSetting);
     } finally {
@@ -81,35 +76,8 @@ export function withSettingsDirectory(directory, use) {
   }
 }
 
-export function accessProjectSetting(directory, operation, filename, value) {
+export function accessSettingFile(directory, operation, filename, value) {
   return withSettingsDirectory(directory, access => access(operation, filename, value));
-}
-
-// Git worktrees and nested repositories each own their project preferences.
-export function projectRoot(cwd) {
-  if (typeof cwd !== 'string' || !path.isAbsolute(cwd)) throw new Error('invalid project path');
-  const directory = fs.realpathSync(cwd);
-  if (!fs.statSync(directory).isDirectory()) throw new Error('invalid project directory');
-  for (let base = directory; base !== os.homedir() && base !== path.dirname(base); base = path.dirname(base)) {
-    if (fs.lstatSync(path.join(base, '.git'), { throwIfNoEntry: false })) return base;
-  }
-  return directory;
-}
-
-export function readProjectSetting(cwd, filename, maxBytes) {
-  if (cwd === null) return [null, null]; // A profile-only check has no current project.
-  let base;
-  try {
-    base = projectRoot(cwd);
-    if (base === os.homedir() || base === path.dirname(base)) return [null, base];
-    const settings = path.join(base, '.codex');
-    if (fs.lstatSync(settings).isSymbolicLink() &&
-        fs.statSync(settings, { throwIfNoEntry: false })?.isDirectory() &&
-        !fs.lstatSync(path.join(settings, filename), { throwIfNoEntry: false })) return [null, base];
-    return [accessProjectSetting(settings, 'read', filename, maxBytes), base];
-  } catch (error) {
-    return [base && error.code === 'ENOENT' ? null : '', base ?? null];
-  }
 }
 
 function profileSettingsDirectory(create) {
@@ -125,23 +93,19 @@ function profileSettingsDirectory(create) {
   return dir;
 }
 
+// Missing files use the built-in defaults. Unreadable files return an invalid value.
 export function readProfileSetting(filename, maxBytes) {
   try {
-    return accessProjectSetting(profileSettingsDirectory(false), 'read', filename, maxBytes);
+    return accessSettingFile(profileSettingsDirectory(false), 'read', filename, maxBytes);
   } catch (error) {
     return error.code === 'ENOENT' ? null : '';
   }
 }
 
-export function readSettingWithDefault(cwd, filename, maxBytes) {
-  const [projectValue] = readProjectSetting(cwd, filename, maxBytes);
-  return projectValue ?? readProfileSetting(filename, maxBytes);
-}
-
-export function writeProfileDefault(filename, value) {
+export function writeProfileSetting(filename, value) {
   const directory = profileSettingsDirectory(value !== null);
   try {
-    accessProjectSetting(directory, value === null ? 'remove' : 'write', filename, value);
+    accessSettingFile(directory, value === null ? 'remove' : 'write', filename, value);
   } catch (error) {
     if (value !== null || error.code !== 'ENOENT') throw error;
   }

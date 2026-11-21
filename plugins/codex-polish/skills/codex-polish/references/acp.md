@@ -4,7 +4,7 @@
 
 ## 启动
 
-1. 使用 `check.agy_path` 指向的官方程序。先运行 `node "<技能>/scripts/acp_workspace.mjs" --cwd "<原项目>" --trigger auto|explicit`；只发选段时加 `--selection-only`，模型查询或握手测试则只传 `--catalog`。保存返回的 `workspace`、`editor_role_file`、`cleanup_token`。临时目录包含本次编辑角色。
+1. 使用 `check.agy_path` 指向的官方程序。先运行 `node "<技能>/scripts/acp_workspace.mjs" --cwd "<本轮工作目录>" --trigger auto|explicit`；只发选段时加 `--selection-only`，模型查询或握手测试则只传 `--catalog`。保存返回的 `workspace`、`editor_role_file`、`cleanup_token`。临时目录包含本次编辑角色。
 2. 如果宿主直接提供能读写标准流的进程工具，在 `workspace` 中启动参数数组 `[agy_path, "acp", "--agent", "codex-polish-editor", "--sandbox"]`。保留可写 stdin、原始 stdout 和进程退出句柄，stderr 单独读，子进程环境移除 `OPENAI_API_KEY`。例如宿主已暴露的 Codex `command/exec` 可用 `processId`、`tty:false`、`streamStdin:true`、`streamStdoutStderr:true`，向同一进程用 `command/exec/write` 写 UTF-8 字节。只使用当前宿主已经提供的工具。
 3. 如果宿主提供的是 `exec_command` / `write_stdin`，在 macOS/Linux 用 `shell:"/bin/sh", login:false, tty:true, workdir:workspace` 执行下面的命令。将占位路径替换为实际路径，用 shell 单引号正确转义。保留返回的 `session_id`；每一帧用 `write_stdin` 直接写到这个句柄，并从同一个句柄读回复。Windows 使用[直接终端步骤](acp-windows.md)。宿主缺少可持续写入的直接进程工具时，说明限制并交付原稿。
 
@@ -31,11 +31,11 @@ stty -icanon -echo -ixon -icrnl -onlcr isig intr '^C' min 1 time 0 && exec '/abs
 
 ## 改写与交付
 
-用本地 `scripts/acp_payload.mjs --host-input --cwd "<原项目>" --editor-role-file "<editor_role_file>" --trigger <trigger> --route <route> --rewrite-mode <mode> --model <model> --thinking-level <level>` 准备请求。带上本轮的 `--no-history`、`--turns-back N`、`--selection` 或 `--selection-only`。通过该离线工具自己的输入句柄传 `{sessionId, question, draft}` 或 `{sessionId, selection}`。主动请求可带 `rewrite_request`，只发选段时省略。
+用本地 `scripts/acp_payload.mjs --host-input --cwd "<本轮工作目录>" --editor-role-file "<editor_role_file>" --trigger <trigger> --route <route> --rewrite-mode <mode> --model <model> --thinking-level <level>` 准备请求。带上本轮的 `--no-history`、`--turns-back N`、`--selection` 或 `--selection-only`。通过该离线工具自己的输入句柄传 `{sessionId, question, draft}` 或 `{sessionId, selection}`。主动请求可带 `rewrite_request`，只发选段时省略。
 
 1. 拼好离线工具返回的完整请求，使用宿主写入工具把这行原样发给 **agy 的句柄**。长帧可按完整 Unicode 字符分块，只在最后一块加行尾符。Windows ConPTY 使用[终端步骤](acp-windows.md)中的输入序列，其他直接进程工具和终端追加一个 LF。不要重新输入、转述或重写材料。
 2. 保存从提交后开始收到的完整协议输出，包含各行的换行，持续读到 id 6 的终止响应。中途收到权限请求时用 agy 的句柄直接回应。其他会话或模型思考文本不得当作润色正文。
-3. 在本地运行 `scripts/acp_answer.mjs --host-input --cwd "<原项目>" --session-id "<sessionId>" --model <model> --thinking-level <level> --trigger <trigger>`。`--trigger` 沿用本轮请求的 `auto` 或 `explicit`，普通和 Turbo 模式都按实际触发方式排版。选段时加 `--selection`，旧回答用 `--turns-back N`。传 `{draft, question?, output, display_language?, source_label?}`。`draft` 是实际提交的原稿（选段即选中的文字），`output` 是宿主已经收到的 id 6 阶段原始输出。常规展示传 `zh` 或 `en`，只看正文或有严格格式时省略 `display_language`。来源不明的可见原文传 `source_label:"quoted"`。该工具只在收到本会话非空正文且 id 6 返回 `end_turn` 时排版。按原文交付最终 Markdown。
+3. 在本地运行 `scripts/acp_answer.mjs --host-input --cwd "<本轮工作目录>" --session-id "<sessionId>" --model <model> --thinking-level <level> --trigger <trigger>`。`--trigger` 沿用本轮请求的 `auto` 或 `explicit`，普通和 Turbo 模式都按实际触发方式排版。选段时加 `--selection`，旧回答用 `--turns-back N`。传 `{draft, question?, output, display_language?, source_label?}`。`draft` 是实际提交的原稿（选段即选中的文字），`output` 是宿主已经收到的 id 6 阶段原始输出。常规展示按聊天语言传 `display_language:"zh"` 或 `"en"`。主动请求缺少此字段时，原稿对照使用插件的界面语言。用户明确只看正文或要求严格输出格式时，加 `--body-only`。来源不明的可见原文传 `source_label:"quoted"`。该工具只在收到本会话非空正文且 id 6 返回 `end_turn` 时排版。按原文交付最终 Markdown。
 4. 两个离线工具均可用普通 stdin 或带 `--host-input` 的独立终端。后一种等 `input_ready` 后输入单行 JSON 和 LF。结果是 `{text, more}`；若 `more:true`，等下一次 `input_ready`，在**离线工具**句柄输入空行取下一页，按顺序直接拼接各页的 `text`。将字符串和工具返回值保留在宿主调用环境中，避免把草稿、协议流写入命令、项目文件或聊天进度消息。
 
 ## 结束或取消

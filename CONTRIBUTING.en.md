@@ -7,7 +7,7 @@ For installation, see the [project README](README.md). For details on when the p
 ## Where to Make Changes
 
 - `scripts/install.mjs` and the `.command` launchers handle installation, updates, status checks, uninstallation, and local marketplace registration.
-- `plugins/codex-polish/` contains the plugin manifest, the `UserPromptSubmit` hook, and two skills. `codex-polish` sends the selected draft through `agy acp`, and formats Gemini’s complete reply for display. Explicit requests use Turbo. The optional OpenAI Decisions check applies only when the hook runs in Normal mode. `codex-polish-setup` manages `.codex/codex-polish.*` settings, runtime model discovery, diagnostics, and the [credential guide](plugins/codex-polish/skills/codex-polish-setup/references/credentials.en.md).
+- `plugins/codex-polish/` contains the plugin manifest, the `UserPromptSubmit` hook, and two skills. `codex-polish` sends the selected draft through `agy acp`, and formats Gemini’s complete reply for display. Explicit requests use Turbo. The optional OpenAI Decisions check applies only when the hook runs in Normal mode. `codex-polish-setup` manages the current Codex profile’s polishing settings, runtime model discovery, diagnostics, and the [credential guide](plugins/codex-polish/skills/codex-polish-setup/references/credentials.en.md).
 - The full source tree includes the regression suite in `tests/` and the evaluation script and synthetic samples in `evaluation/`. See the [evaluation guide](evaluation/README.en.md).
 - When updating user-facing prompts or documentation, update both English and Chinese.
 
@@ -26,7 +26,7 @@ npm pack --ignore-scripts --pack-destination dist
 
 ## Reporting Bugs
 
-Report bugs in GitHub Issues. Include steps to reproduce, expected and actual results, and the versions of your OS, Node.js, Codex CLI, and `agy`. For diagnostics, ask Codex **"Check Codex Polish setup"** in the affected project. Redact credentials, private paths, and chat text before sharing. [Open an issue](https://github.com/mreasonyang/codex-polish/issues)
+Report bugs in GitHub Issues. Include steps to reproduce, expected and actual results, and the versions of your OS, Node.js, Codex CLI, and `agy`. For diagnostics, ask Codex **"Check Codex Polish setup"** in the affected chat. Redact credentials, private paths, and chat text before sharing. [Open an issue](https://github.com/mreasonyang/codex-polish/issues)
 
 Report security vulnerabilities privately. [Security policy](SECURITY.en.md)
 

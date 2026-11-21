@@ -9,9 +9,10 @@ import { Readable } from 'node:stream';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { decide, MAX_DECISION_DATA_BYTES, MAX_RESPONSE_BYTES } from '../plugins/codex-polish/skills/codex-polish/scripts/decisions.mjs';
-import { makeProject, temporary, useTestProfile, writeTestPrompt } from './hook_fixture.mjs';
+import { homeEnv, makeProject, temporary, useTestProfile, writeTestPrompt } from './hook_fixture.mjs';
+import { saveOpenAIKey, clearOpenAIKey } from '../plugins/codex-polish/hooks/openai_credentials.mjs';
 
-test.beforeEach(t => { useTestProfile(t); });
+test.beforeEach(t => { useTestProfile(t); saveOpenAIKey('test-key'); });
 
 const script = fileURLToPath(new URL('../plugins/codex-polish/skills/codex-polish/scripts/decisions.mjs', import.meta.url));
 const draft = {
@@ -22,8 +23,8 @@ const reply = (name, probability) => ({answers:[{type:'predicate',name,probabili
 const failure = reason => ({action:'keep',reason});
 const dataStream = data => Readable.from([Buffer.from(JSON.stringify(data))]);
 
-function cli(args, data, key = 'test-key', request) {
-  return decide(args,dataStream(data),{OPENAI_API_KEY:key},request);
+function cli(args, data, request) {
+  return decide(args,dataStream(data),{OPENAI_API_KEY:'ambient-test-key'},request);
 }
 
 // Mock the native HTTPS entry point, so status, truncation, byte limits and redirects
@@ -83,9 +84,7 @@ test('a direct judge invocation checks the rewrite policy before using credentia
   const setting = path.join(project, '.codex/codex-polish.rewrite-mode');
   for (const [value, reason] of [['turbo', 'decision_route_changed'], ['typo', 'rewrite_mode_invalid']]) {
     fs.writeFileSync(setting, value);
-    for (const key of ['valid-test-key', '', 'bad key']) {
-      assert.deepEqual(await cli(['judge', '--cwd', cwd], draft, key), failure(reason));
-    }
+    assert.deepEqual(await cli(['judge', '--cwd', cwd], draft), failure(reason));
   }
   assert.equal(mock.calls(), 0);
   fs.writeFileSync(setting, 'normal');
@@ -150,7 +149,7 @@ test('only validated evidence within the Decisions per-field limit reaches HTTPS
 
 test('only a majority for rewriting sends a draft for editing', async () => {
   for (const [score, action] of [[0, 'keep'], [0.499, 'keep'], [0.5, 'keep'], [0.5001, 'rewrite'], [0.79, 'rewrite'], [1, 'rewrite']]) {
-    const out = await cli(['judge'],draft,'test-key',async () => reply('needs_rewrite',score));
+    const out = await cli(['judge'],draft,async () => reply('needs_rewrite',score));
     assert.equal(out.action,action);
     assert.equal(out.probability,score);
   }
@@ -158,17 +157,25 @@ test('only a majority for rewriting sends a draft for editing', async () => {
 
 test('bad inputs and configuration send nothing', async () => {
   let calls = 0;
-  for (const [args,data,key,reason] of [
-    [['judge','--threshold','nan'],draft,'key','invalid_options'], [['judge','--threshold','-1'],draft,'key','invalid_options'],
-    [['judge','--timeout','inf'],draft,'key','invalid_options'], [['judge','--timeout','1e299'],draft,'key','invalid_options'],
-    [['judge','--timeout','0'],draft,'key','invalid_options'], [['judge'],{...draft,transcript:'private'},'key','invalid_input'],
-    [['judge'],{...draft,editor_prompt:'override'},'key','invalid_input'],
-    [['verify'],{...draft,candidate:'edited'},'key','invalid_options'], [['judge'],{...draft,candidate:'edited'},'key','invalid_input'],
-    [['judge'],draft,'','missing_api_key'], [['judge'],draft,'x\r\ny','invalid_api_key'],
-    [['judge'],{question:'q',draft:'汉'.repeat(90000)},'key','decision_input_too_large'],
-    [['judge'],{question:'q',draft:'x'.repeat(600 * 1024)},'key','decision_input_too_large']])
-    assert.deepEqual(await cli(args,data,key,()=>{calls++;}),failure(reason));
+  for (const [args,data,reason] of [
+    [['judge','--threshold','nan'],draft,'invalid_options'], [['judge','--threshold','-1'],draft,'invalid_options'],
+    [['judge','--timeout','inf'],draft,'invalid_options'], [['judge','--timeout','1e299'],draft,'invalid_options'],
+    [['judge','--timeout','0'],draft,'invalid_options'], [['judge'],{...draft,transcript:'private'},'invalid_input'],
+    [['judge'],{...draft,editor_prompt:'override'},'invalid_input'],
+    [['verify'],{...draft,candidate:'edited'},'invalid_options'], [['judge'],{...draft,candidate:'edited'},'invalid_input'],
+    [['judge'],{question:'q',draft:'汉'.repeat(90000)},'decision_input_too_large'],
+    [['judge'],{question:'q',draft:'x'.repeat(600 * 1024)},'decision_input_too_large']])
+    assert.deepEqual(await cli(args,data,()=>{calls++;}),failure(reason));
   assert.equal(calls,0);
+});
+
+test('the judge never falls back to an ambient key when the saved key is missing or malformed', async t => {
+  const mock = mockResponse(t);
+  fs.writeFileSync(path.join(process.env.CODEX_HOME, 'codex-polish', 'credentials', 'openai.key'), 'invalid key');
+  assert.deepEqual(await cli(['judge'], draft), failure('invalid_api_key'));
+  clearOpenAIKey();
+  assert.deepEqual(await cli(['judge'], draft), failure('missing_api_key'));
+  assert.equal(mock.calls(), 0);
 });
 
 test('judge rejects caller-supplied history before HTTPS', async t => {
@@ -210,7 +217,7 @@ test('HTTPS proxy receives CONNECT with no evidence or provider authorization', 
   proxy.listen(0,'127.0.0.1');
   await once(proxy,'listening');
   t.after(() => proxy.close());
-  const env = {OPENAI_API_KEY:'private-key', HTTPS_PROXY:'http://u:p@127.0.0.1:'+proxy.address().port};
+  const env = {HTTPS_PROXY:'http://u:p@127.0.0.1:'+proxy.address().port};
   assert.deepEqual(await decide(['judge'],dataStream(draft),env),failure('api_transport_error'));
   assert.equal(received.path,'api.openai.com:443');
   assert.equal(received.headers.authorization,undefined);
@@ -253,8 +260,8 @@ test('CLI exits at the wall-clock deadline even with a trickling reply', () => {
     };
   `;
   const result = spawnSync(process.execPath,['--import','data:text/javascript,'+encodeURIComponent(preload),
-    script,'judge','--timeout','0.10'],{input:JSON.stringify(draft),env:{CODEX_HOME:process.env.CODEX_HOME, OPENAI_API_KEY:'test-key'},
-    encoding:'utf8',timeout:3000});
+    script,'judge','--timeout','0.10'],{input:JSON.stringify(draft),env:{...homeEnv(process.env.CODEX_HOME), CODEX_HOME:process.env.CODEX_HOME},
+    encoding:'utf8',timeout:process.platform === 'win32' ? 30_000 : 3000});
   assert.equal(result.status,1);
   assert.deepEqual(JSON.parse(result.stdout),failure('api_timeout'));
   assert.equal(result.stderr,'');

@@ -86,7 +86,7 @@ function privateDirectory(dir, checkAcl = true) {
   } else if (entry.uid !== process.getuid() || entry.mode & 0o022) throw new Error('invalid cache directory');
 }
 
-function privateFile(file, entry, checkAcl = true) {
+export function privateFile(file, entry, checkAcl = true) {
   if (!entry.isFile() || entry.nlink !== 1) return false;
   if (windows) {
     if (checkAcl) checkPrivatePath(file, false);
@@ -95,7 +95,7 @@ function privateFile(file, entry, checkAcl = true) {
   return entry.uid === process.getuid() && !(entry.mode & 0o077);
 }
 
-function createCacheDirectory(dir) {
+export function createPrivateDirectory(dir) {
   if (!windows) {
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     return;
@@ -108,7 +108,7 @@ function createCacheDirectory(dir) {
   try {
     // Publish the directory only after its ACL is private. A simultaneous
     // hook can then validate and use the winner's directory immediately.
-    secureDirectory(temporary);
+    secureDirectory(path.resolve(temporary));
     try {
       fs.renameSync(temporary, dir);
       published = true;
@@ -124,7 +124,7 @@ export function withCache(mode, use) {
   const { DatabaseSync } = sqliteModule();
   const file = databasePath();
   const directory = path.dirname(file);
-  if (mode === 'create') createCacheDirectory(directory);
+  if (mode === 'create') createPrivateDirectory(directory);
   privateDirectory(directory, false);
   if (mode === 'create' && !fs.lstatSync(file, { throwIfNoEntry: false })) {
     if (windows) checkPrivatePath(directory);

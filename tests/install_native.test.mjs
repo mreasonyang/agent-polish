@@ -175,11 +175,19 @@ nativeTest(
     for (const p of [first, changed, cache]) assert.ok(!fs.existsSync(p), p);
   }
 );
-nativeTest('uninstall clears the single global prompt, profile defaults and configured project settings', (t) => {
-  const { base, profile, invoke, snapshot, local } = isolated(t);
+nativeTest('uninstall clears the saved OpenAI key, global prompt, profile defaults and configured project settings', (t) => {
+  const { base, profile, env, invoke, snapshot, local } = isolated(t);
+  env.OPENAI_API_KEY = 'unrelated-key-from-another-tool';
   local('setup');
   const script = join(snapshot(), PRODUCT, 'hooks/preferences.mjs');
   const set = (...args) => invoke(process.execPath, [script, ...args]);
+  const status = () => JSON.parse(set('check', '--profile'));
+  assert.equal(status().decisions_enabled, false);
+  assert.equal(status().openai_key_configured, false);
+  const credentials = pathToFileURL(join(dirname(script), 'openai_credentials.mjs')).href;
+  invoke(process.execPath, ['--input-type=module', '-e',
+    `import {saveOpenAIKey} from ${JSON.stringify(credentials)}; saveOpenAIKey('sk-test-isolated-install');`]);
+  assert.equal(status().decisions_enabled, true);
   const first = join(base, 'first project'), second = join(base, 'second project');
   fs.mkdirSync(first);
   fs.mkdirSync(second);
@@ -189,6 +197,8 @@ nativeTest('uninstall clears the single global prompt, profile defaults and conf
   const { file: promptFile } = JSON.parse(invoke(process.execPath, [script, 'set-prompt', '--profile'], { input: 'Use short sentences.' }));
   set('set-history-turns', '4', '--cwd', second);
   const defaults = join(profile, 'codex-polish', 'settings');
+  const skippedOffer = join(defaults, 'codex-polish.openai-offer');
+  fs.writeFileSync(skippedOffer, 'seen\n');
   assert.equal(promptFile, join(defaults, 'codex-polish.prompt.md'));
   for (const project of [first, second]) {
     assert.equal(JSON.parse(set('check', '--cwd', project)).prompt_source, 'custom');
@@ -198,6 +208,7 @@ nativeTest('uninstall clears the single global prompt, profile defaults and conf
   for (const file of unrelated) fs.writeFileSync(file, 'keep me');
   const removed = [
     join(defaults, 'codex-polish.rewrite-mode'), join(defaults, 'codex-polish.model'),
+    join(profile, 'codex-polish', 'credentials', 'openai.key'), skippedOffer,
     join(first, '.codex', 'codex-polish.mode'), join(second, '.codex', 'codex-polish.history-turns'), promptFile
   ];
   for (const file of removed) assert.ok(fs.existsSync(file), file);
@@ -213,6 +224,7 @@ nativeTest('uninstall clears the single global prompt, profile defaults and conf
   for (let attempt = 0; attempt < 2; attempt++) {
     assert.match(local('uninstall'), /uninstalled/i);
     assert.ok(!fs.existsSync(ledger));
+    assert.ok(!fs.existsSync(join(profile, 'codex-polish', 'credentials')));
     for (const file of removed) assert.equal(fs.lstatSync(file, { throwIfNoEntry: false }), undefined, file);
     for (const file of unrelated) assert.equal(fs.readFileSync(file, 'utf8'), 'keep me');
   }

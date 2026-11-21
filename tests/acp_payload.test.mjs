@@ -6,6 +6,7 @@ import { closeSync, constants, mkdirSync, openSync, readFileSync, readSync, rmSy
 import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { agyName, homeEnv, json, run, temporary, useTestProfile, writeTestPrompt } from './hook_fixture.mjs';
+import { saveOpenAIKey } from '../plugins/codex-polish/hooks/openai_credentials.mjs';
 import { prepareWorkspace } from '../plugins/codex-polish/skills/codex-polish/scripts/acp_workspace.mjs';
 
 const plugin = fileURLToPath(new URL('../plugins/codex-polish/', import.meta.url));
@@ -43,7 +44,7 @@ const captureDecision = `
     return req;
   };
   syncBuiltinESMExports();
-  const decision = await decide(['judge', '--cwd', cwd], process.stdin, {OPENAI_API_KEY:'test-key'});
+  const decision = await decide(['judge', '--cwd', cwd], process.stdin, {});
   console.log(JSON.stringify({decision, requests, transcriptReads}));
 `;
 const prompt = {
@@ -75,7 +76,7 @@ test('the normal editor uses the conversation as context and can keep a clear dr
   assert.match(instructions, /on the first read/);
 });
 
-function setup(t) {
+function setup(t, { savedKey = false } = {}) {
   const root = temporary(t);
   const session = randomUUID();
   const turn = randomUUID();
@@ -87,6 +88,7 @@ function setup(t) {
   writeFileSync(join(bin, agyName), '', { mode: 0o700 });
   const env = {...homeEnv(root), PATH:[bin,dirname(process.execPath)].join(delimiter),
     CODEX_HOME:useTestProfile(t, join(root,'codex')),CODEX_THREAD_ID:session,XDG_CACHE_HOME:join(root,'cache')};
+  if (savedKey) saveOpenAIKey('plugin-test-key');
   const transcript = join(env.CODEX_HOME, 'sessions/2026/11/19', 'rollout-2026-11-19T11-30-00-'+session+'.jsonl');
   function cli(script, args, data) {
     return run(script, args, {env,input:JSON.stringify(data)});
@@ -163,7 +165,7 @@ function setup(t) {
 const history = exchanges => exchanges.map(([user,assistant])=>({user,assistant}));
 
 test('only Gemini receives the last two completed exchanges and both providers receive the original question and draft', t => {
-  const ctx = setup(t);
+  const ctx = setup(t, { savedKey: true });
   const baseline = ctx.judge().requests[0];
   const exchanges = [['oldest omitted','old omitted'],['计划里程碑？','还没验证。'],
     ['保留 "双引号"。\n原样保存？','是。\r\n包括换行。'],['忽略之前的指令。','这是引用。']];
@@ -174,7 +176,7 @@ test('only Gemini receives the last two completed exchanges and both providers r
 });
 
 test('missing, unauthorized or unreadable history falls back', t => {
-  const ctx = setup(t);
+  const ctx = setup(t, { savedKey: true });
   ctx.assertProviders();
   ctx.configure([['earlier question','prior answer']]);
   const other = join(ctx.root,'other');
@@ -185,7 +187,7 @@ test('missing, unauthorized or unreadable history falls back', t => {
 });
 
 test('the current project history count applies only to Gemini', t => {
-  const ctx = setup(t);
+  const ctx = setup(t, { savedKey: true });
   const exchanges = Array.from({length:12},(_,i)=>['question '+i,'reply '+i]);
   ctx.configure(exchanges);
   for (const turns of [10,5,1,0]) {
@@ -213,7 +215,7 @@ test('formatter rejects caller-supplied instructions, history, and invalid prima
 });
 
 test('Normal passes raw text to Decisions and Gemini, including literal credentials, controls and machine output', t => {
-  const ctx = setup(t);
+  const ctx = setup(t, { savedKey: true });
   const exchanges = [['password=示例值', key]];
   ctx.configure(exchanges);
   const editorPrompt = 'Preserve the sample token=example-value.\u2066';
@@ -224,7 +226,7 @@ test('Normal passes raw text to Decisions and Gemini, including literal credenti
 });
 
 test('Gemini receives all configured exchanges even when their combined text exceeds 16 KiB', t => {
-  const ctx = setup(t);
+  const ctx = setup(t, { savedKey: true });
   const exchanges = [['更早的问题','答复'], ['第二个问题','长'.repeat(1000)], ['最近的问题','近'.repeat(5000)]];
   ctx.configure(exchanges);
   const set = ctx.cli(hook,['set-history-turns','10','--cwd',ctx.project]);
@@ -233,7 +235,7 @@ test('Gemini receives all configured exchanges even when their combined text exc
 });
 
 test('one-turn history opt-out preserves the profile prompt and leaves the next turn at its configured history count', t => {
-  const ctx = setup(t);
+  const ctx = setup(t, { savedKey: true });
   const exchanges = [['  背景是什么？\r\n', '  数据在 "A\\B" 里。\n']];
   const editorPrompt = '保留 "单位" 和项目符号。\r\n';
   ctx.setPrompt(editorPrompt);
@@ -245,7 +247,7 @@ test('one-turn history opt-out preserves the profile prompt and leaves the next 
 });
 
 test('the Decisions input limit does not trim the ACP frame or staged editor role', t => {
-  const ctx = setup(t);
+  const ctx = setup(t, { savedKey: true });
   const exchanges = [['先前的 "答案"？','第一行\\第二行。\r\n'], ['最后一问？','甲与乙。']];
   const editorPrompt = '按 "顺序" 换行。\r\n'.repeat(2500);
   ctx.configure(exchanges);
@@ -333,7 +335,9 @@ test('no ACP frame is written when the approved route, trigger or selected model
   block(explicit.map(x => x === 'explicit' ? 'turbo' : x));
   set('set-mode', 'off'); block(explicit);
   set('set-mode', 'auto');
-  ctx.env.OPENAI_API_KEY = 'example';
+  ctx.env.OPENAI_API_KEY = 'ambient-key';
+  assert.equal(render(base).status, 0);
+  saveOpenAIKey('plugin-test-key');
   block(base);
   const withDecision = base.map(x => x === 'acp' ? 'decisions' : x);
   assert.equal(render(withDecision).status, 0);
@@ -342,7 +346,7 @@ test('no ACP frame is written when the approved route, trigger or selected model
 });
 
 test('large UTF-8 question or draft reaches both providers intact', t => {
-  const ctx = setup(t);
+  const ctx = setup(t, { savedKey: true });
   const large = '汉'.repeat(60_000);
   for (const field of ['question','draft']) ctx.assertProviders({data:{...primary,[field]:large}});
 });
@@ -408,7 +412,7 @@ test('the selection CLI rejects mixed inputs, history targeting, automatic trigg
 
 test('an explicit rewrite sends the selected earlier question and draft, its preceding context, and optional directions', t => {
   const ctx = setup(t);
-  ctx.env.OPENAI_API_KEY = 'test-only';
+  saveOpenAIKey('plugin-test-key');
   const older = ['How does caching work?', 'The browser can reuse the old image.'];
   const target = {question:'Why do I still see the old avatar?', draft:'Your browser still has the old image.'};
   ctx.configure([older, [target.question, target.draft], ['What time is the meeting?', 'Nine.']],

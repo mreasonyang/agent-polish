@@ -2,10 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { json, makeProject, plugin, run, windows, runHookCommand, agyName } from './hook_fixture.mjs';
+import { json, makeProject, plugin, run, windows, runHookCommand, agyName, useTestProfile } from './hook_fixture.mjs';
+import { saveOpenAIKey, clearOpenAIKey } from '../plugins/codex-polish/hooks/openai_credentials.mjs';
 
-function fixture(t) {
+function fixture(t, { savedKey = true } = {}) {
   const f = makeProject(t), installed = path.join(f.home, 'installed'), bin = path.join(f.home, 'bin');
+  useTestProfile(t, f.env.CODEX_HOME);
+  if (savedKey) saveOpenAIKey('plugin-test-key');
   fs.cpSync(plugin, installed, { recursive: true });
   fs.mkdirSync(bin);
   const agy = path.join(bin, agyName); fs.writeFileSync(agy, '#!/bin/sh\n: > "$FAULT_TEST_CALLS.agy"\n', { mode: 0o700 });
@@ -89,10 +92,11 @@ test('missing or invalid prerequisites never invoke a provider', t => {
   assert.ok(judge()[1].blockers.includes('agy_missing')); assert.ok(!fs.existsSync(calls) && !fs.existsSync(env.XDG_CACHE_HOME));
 });
 
-test('direct route skips the judge and enforces project policy', t => {
-  const { judge, check, mode, agy, calls } = fixture(t), keyless = { OPENAI_API_KEY: '' };
-  for (const key of [undefined, '', ' \t\n']) {
+test('an ambient key alone never enables the judge and the direct route enforces project policy', t => {
+  const { judge, check, mode, agy, calls } = fixture(t, { savedKey: false }), keyless = { OPENAI_API_KEY: '' };
+  for (const key of [undefined, '', ' \t\n', 'ambient-valid-key']) {
     const env = { OPENAI_API_KEY: key }, status = check(env);
+    assert.equal(status.openai_key_configured, false); assert.equal(status.openai_key_malformed, false);
     assert.equal(status.decisions_enabled, false); assert.equal(status.decisions_mode, 'auto'); assert.deepEqual(status.blockers, []);
     assert.deepEqual(judge('auto', [], env), [0, { action: 'rewrite', reason: 'direct_acp', route: 'acp' }]);
   }
@@ -154,7 +158,7 @@ test('decision detects strategy changes even when both modes use direct ACP', t 
   assert.equal(fs.existsSync(calls), false);
 });
 
-test('with an OpenAI key only ordinary Normal turns ask Decisions, even if it would keep the draft', t => {
+test('with a saved plugin key only ordinary Normal turns ask Decisions, even if it would keep the draft', t => {
   const { invoke, judge, logged, mode, helper } = fixture(t);
   fs.copyFileSync(path.join(plugin, 'skills/codex-polish/scripts/decisions.mjs'), helper);
   const mockHTTPS = `
@@ -163,6 +167,7 @@ test('with an OpenAI key only ordinary Normal turns ask Decisions, even if it wo
     import { EventEmitter } from 'node:events';
     import { Readable } from 'node:stream';
     https.request = (url, options, respond) => {
+      if (options.headers.Authorization !== 'Bearer plugin-test-key') throw Error('unexpected credential');
       fs.appendFileSync(process.env.FAULT_TEST_CALLS, options.method + ' ' + url + '\\n');
       const req = new EventEmitter();
       req.end = () => {
@@ -258,20 +263,23 @@ test('each optional provider failure permits a rewrite without retrying the deci
   assert.equal(logged().length, reasons.length + 1);
 });
 
-test('malformed key and provider-sized input use ACP without making an HTTPS request', t => {
-  const { cwd, env, helper, script } = fixture(t);
+test('a malformed saved credential and provider-sized input use ACP without making an HTTPS request', t => {
+  const { cwd, env, helper, script, check, judge } = fixture(t);
   fs.copyFileSync(path.join(plugin, 'skills/codex-polish/scripts/decisions.mjs'), helper);
-  for (const [key, draft, expected] of [['malformed key', 'test message', 'invalid_api_key'],
-      ['valid-test-key', 'x'.repeat(600 * 1024), 'decision_input_too_large']]) {
-    const input = JSON.stringify({ question: 'q', draft });
-    const output = json(run(script, ['decision', 'judge', '--cwd', cwd, '--route', 'decisions', '--trigger', 'auto'], {
-      env: { ...env, OPENAI_API_KEY: key, HTTPS_PROXY: 'http://127.0.0.1:1' }, input,
-    }));
-    assert.deepEqual(output, { action:'rewrite', reason:'decision_unavailable', decision_error:expected, route:'decisions' });
-  }
+  fs.writeFileSync(path.join(env.CODEX_HOME, 'codex-polish', 'credentials', 'openai.key'), 'malformed key');
+  const status = check();
+  assert.deepEqual([status.openai_key_malformed, status.decisions_enabled], [true, false]);
+  assert.deepEqual(judge(), [0, { action:'rewrite', reason:'direct_acp', route:'acp' }]);
+  assert.equal(judge('auto', ['--route', 'decisions'])[1].reason, 'decision_route_changed');
+  saveOpenAIKey('valid-test-key');
+  const input = JSON.stringify({ question: 'q', draft: 'x'.repeat(600 * 1024) });
+  const output = json(run(script, ['decision', 'judge', '--cwd', cwd, '--route', 'decisions', '--trigger', 'auto'], {
+    env: { ...env, HTTPS_PROXY: 'http://127.0.0.1:1' }, input,
+  }));
+  assert.deepEqual(output, { action:'rewrite', reason:'decision_unavailable', decision_error:'decision_input_too_large', route:'decisions' });
 });
 
-test('a project change while stdin is being read prevents the OpenAI request', t => {
+test('a project change or credential removal while stdin is being read prevents the OpenAI request', t => {
   const { cwd, mode, env, helper, script } = fixture(t);
   fs.copyFileSync(path.join(plugin, 'skills/codex-polish/scripts/decisions.mjs'), helper);
   const preload = `
@@ -280,20 +288,24 @@ test('a project change while stdin is being read prevents the OpenAI request', t
     const original = process.stdin[Symbol.asyncIterator].bind(process.stdin);
     process.stdin[Symbol.asyncIterator] = async function* () {
       yield* original();
-      fs.writeFileSync(process.env.TEST_SETTING_PATH, process.env.TEST_SETTING_VALUE);
+      if (process.env.TEST_REMOVE_KEY) fs.unlinkSync(process.env.TEST_SETTING_PATH);
+      else fs.writeFileSync(process.env.TEST_SETTING_PATH, process.env.TEST_SETTING_VALUE);
     };
     https.request = () => { fs.writeFileSync(process.env.FAULT_TEST_CALLS, 'unexpected network'); throw new Error(); };
   `;
   const model = path.join(path.dirname(mode), 'codex-polish.model');
-  for (const [file, value, reason] of [[mode, 'off', 'project_mode'], [model, 'gemini-other', 'gemini_model_changed']]) {
+  const credential = path.join(env.CODEX_HOME, 'codex-polish', 'credentials', 'openai.key');
+  for (const [file, value, reason] of [[mode, 'off', 'project_mode'], [model, 'gemini-other', 'gemini_model_changed'],
+    [credential, null, 'decision_route_changed']]) {
     const result = run('--import', ['data:text/javascript,' + encodeURIComponent(preload), script, 'decision', 'judge',
       '--trigger', 'auto', '--route', 'decisions', '--rewrite-mode', 'normal', '--model', 'gemini-4-hydrogen', '--cwd', cwd],
-    { env: { ...env, TEST_SETTING_PATH:file, TEST_SETTING_VALUE:value }, input: '{"question":"q","draft":"draft"}' });
+    { env: { ...env, TEST_SETTING_PATH:file, ...(value === null ? {TEST_REMOVE_KEY:'1'} : {TEST_SETTING_VALUE:value}) },
+      input: '{"question":"q","draft":"draft"}' });
     const decision = json(result);
     assert.equal(decision.action, 'keep');
     assert.equal(decision.reason, reason);
     assert.equal(fs.existsSync(env.FAULT_TEST_CALLS), false);
-    fs.unlinkSync(file);
+    if (value !== null) fs.unlinkSync(file);
   }
 });
 
@@ -332,7 +344,7 @@ test('an OpenAI outage leaves subsequent auto hooks available; missing Node repo
   ready();
   judge('auto', [], { FAULT_TEST_RESPONSE: '{"action":"keep","reason":"api_server_error"}' });
   ready();
-  settings.OPENAI_API_KEY = '';
+  clearOpenAIKey();
   ready();
   invoke(['set-rewrite-mode', 'turbo']);
   ready();

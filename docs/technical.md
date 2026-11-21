@@ -16,7 +16,7 @@ Git 项目的设置保存在最近的仓库根目录的 `.codex/`。同一仓库
 | `.codex/codex-polish.rewrite-mode` | `normal`（内置默认值）、`turbo` | 仅用于自动 hook。两种模式都无须 OpenAI 密钥，未启用检查时都直接交由 Gemini 处理。使用内置提示词时，`normal` 可保留清晰原稿并支持可选的 OpenAI Decisions 检查，`turbo` 则跳过 Decisions 并请 Gemini 改写草稿。 |
 | `.codex/codex-polish.model` | 模型 ID，内置默认值为 `gemini-4-hydrogen`（Gemini 4 Hydrogen） | 保存当前项目选用的 Gemini 模型。选项在运行时通过 ACP 从当前登录的 Antigravity 账号实时读取，不同账号返回的列表可能不同。仅查看模型菜单不会发送草稿或历史。下次改写时会核对所选模型，若已下线则本轮保留原稿。 |
 | `.codex/codex-polish.history-turns` | `0`–`10` 的整数，默认 `2` | 控制 Gemini 改写整条回复时附带的最近完整问答轮数，从下次改写起生效。设为 `0` 就不附历史问答。保存大于 `10` 的值会报错。手动写入无效值时，插件会报告配置错误和可用范围。无论手动还是自动模式，读取历史都需要受信任的 `UserPromptSubmit` hook。 |
-| `.codex/codex-polish.decisions` | `auto`（默认）、`off` | 仅在 hook 自动触发润色并使用普通模式时生效。`auto` 按 `OPENAI_API_KEY` 决定是否调用 OpenAI，`off` 始终只用 ACP。 |
+| `.codex/codex-polish.decisions` | `auto`（默认）、`off` | 仅在 hook 自动触发润色并使用普通模式时生效。`auto` 在当前 Codex 配置保存了格式有效的插件密钥时调用 OpenAI，`off` 始终只用 ACP。 |
 | `.codex/codex-polish.language` | `auto`（默认）、`zh`、`en` | 控制插件设置与终端提示语言。`auto` 下，设置对话优先跟随本条消息所用的中文或英文。只点击菜单或回复数字时沿用对话语言。两者都无法判断时使用系统语言。项目诊断使用项目的语言设置。安装器使用系统语言，未识别出中文或英文时用英文。 |
 
 触发模式、自动改写模式和 Decisions 的设置值接受大小写变体，Decisions 也接受 `on` 表示启用。无效值会指出具体文件与可选值。
@@ -49,7 +49,7 @@ node -e "child_process.execFileSync(process.execPath, ['plugins/codex-polish/hoo
 
 ## 改写流程与判定阈值
 
-插件支持直接 ACP 和 OpenAI Decisions 加 ACP 两条路径。点名润色或以 Turbo 自动润色时，插件会跳过 OpenAI，将草稿直接交给 Gemini。Turbo 的内置提示词要求 Gemini 主动改写。以普通模式自动润色时，当 `OPENAI_API_KEY` 未设置、为空或仅含空白字符，或项目已关闭风格检查时，插件直接使用 ACP。此时由 `agy` 联系 Google，本地 Node.js 脚本不发网络请求。开启 Decisions 时，Node.js 脚本只在改写前调用一次 OpenAI `gpt-6-luna`，判断草稿是否需要润色。每轮最多提交一次含草稿的 ACP 请求。当前 Codex agent 负责启动和回收进程，并在同一会话中收发协议消息。[ACP 操作步骤](../plugins/codex-polish/skills/codex-polish/references/acp.md)
+插件支持直接 ACP 和 OpenAI Decisions 加 ACP 两条路径。点名润色或以 Turbo 自动润色时，插件会跳过 OpenAI，将草稿直接交给 Gemini。Turbo 的内置提示词要求 Gemini 主动改写。以普通模式自动润色时，如果当前 Codex 配置没有可用的 OpenAI 密钥，或项目已关闭风格检查，插件直接使用 ACP。此时由 `agy` 联系 Google，本地 Node.js 脚本不发网络请求。开启 Decisions 时，Node.js 脚本只在改写前调用一次 OpenAI `gpt-6-luna`，判断草稿是否需要润色。每轮最多提交一次含草稿的 ACP 请求。当前 Codex agent 负责启动和回收进程，并在同一会话中收发协议消息。[ACP 操作步骤](../plugins/codex-polish/skills/codex-polish/references/acp.md)
 
 | 阶段 | 行为 |
 | --- | --- |
@@ -112,6 +112,8 @@ macOS 用户也可以解压仓库，在 Finder 中双击安装脚本。`0.0.1-be
 
 安装器为每份 Codex 配置注册一个本地市场。更新时先准备并校验新快照，然后原子替换市场清单，再请 Codex 刷新插件缓存。刷新失败时会恢复原快照和启用状态。Codex 判断 hook 信任时会核对已安装插件的内容，所以即使命令没变，内置提示词或配置指南的改动也可能触发重新确认。安装器和 `doctor` 都从 `hooks/list` 读取实际状态。
 
-在当前源码仓库根目录运行 `node scripts/install.mjs uninstall`，会移除插件和专用市场，清除会话指针，并删除这份 Codex 配置保存的改写模式、模型和自定义提示词。卸载还会删除这份配置最后保存并记录的项目设置文件。这些文件即使由 Git 跟踪，或后来被手动就地修改，也会删除。其他应用仍可使用共用的 `agy`。
+尚未发布的源码版首次交互安装并选用普通模式时，会询问是否使用 OpenAI 风格检查，默认跳过。之后可在运行插件的机器上使用同一份 Codex 配置，运行 `node scripts/install.mjs openai` 管理密钥。终端隐藏输入，密钥保存在 `$CODEX_HOME/codex-polish/credentials/openai.key`。源码版忽略 `OPENAI_API_KEY`，已发布的 `0.0.1-beta.8` 仍会使用这个环境变量。[密钥设置与 API 计费](../plugins/codex-polish/skills/codex-polish-setup/references/credentials.md#选配-openai-风格检查)
+
+在当前源码仓库根目录运行 `node scripts/install.mjs uninstall`，会移除插件和专用市场，清除会话指针，并删除这份 Codex 配置保存的改写模式、模型、自定义提示词和 OpenAI 密钥。卸载还会删除这份配置最后保存并记录的项目设置文件。这些文件即使由 Git 跟踪，或后来被手动就地修改，也会删除。其他应用仍可使用共用的 `agy`。
 
 旧版没有记录创建项目设置的位置。如需一并清理，可到曾配置过的项目中逐项查看 `.codex/codex-polish.*` 文件。安装文件如有手动改动，卸载时会显示备份位置。使用本地打包的版本时，可将 npm 包名换成实际压缩包路径，例如 `npx --yes file:./kyun.si-codex-polish-VERSION.tgz uninstall`。

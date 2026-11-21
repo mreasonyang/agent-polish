@@ -7,11 +7,12 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { tmpdir } from 'node:os';
 import { PassThrough } from 'node:stream';
 import { setImmediate } from 'node:timers/promises';
-import { chooseSetupModel, chooseSetupMode, setupIssues, showSetupGuidance, doctor } from '../scripts/install.mjs';
+import { chooseSetupModel, chooseSetupMode, manageOpenAI, setupIssues, showSetupGuidance, doctor } from '../scripts/install.mjs';
+import { readOpenAIKey } from '../plugins/codex-polish/hooks/openai_credentials.mjs';
 import { projectGeminiModel } from '../plugins/codex-polish/hooks/preferences.mjs';
 import { rewriteModeSettings } from '../plugins/codex-polish/hooks/rewrite_mode.mjs';
 import { catalog } from '../plugins/codex-polish/skills/codex-polish/scripts/acp_models.mjs';
-import { makeProject, windows, homeEnv } from './hook_fixture.mjs';
+import { makeProject, windows, homeEnv, useTestProfile } from './hook_fixture.mjs';
 
 const checks = {
   ui_language: 'en',
@@ -38,12 +39,13 @@ test('doctor explains modes, decisions, history, model and Google authentication
     assert.match(defaults, lang === 'en' ? /go straight to Gemini/ : /直接交给 Gemini/);
     assert.match(defaults, lang === 'en' ? /reuses your Antigravity account/ : /复用 Antigravity 里的登录/);
     assert.match(defaults, lang === 'en' ? /Gemini receives up to 2 earlier completed exchanges/ : /Gemini 改写时最多带上最近 2 轮完整问答/);
-    assert.match(report({ openai_key_malformed: true }), /OPENAI_API_KEY/);
+    assert.match(report({ openai_key_malformed: true }), /@kyun\.si\/codex-polish@beta openai/);
     const withOpenAI = report({ decisions_enabled: true });
     assert.match(
       withOpenAI,
-      lang === 'en' ? /OpenAI uses only the current question, draft, and any custom polishing prompt/ : /OpenAI 只用本轮问题、草稿和已设置的自定义润色提示词/
+      lang === 'en' ? /OpenAI uses the current question, draft, and any custom polishing prompt/ : /OpenAI 会根据本轮问题、草稿和已设置的自定义润色提示词/
     );
+    assert.match(withOpenAI, lang === 'en' ? /pays for the API calls/ : /API 费用/);
     assert.doesNotMatch(withOpenAI, /meaning|原意/);
     const manualDoctor = report({ rewrite_mode: 'turbo', mode: 'manual' });
     assert.match(manualDoctor, lang === 'en' ? /Requested rewrites use Turbo/ : /点名润色会用 Turbo/);
@@ -52,7 +54,7 @@ test('doctor explains modes, decisions, history, model and Google authentication
     assert.match(manualDoctor, lang === 'en' ? /Automatic rewrite mode: turbo/ : /自动润色的改写模式：turbo/);
     for (const mode of ['manual', 'off']) {
       const saved = report({ mode, openai_key_configured: true, decisions_enabled: false });
-      assert.match(saved, lang === 'en' ? /configured OpenAI Decisions/ : /已配置的 OpenAI Decisions/);
+      assert.match(saved, lang === 'en' ? /OpenAI style check you enabled/ : /已开启的 OpenAI 风格检查/);
       assert.doesNotMatch(saved, /Set up OpenAI Decisions|「配置 OpenAI Decisions」/);
     }
     const invalidMode = report({ rewrite_mode: null, blockers: ['rewrite_mode_invalid'] });
@@ -149,6 +151,123 @@ test('closing the terminal during selection cancels the picker', async () => {
   input.destroy();
   assert.equal(await selection, null);
   output.destroy();
+});
+
+async function openAIFlow(lang, onboarding, keys) {
+  const input = new PassThrough({ autoDestroy: false }), output = new PassThrough();
+  let display = '';
+  input.isTTY = output.isTTY = true;
+  input.isRaw = false;
+  input.setRawMode = value => { input.isRaw = value; };
+  output.on('data', chunk => { display += chunk; });
+  try {
+    const flow = manageOpenAI(lang, { onboarding, input, output });
+    for (const key of keys) {
+      await setImmediate();
+      assert.equal(input.isRaw, true, 'the active prompt has disabled input echo');
+      if (key === null) input.end();
+      else input.write(key);
+    }
+    const ok = await flow;
+    assert.equal(input.isRaw, false);
+    return { ok, display };
+  } finally { input.destroy(); output.destroy(); }
+}
+
+test('Normal setup offers a single default skip after model selection and the manage command stays available', async t => {
+  useTestProfile(t);
+  const enter = '\r', down = '\x1b[B';
+  const order = [];
+  const session = { ...checks, rewrite_mode_configured: false, gemini_model_configured: false };
+  const offers = [];
+  const options = {
+    interactive: true, check: () => session,
+    chooseMode() { order.push('mode'); return 'normal'; },
+    saveRewriteMode() { session.rewrite_mode_configured = true; },
+    chooseModel() { order.push('model'); return 'gemini-4-hydrogen'; },
+    saveModel() { session.gemini_model_configured = true; },
+    async offerOpenAI(lang) {
+      order.push('openai');
+      offers.push(await openAIFlow(lang, true, offers.length ? [] : [enter]));
+    }
+  };
+  assert.equal(await showSetupGuidance(options), true);
+  assert.deepEqual(order, ['mode', 'model', 'openai']);
+  assert.match(offers[0].display, /❯ ● Skip and use Gemini only \(default\)/);
+  assert.match(offers[0].display, /billed by API usage/);
+  assert.doesNotMatch(offers[0].display, /platform\.openai\.com|custom polishing prompt|@kyun/);
+  assert.equal(readOpenAIKey(), null);
+  assert.equal(await showSetupGuidance(options), true);
+  assert.equal(offers[1].display, '');
+  const afterSkip = await openAIFlow('en', false, [down, enter]);
+  assert.match(afterSkip.display, /Enable with my own OpenAI API key/);
+  for (const variation of [{ interactive: false }, { dependencyOnly: true }, { check: () => ({ ...session, rewrite_mode: 'turbo' }) }]) {
+    await showSetupGuidance({ ...options, ...variation, offerOpenAI: () => assert.fail('unexpected OpenAI prompt') });
+  }
+});
+
+test('private key entry supports enrollment, replacement, cancellation, failed validation and removal', async t => {
+  for (const lang of ['en', 'zh']) await t.test(lang, async t => {
+    useTestProfile(t);
+    const first = 'test-only-first', second = 'test-only-second';
+    const enter = '\r', down = '\x1b[B';
+    const enroll = await openAIFlow(lang, true, [down, enter, first, enter]);
+    assert.equal(enroll.ok, true);
+    assert.doesNotMatch(enroll.display, /test-only/);
+    assert.match(enroll.display, /https:\/\/platform\.openai\.com\/api-keys/);
+    assert.match(enroll.display, lang === 'en' ? /current question, draft, and any custom polishing prompt/ : /本轮问题、草稿和你设置的自定义润色提示词/);
+    assert.match(enroll.display, lang === 'en' ? /pays for these API calls/ : /API 调用由你的 OpenAI 账号付费/);
+    assert.equal(readOpenAIKey(), first);
+    assert.equal((await openAIFlow(lang, true, [])).display, '');
+    for (const exit of [enter, '\x03', '\x04', '\x1b', null]) {
+      const keys = exit === enter ? [down, enter, enter] : [down, enter, second, exit];
+      const cancel = await openAIFlow(lang, false, keys);
+      assert.equal(cancel.ok, true);
+      assert.doesNotMatch(cancel.display, /test-only/);
+      assert.equal(readOpenAIKey(), first);
+    }
+    const invalid = await openAIFlow(lang, false, [down, enter, 'test-only with spaces', enter]);
+    assert.equal(invalid.ok, false);
+    assert.doesNotMatch(invalid.display, /test-only/);
+    assert.equal(readOpenAIKey(), first);
+    const replace = await openAIFlow(lang, false, [down, enter, second + 'x', '\x7f', enter]);
+    assert.equal(replace.ok, true);
+    assert.doesNotMatch(replace.display, /test-only/);
+    assert.equal(readOpenAIKey(), second);
+    assert.equal((await openAIFlow(lang, false, [down, down, enter])).ok, true);
+    assert.equal(readOpenAIKey(), null);
+    assert.equal((await openAIFlow(lang, true, [])).display, '');
+  });
+});
+
+test('openai CLI rejects keys passed as arguments or through pipes and requires an interactive terminal', t => {
+  const { cwd, env } = makeProject(t);
+  const script = fileURLToPath(new URL('../scripts/install.mjs', import.meta.url));
+  const run = args => spawnSync(process.execPath, [script, ...args], {
+    cwd, env: { ...env, OPENAI_API_KEY: 'test-only-ambient' }, input: 'test-only-piped\n', encoding: 'utf8'
+  });
+  const help = run(['--help']);
+  assert.equal(help.status, 0);
+  assert.match(help.stdout, /openai manages/);
+  for (const args of [['openai'], ['openai', 'test-only-argument'], ['openai', '--install-agy']]) {
+    const result = run(args);
+    assert.equal(result.status, args.length === 1 ? 1 : 2);
+    if (args.length === 1) assert.match(result.stderr, /interactive terminal/);
+    assert.doesNotMatch(result.stdout + result.stderr, /test-only/);
+    assert.equal(fs.existsSync(env.CODEX_HOME), false);
+  }
+});
+
+test('a damaged setup receipt cannot block removing a saved key', async t => {
+  const profile = useTestProfile(t);
+  assert.equal((await openAIFlow('en', false, ['\r', 'test-only-receipt', '\r'])).ok, true);
+  const settings = join(profile, 'codex-polish', 'settings');
+  fs.mkdirSync(settings, { recursive: true });
+  fs.mkdirSync(join(settings, 'codex-polish.openai-offer'));
+  const removal = await openAIFlow('en', false, ['\x1b[B', '\x1b[B', '\r']);
+  assert.equal(readOpenAIKey(), null);
+  assert.match(removal.display, /Key removed/);
+  assert.match(removal.display, /could not remember/);
 });
 
 test('model picker accepts arrows, looks up only on request and preserves provider IDs', async t => {
@@ -305,6 +424,7 @@ test('interactive setup offers only missing defaults and cancellation leaves the
       interactive: true, ...options, check: () => status,
       chooseMode() { offered.push('mode'); return null; },
       chooseModel() { offered.push('model'); return null; },
+      offerOpenAI() {},
       saveRewriteMode: () => assert.fail('no mode selected'),
       saveModel: () => assert.fail('no model selected'),
       prompt: () => assert.fail('unexpected text prompt')
@@ -337,6 +457,7 @@ test('interactive dependency prompts, opt-ins, browser consent, failure messagin
       interactive,
       installDependency,
       dependencyOnly,
+      offerOpenAI() {},
       check() {
         reads++;
         return {

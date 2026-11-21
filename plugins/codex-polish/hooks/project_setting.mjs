@@ -10,7 +10,7 @@ export const PROMPT_FILE = 'codex-polish.prompt.md';
 
 const { O_RDONLY, O_DIRECTORY, O_NOFOLLOW } = fs.constants;
 
-function accessSetting(operation, target, value) {
+function accessSetting(operation, target, value, checkStagedFile) {
   if (operation === 'read') {
     const fd = openRegular(target);
     try {
@@ -44,6 +44,7 @@ function accessSetting(operation, target, value) {
   let staged;
   try {
     try {
+      checkStagedFile?.(temporary, fd);
       if (Buffer.isBuffer(value)) fs.writeFileSync(fd, value);
       else fs.writeFileSync(fd, value + '\n', 'ascii');
       staged = fs.fstatSync(fd, { bigint: true });

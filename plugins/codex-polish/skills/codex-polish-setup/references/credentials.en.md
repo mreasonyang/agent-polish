@@ -4,7 +4,7 @@
 
 Run interactive `setup` from any folder on the machine running Codex, or double-click the macOS Finder launcher. On first setup, use **↑ / ↓** and **Enter** to choose the automatic rewrite mode. With the built-in prompt, **Normal** can keep a clear draft and supports the optional OpenAI check. **Turbo** skips the check and asks Gemini to rewrite the draft.
 
-Once `agy` is available, you can keep **Gemini 4 Hydrogen** or choose from your Antigravity account. Only the live model lookup opens a temporary `codex exec` session and calls `agy acp`. Your choices apply across projects in this Codex profile. To override one in a single project, ask to change its mode or model in that project’s chat. The installer saves only the mode and model ID. API keys, when used, come from the environment that runs Codex.
+Once `agy` is available, you can keep **Gemini 4 Hydrogen** or choose from your Antigravity account. Only the live model lookup opens a temporary `codex exec` session and calls `agy acp`. Your choices apply across projects in this Codex profile. To override one in a single project, ask to change its mode or model in that project’s chat.
 
 ## Use your Antigravity sign-in
 
@@ -20,31 +20,13 @@ If `agy` works in your terminal but the chat reports a failure at `session/new`,
 
 ## Optional OpenAI style check
 
-For automatic polishing in Normal mode, when `OPENAI_API_KEY` is set, the plugin by default asks OpenAI whether the draft needs editing before sending it to Gemini. OpenAI receives only the current question, draft, and any custom polishing prompt. Say **“Switch to turbo mode”** to send every draft directly to Gemini. Turbo skips OpenAI even with a key. Say **“Switch back to normal mode”** to resume the project’s saved style-check setting. The project’s history setting applies only to Gemini rewrites. The OpenAI project linked to the key covers the Decisions API usage for `gpt-6-luna`. [Decisions API](https://developers.openai.com/api/docs/guides/decisions)
+In the unreleased source version, the first interactive setup in Normal mode offers this check once. Press **Enter** to skip it and use Gemini alone. If enabled, OpenAI receives the current question, draft and any custom polishing prompt to decide whether the draft needs editing. The OpenAI project that owns the key pays for the API usage. History goes only to Gemini. Turbo and explicit rewrites skip OpenAI.
 
-1. Open your OpenAI project’s **API keys** page. Choose **Create new secret key**, name it something like `codex-polish`, and save it in a password manager. For restricted keys, allow `POST /v1/decisions` and make sure the project can use `gpt-6-luna`. [Create a project key](https://platform.openai.com/api-keys)
-2. Pass the key as `OPENAI_API_KEY` to the process running Codex. In a bash or zsh terminal, run these commands. Paste the key when prompted, then press Return. The terminal hides it while you type.
+1. Create a key in the OpenAI project you want to use. Restricted keys need access to `POST /v1/decisions` and the project needs access to `gpt-6-luna`. [OpenAI API keys](https://platform.openai.com/api-keys) · [API billing](https://platform.openai.com/account/billing/overview)
+2. Choose to configure OpenAI during setup, or run `node scripts/install.mjs openai` from the checkout on the machine and Codex profile that run the plugin. Paste the key only at the terminal’s hidden prompt. The plugin stores it in `$CODEX_HOME/codex-polish/credentials/openai.key`.
+3. Open the same menu to replace or remove the saved key. Uninstall also deletes the local copy. To skip the check in a single project, say **“Use only Gemini for rewrites in this project.”**
 
-   ```sh
-   printf 'OpenAI API key (hidden): '
-   IFS= read -r -s OPENAI_API_KEY </dev/tty
-   printf '\n'
-   export OPENAI_API_KEY
-   ```
-
-   In Windows PowerShell, use this hidden prompt instead.
-
-   ```powershell
-   $env:OPENAI_API_KEY = [System.Net.NetworkCredential]::new('', (Read-Host 'OpenAI API key' -AsSecureString)).Password
-   ```
-
-3. Start `codex` from that same terminal. In the project, say **“Use the OpenAI style check when a key is available.”** Then say **“Check Codex Polish setup.”** The local check confirms the setting and can catch a missing or malformed key. API access and quota are checked on a real request. [OpenAI billing](https://platform.openai.com/account/billing/overview)
-
-To turn the check off for one project, say **“Use Gemini only.”** Other projects can keep using the key. Keep the key out of chat and project files.
-
-### Desktop apps and remote Codex sessions
-
-A terminal variable only applies to processes started from that terminal. If a desktop app launched from the Dock can’t see the key, finish active work and relaunch its executable from that terminal, or use the service’s normal environment settings. For a separate daemon or remote executor, set the key where that process starts and restart it. Then open a fresh chat and say **“Check Codex Polish setup”** there. [Codex environment configuration](https://learn.chatgpt.com/docs/config-file/config-advanced#shell-environment-policy)
+Published `0.0.1-beta.8` still reads `OPENAI_API_KEY` from the Codex environment and has no `openai` command. The source version ignores that variable. Once this change reaches the npm beta, the menu will also be available as `npx @kyun.si/codex-polish@beta openai` (use `npx.cmd @kyun.si/codex-polish@beta openai` in Windows PowerShell).
 
 ## Other Antigravity sign-in methods
 
@@ -53,7 +35,7 @@ Only use one of these if you want a specific Google identity. Each uses the same
 | Identity | How to set up the environment that launches Codex |
 | --- | --- |
 | Existing sign-in (default) | Leave `CODEX_POLISH_AGY_AUTH` unset, or set it to `existing-session`. Open `agy` if the account needs to sign in again. |
-| Google AI Studio API key | Set `CODEX_POLISH_AGY_AUTH=gemini-api-key` (`$env:CODEX_POLISH_AGY_AUTH = 'gemini-api-key'` in Windows PowerShell) and pass `GEMINI_API_KEY` through a password manager or a hidden terminal prompt as above (`$env:GEMINI_API_KEY = [System.Net.NetworkCredential]::new('', (Read-Host 'Gemini API key' -AsSecureString)).Password` in PowerShell). Create the key in Google AI Studio. [Google AI Studio keys](https://aistudio.google.com/apikey) |
+| Google AI Studio API key | Set `CODEX_POLISH_AGY_AUTH=gemini-api-key` (`$env:CODEX_POLISH_AGY_AUTH = 'gemini-api-key'` in Windows PowerShell) and pass `GEMINI_API_KEY` through a password manager or a hidden terminal prompt (`$env:GEMINI_API_KEY = [System.Net.NetworkCredential]::new('', (Read-Host 'Gemini API key' -AsSecureString)).Password` in PowerShell). Create the key in Google AI Studio. [Google AI Studio keys](https://aistudio.google.com/apikey) |
 | Managed enterprise identity | Set `CODEX_POLISH_AGY_AUTH=agent-platform`. Your admin can set up Google Application Default Credentials, the project, and the location for that runtime. [Google’s ACP authentication guide](https://antigravity.google/docs/ide/extensions/acp#authentication) |
 
 After changing the runtime environment, start a fresh session and say **“Choose a rewrite model.”** A successful model lookup checks both the connection and access to that account’s models without sending a draft.

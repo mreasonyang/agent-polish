@@ -17,7 +17,8 @@ import { executable, windows, agyDirectory, windowsSystemTool, openRegular, same
 import { languageSettings, systemLanguage, tr as translate } from '../plugins/codex-polish/hooks/ui_locale.mjs';
 import { DEFAULT_GEMINI_MODEL, MODEL_FILE, findAgy, validModelId, runtimeStatus, projectSettings } from '../plugins/codex-polish/hooks/preferences.mjs';
 import { REWRITE_MODE_FILE, REWRITE_MODES } from '../plugins/codex-polish/hooks/rewrite_mode.mjs';
-import { accessProjectSetting, PROMPT_FILE, writeProfileDefault } from '../plugins/codex-polish/hooks/project_setting.mjs';
+import { accessProjectSetting, PROMPT_FILE, readProfileSetting, writeProfileDefault } from '../plugins/codex-polish/hooks/project_setting.mjs';
+import { readOpenAIKey, saveOpenAIKey, clearOpenAIKey } from '../plugins/codex-polish/hooks/openai_credentials.mjs';
 import { cleanupProjectSettings } from '../plugins/codex-polish/hooks/owned_settings.mjs';
 import { removeProfileCache, sqliteModule } from '../plugins/codex-polish/hooks/recovery.mjs';
 import { sessionCatalog } from '../plugins/codex-polish/skills/codex-polish/scripts/acp_models.mjs';
@@ -31,6 +32,9 @@ export const INDEX = '.agents/plugins/marketplace.json',
   PRODUCT = 'plugins/' + NAME;
 const CODEX_INSTALL = 'https://developers.openai.com/codex/cli/';
 const GEMINI_KEYS = 'https://aistudio.google.com/apikey';
+const OPENAI_KEYS = 'https://platform.openai.com/api-keys';
+const OPENAI_OFFER_FILE = 'codex-polish.openai-offer';
+const openAICommand = `${windows ? 'npx.cmd' : 'npx'} @kyun.si/codex-polish@beta openai`;
 const installAgyCommand = `${windows ? 'npx.cmd' : 'npx'} @kyun.si/codex-polish@beta setup --install-agy`;
 const AGY_INSTALL = 'https://antigravity.google/docs/getting-started/?tab=cli';
 const AGY_BOOTSTRAP = 'https://antigravity.google/cli/install.' + (windows ? 'ps1' : 'sh');
@@ -728,7 +732,7 @@ function removeProfileDefaults(directory, kept) {
     kept.push(directory);
     return;
   }
-  for (const file of [REWRITE_MODE_FILE, MODEL_FILE, PROMPT_FILE]) {
+  for (const file of [REWRITE_MODE_FILE, MODEL_FILE, PROMPT_FILE, OPENAI_OFFER_FILE]) {
     try {
       accessProjectSetting(directory, 'remove', file);
     } catch (error) {
@@ -763,6 +767,11 @@ function cleanUninstallData(store) {
   }
   if (store === snapshotStore()) {
     const settings = join(dirname(store), 'settings');
+    try {
+      clearOpenAIKey();
+    } catch {
+      errors.push(join(dirname(store), 'credentials'));
+    }
     try {
       cleanupProjectSettings();
     } catch (error) {
@@ -1019,8 +1028,8 @@ function decisionsSummary(checks, lang) {
       ? tr('点名润色会用 Turbo，直接交给 Gemini。', 'Requested rewrites use Turbo and go straight to Gemini.', lang)
       : tr('项目已关闭润色。', 'Polishing is off for this project.', lang);
     if (checks.rewrite_mode === 'normal' && checks.decisions_mode === 'auto' && checks.openai_key_configured && !checks.openai_key_malformed)
-      return current + tr('切回自动润色后，Normal 会使用已配置的 OpenAI Decisions。',
-        ' Switching to automatic polishing will use your configured OpenAI Decisions check in Normal mode.', lang);
+      return current + tr('切回自动润色后，Normal 会使用你已开启的 OpenAI 风格检查。',
+        ' Switching to automatic polishing will use the OpenAI style check you enabled for Normal mode.', lang);
     return current;
   }
   if (checks.rewrite_mode === 'turbo')
@@ -1036,17 +1045,17 @@ function decisionsSummary(checks, lang) {
       lang
     );
   if (checks.openai_key_malformed)
-    return tr('OPENAI_API_KEY 格式有误，自动润色时草稿将直接交给 Gemini。要启用 OpenAI 检查，请重新复制密钥。',
-      'OPENAI_API_KEY has an invalid format. Drafts go straight to Gemini during automatic polishing. Copy the key again to enable the OpenAI check.', lang);
+    return tr(`无法使用为插件保存的 OpenAI 密钥。草稿会直接交给 Gemini。可在终端运行 ${openAICommand} 更换或移除密钥。`,
+      `The saved OpenAI key is unusable. Drafts go straight to Gemini. Run ${openAICommand} in your terminal to replace or remove the key.`, lang);
   if (checks.decisions_enabled)
     return tr(
-      '自动润色已启用 OpenAI Decisions。OpenAI 只用本轮问题、草稿和已设置的自定义润色提示词判断是否需要改写。',
-      'OpenAI Decisions is on for automatic polishing. OpenAI uses only the current question, draft, and any custom polishing prompt to decide whether to rewrite.',
+      `你已开启 OpenAI 风格检查。OpenAI 会根据本轮问题、草稿和已设置的自定义润色提示词判断是否需要改写，API 费用由你的 OpenAI 账号承担。可在终端运行 ${openAICommand} 更换或移除密钥。`,
+      `You enabled the OpenAI style check. OpenAI uses the current question, draft, and any custom polishing prompt to decide whether to rewrite. Your OpenAI account pays for the API calls. Run ${openAICommand} in your terminal to replace or remove the key.`,
       lang
     );
   return tr(
-    '自动润色时，草稿会直接交给 Gemini。想先让 OpenAI 判断草稿是否需要润色，可以在 Codex 里说「配置 OpenAI Decisions」。',
-    'Drafts go straight to Gemini during automatic polishing. To have OpenAI check whether they need editing first, tell Codex “Set up OpenAI Decisions”.',
+    `自动润色时，草稿会直接交给 Gemini。想先让 OpenAI 判断是否需要改写，可在终端运行 ${openAICommand} 添加自己的 API 密钥。`,
+    `Drafts go straight to Gemini during automatic polishing. To enable an optional OpenAI style check with your own API key, run ${openAICommand} in your terminal.`,
     lang
   );
 }
@@ -1060,8 +1069,8 @@ const issues = {
     'Invalid codex-polish.history-turns. Choose a whole number from 0 to 10.'
   ],
   decisions_mode_invalid: [
-    '项目的 codex-polish.decisions 无效。请设为 auto（有密钥时使用 OpenAI）或 off。',
-    'Invalid codex-polish.decisions. Choose auto (use OpenAI when a key is available) or off.'
+    '项目的 codex-polish.decisions 无效。请设为 auto（使用已为插件开启的 OpenAI 检查）或 off。',
+    'Invalid codex-polish.decisions. Choose auto (use the OpenAI check if enabled for this plugin) or off.'
   ],
   gemini_key_missing: [
     '你选了用 API 密钥登录 Google。去 Google AI Studio 点 Create API key，然后把密钥设为 GEMINI_API_KEY。',
@@ -1137,20 +1146,10 @@ function openPage(url) {
       .status === 0
   );
 }
-async function chooseOption(title, options, lang, input = process.stdin, output = process.stdout) {
-  if (input.destroyed || input.readableEnded) return null;
+async function* terminalKeys(input, output, show) {
+  if (input.destroyed || input.readableEnded) return;
   const wasRaw = !!input.isRaw;
   const wasFlowing = input.readableFlowing;
-  let selected = 0;
-  function draw() {
-    for (const [index, option] of options.entries()) {
-      clearLine(output, 0);
-      // A provider label is display text, including any literal terminal controls.
-      const label = option.name.replace(/\p{Cc}/gu, char => '\\u' + char.charCodeAt(0).toString(16).padStart(4, '0'));
-      output.write((selected === index ? '❯ ● ' : '  ○ ') + label);
-      if (index < options.length - 1) output.write('\r\n');
-    }
-  }
   function restoreInput() {
     if (!wasRaw && input.isRaw && !input.destroyed) input.setRawMode(false);
   }
@@ -1161,26 +1160,119 @@ async function chooseOption(title, options, lang, input = process.stdin, output 
   try {
     if (!wasRaw) input.setRawMode(true);
     input.resume();
-    output.write(title + '\n' + tr('用 ↑ ↓ 方向键移动，按回车确认。\n', 'Use ↑ ↓ to move and Enter to confirm.\n', lang));
-    draw();
-    for await (const [, key] of keys) {
-      if (key.name === 'return' || key.name === 'enter') return options[selected].id;
-      if (key.name === 'escape' || (key.ctrl && ['c', 'd'].includes(key.name))) return null;
-      if (key.name !== 'up' && key.name !== 'down') continue;
-      const next = Math.max(0, Math.min(options.length - 1, selected + (key.name === 'up' ? -1 : 1)));
-      if (next === selected) continue;
-      selected = next;
-      moveCursor(output, 0, 1 - options.length);
-      cursorTo(output, 0);
-      draw();
-    }
-    return null;
+    show();
+    yield* keys;
   } finally {
     await keys.return();
     input.off('end', restoreInput);
     restoreInput();
     if (!wasFlowing) input.pause();
     output.write('\n');
+  }
+}
+async function chooseOption(title, options, lang, input = process.stdin, output = process.stdout) {
+  let selected = 0;
+  function draw() {
+    for (const [index, option] of options.entries()) {
+      clearLine(output, 0);
+      // A provider label is display text, including any literal terminal controls.
+      const label = option.name.replace(/\p{Cc}/gu, char => '\\u' + char.charCodeAt(0).toString(16).padStart(4, '0'));
+      output.write((selected === index ? '❯ ● ' : '  ○ ') + label);
+      if (index < options.length - 1) output.write('\r\n');
+    }
+  }
+  const show = () => {
+    output.write(title + '\n' + tr('用 ↑ ↓ 方向键移动，按回车确认。\n', 'Use ↑ ↓ to move and Enter to confirm.\n', lang));
+    draw();
+  };
+  for await (const [, key] of terminalKeys(input, output, show)) {
+    if (key.name === 'return' || key.name === 'enter') return options[selected].id;
+    if (key.name === 'escape' || (key.ctrl && ['c', 'd'].includes(key.name))) return null;
+    if (key.name !== 'up' && key.name !== 'down') continue;
+    const next = Math.max(0, Math.min(options.length - 1, selected + (key.name === 'up' ? -1 : 1)));
+    if (next === selected) continue;
+    selected = next;
+    moveCursor(output, 0, 1 - options.length);
+    cursorTo(output, 0);
+    draw();
+  }
+  return null;
+}
+
+async function readHiddenKey(lang, input, output) {
+  const show = () => output.write(tr('在此粘贴 OpenAI API 密钥（输入隐藏，留空按回车可返回）：',
+    'Paste your OpenAI API key here (input is hidden, press Enter with an empty field to go back): ', lang));
+  let value = '';
+  for await (const [text, key] of terminalKeys(input, output, show)) {
+    if (key.name === 'escape' || (key.ctrl && ['c', 'd'].includes(key.name))) return null;
+    if (key.name === 'return' || key.name === 'enter') return value || null;
+    if (key.name === 'backspace') value = value.slice(0, -1);
+    else if (key.ctrl && key.name === 'u') value = '';
+    else if (text && !key.ctrl && !key.meta) value += text;
+  }
+  return null;
+}
+
+export async function manageOpenAI(lang, { onboarding = false, input = process.stdin, output = process.stdout } = {}) {
+  const t = (zh, en) => tr(zh, en, lang);
+  if (!input.isTTY || !output.isTTY || typeof input.setRawMode !== 'function') {
+    if (onboarding) return true;
+    throw new SetupError(t(`请在交互式终端中运行 ${openAICommand}，以隐藏输入的密钥。`,
+      `Run ${openAICommand} in an interactive terminal so your key can be entered privately.`));
+  }
+  if (onboarding && readProfileSetting(OPENAI_OFFER_FILE, 16) !== null) return true;
+  const existing = readOpenAIKey();
+  if (onboarding && existing !== null) return true;
+  const title = onboarding
+    ? t('要先让 OpenAI 判断是否需要润色吗？（可选，按 API 用量计费）',
+      'Ask OpenAI whether a draft needs polishing first? (Optional, billed by API usage)')
+    : t('可选的 OpenAI 风格检查', 'Optional OpenAI style check');
+  const details = t('在 Normal 自动润色时，OpenAI 会收到本轮问题、草稿和你设置的自定义润色提示词，判断是否需要 Gemini 改写。API 调用由你的 OpenAI 账号付费。',
+    'In Normal mode, automatic polishing sends the current question, draft, and any custom polishing prompt to OpenAI to decide whether Gemini should rewrite. Your OpenAI account pays for these API calls.');
+  const enable = { id: 'enable', name: t('用自己的 OpenAI API 密钥开启检查', 'Enable with my own OpenAI API key') };
+  const back = { id: 'back', name: t('返回', 'Back') };
+  let choices;
+  if (existing !== null) {
+    output.write(t(existing ? '当前配置已保存 OpenAI 密钥。\n' : '当前配置里的 OpenAI 密钥无法使用。\n',
+      existing ? 'This profile has a saved OpenAI key.\n' : 'This profile has an unusable OpenAI key.\n'));
+    choices = [back, { id: 'replace', name: t('更换密钥', 'Replace key') },
+      { id: 'remove', name: t('移除密钥并关闭检查', 'Remove key and turn off the check') }];
+  } else if (onboarding) {
+    choices = [{ id: 'skip', name: t('跳过，只使用 Gemini（默认）', 'Skip and use Gemini only (default)') }, enable];
+  } else {
+    choices = [enable, back];
+  }
+  const action = await chooseOption(title, choices, lang, input, output);
+  if (!action || action === 'back') return true;
+  try {
+    if (action === 'skip' || action === 'remove') {
+      if (action === 'remove') {
+        clearOpenAIKey();
+        output.write(t('已移除密钥，OpenAI 检查已关闭。\n', 'Key removed. The OpenAI check is off.\n'));
+      }
+      try { writeProfileDefault(OPENAI_OFFER_FILE, 'seen'); }
+      catch {
+        output.write(t('安装程序无法记住这次选择，下次安装时会再询问。\n',
+          'The installer could not remember this choice and may ask again next time.\n'));
+        return false;
+      }
+      if (action === 'skip') output.write(t('已选择只使用 Gemini。\n', 'Gemini only.\n'));
+      return true;
+    }
+    output.write(details + '\n' + t('在 OpenAI 创建 API 密钥：', 'Create an API key at OpenAI: ') + OPENAI_KEYS + '\n');
+    const value = await readHiddenKey(lang, input, output);
+    if (value === null) return true;
+    saveOpenAIKey(value);
+    output.write(t('已保存密钥。Normal 模式自动润色时可使用 OpenAI 风格检查。\n',
+      'Key saved. The OpenAI style check is available for automatic polishing in Normal mode.\n'));
+    return true;
+  } catch (error) {
+    if (error instanceof RangeError)
+      output.write(t('密钥格式有误。请重新运行命令，并粘贴完整密钥。\n',
+        'Invalid key format. Run the command again and paste the complete key.\n'));
+    else output.write(t('无法保存更改。请检查 Codex 用户目录的权限。\n',
+      'Could not save this change. Check the permissions for your Codex profile.\n'));
+    return false;
   }
 }
 export function chooseSetupMode(lang, input, output) {
@@ -1263,6 +1355,7 @@ export async function showSetupGuidance({
   saveModel = model => saveSetupDefault(MODEL_FILE, model),
   chooseMode = chooseSetupMode,
   chooseModel = chooseSetupModel,
+  offerOpenAI = lang => manageOpenAI(lang, { onboarding: true }),
   install = installAgy,
   prompt = ask,
   browse = openPage
@@ -1337,9 +1430,8 @@ export async function showSetupGuidance({
   }
   const [lines, pages] = setupIssues(checks, lang);
   if (lines.length) console.log(lines.join('\n'));
-  if (checks.decisions_enabled && !checks.openai_key_malformed)
-    console.log(tr('已检测到 OpenAI 密钥。普通模式下，OpenAI 会先查看本轮问题和草稿，判断是否需要改写。',
-      'An OpenAI key is set. In Normal mode, OpenAI checks the current question and draft before a rewrite.', lang));
+  if (interactive && checks.rewrite_mode === 'normal' && checks.rewrite_mode_configured && !checks.blockers.length)
+    await offerOpenAI(lang);
   if (
     pages.length &&
     interactive &&
@@ -1426,8 +1518,8 @@ export function doctor(checks = readChecks()) {
 }
 function usage(lang) {
   return tr(
-    '用法：node scripts/install.mjs [setup|update|doctor|uninstall] [--install-agy]\nsetup 安装（默认），update 更新，doctor 检查当前项目，uninstall 卸载。\n--install-agy 在缺少 agy 时安装，仅限 setup 和 update。\n-h, --help 显示帮助并退出。',
-    'Usage: node scripts/install.mjs [setup|update|doctor|uninstall] [--install-agy]\nsetup installs the plugin (default), update upgrades it, doctor checks this project, and uninstall removes it.\n--install-agy installs Google’s Antigravity CLI if missing during setup or update.\n-h, --help shows this help.',
+    '用法：node scripts/install.mjs [setup|update|doctor|openai|uninstall] [--install-agy]\nsetup 安装（默认），update 更新，doctor 检查当前项目，openai 管理可选的 OpenAI 风格检查和密钥，uninstall 卸载。\n--install-agy 在缺少 agy 时安装，仅限 setup 和 update。\n-h, --help 显示帮助并退出。',
+    'Usage: node scripts/install.mjs [setup|update|doctor|openai|uninstall] [--install-agy]\nsetup installs the plugin (default), update upgrades it, doctor checks this project, openai manages the optional OpenAI style check and its key, and uninstall removes the plugin.\n--install-agy installs Google’s Antigravity CLI if missing during setup or update.\n-h, --help shows this help.',
     lang
   );
 }
@@ -1439,7 +1531,7 @@ export async function main(args = process.argv.slice(2)) {
   }
   const actions = args.filter((arg) => arg !== '--install-agy');
   const action = actions[0] ?? 'setup';
-  if (actions.length > 1 || !['setup', 'update', 'doctor', 'uninstall'].includes(action)) {
+  if (actions.length > 1 || !['setup', 'update', 'doctor', 'openai', 'uninstall'].includes(action)) {
     console.error(usage(lang));
     return 2;
   }
@@ -1450,6 +1542,7 @@ export async function main(args = process.argv.slice(2)) {
     return 2;
   }
   try {
+    if (action === 'openai') return (await manageOpenAI(lang)) ? 0 : 1;
     if (action === 'doctor') {
       const checks = readChecks();
       console.log(doctor(checks));

@@ -4,7 +4,7 @@
 
 在运行 Codex 的机器上，从任意目录交互运行 `setup`，或在 macOS 的 Finder 里双击安装脚本。首次安装时，用 **↑ / ↓** 选择自动润色的改写模式，按 **回车** 确认。使用内置提示词时，**普通（Normal）** 可以保留清晰原稿，也支持可选的 OpenAI 检查。**Turbo** 跳过这项检查，请 Gemini 改写草稿。
 
-`agy` 可用后，可以沿用 **Gemini 4 Hydrogen**，也可以从 Antigravity 账号的模型中选择。只有查询账号模型时，安装器才会通过临时 `codex exec` 会话调用 `agy acp`。这些选择对使用同一份 Codex 配置的项目生效。如需单独指定某个项目的模式或模型，在该项目的聊天里提出即可。安装器只保存模式和模型 ID，需要 API 密钥时，插件从运行 Codex 的进程环境读取。
+`agy` 可用后，可以沿用 **Gemini 4 Hydrogen**，也可以从 Antigravity 账号的模型中选择。只有查询账号模型时，安装器才会通过临时 `codex exec` 会话调用 `agy acp`。这些选择对使用同一份 Codex 配置的项目生效。如需单独指定某个项目的模式或模型，在该项目的聊天里提出即可。
 
 ## 准备 Antigravity
 
@@ -16,37 +16,13 @@
 
 ## 选配 OpenAI 风格检查
 
-自动润色使用普通模式且配好 `OPENAI_API_KEY` 时，OpenAI 可以先判断草稿是否需要改写。没有密钥时，草稿直接交给 Gemini。要把每份草稿直接交给 Gemini，可以说 **“切换到 Turbo 模式”**。Turbo 跳过 OpenAI，即使配了密钥也一样。说 **“恢复普通模式”** 即可重新使用项目的 Decisions 设置。OpenAI 只收到本轮问题、草稿和当前 Codex 配置保存的自定义润色提示词，用来判断是否需要改写。项目的历史轮数仅用于 Gemini 改写。在项目里说 **“有密钥时用 OpenAI 检查”** 可以恢复这个默认设置。要单独关闭本项目的风格检查，可以说 **“这个项目只用 Gemini 改写”**。
+在尚未发布的源码版中，首次交互安装并选用普通模式时，安装器会询问一次是否启用这项检查。直接按**回车**即可跳过，只用 Gemini。启用后，OpenAI 只收到本轮问题、草稿和已设置的自定义润色提示词，据此判断是否需要改写。API 用量计入密钥所属的 OpenAI 项目。历史问答只发给 Gemini。Turbo 和点名润色始终跳过 OpenAI。
 
-要启用 Decisions，可以直接用自己已有的项目密钥，也可以按下面的步骤新建一个。
+1. 在承担费用的 OpenAI 项目中创建 API 密钥。若使用受限密钥，请允许调用 `POST /v1/decisions`，并确认项目可以使用 `gpt-6-luna`。[OpenAI API 密钥](https://platform.openai.com/api-keys) · [API 账单](https://platform.openai.com/account/billing/overview)
+2. 在安装时选择配置 OpenAI，或在运行插件的机器上使用同一份 Codex 配置，从源码仓库根目录运行 `node scripts/install.mjs openai`。只在终端提示隐藏输入时粘贴密钥。插件将其保存在 `$CODEX_HOME/codex-polish/credentials/openai.key`。
+3. 以后可在同一菜单里更换或移除密钥，卸载也会删除本地副本。若只想关闭本项目的检查，可说**“这个项目只用 Gemini 改写”**。
 
-1. 登录 OpenAI API Platform，在项目选择器里选中要承担 API 用量的项目。已有合适的项目可以直接用。[打开 OpenAI API Keys](https://platform.openai.com/api-keys)
-2. 在 **API Keys** 点 **+ Create new secret key**，名字可以填 `codex-polish`。创建后复制密钥，对应的变量名是 `OPENAI_API_KEY`。如果选受限权限，项目必须允许 `gpt-6-luna`，密钥必须允许调用 `POST /v1/decisions`。[项目与密钥权限](https://help.openai.com/en/articles/9186755-managing-projects-in-the-api-platform) · [Decisions API](https://developers.openai.com/api/docs/guides/decisions)
-3. 如果提示额度不足，检查对应 API 组织的余额和付款设置。Decisions 用的是所选项目的 API 额度。[查看 API 账单](https://platform.openai.com/account/billing/overview)
-
-### 让 Codex 读到 OpenAI 密钥
-
-如果你**从终端启动 Codex**，在 macOS 或 Linux 上打开 zsh 或 bash，进入项目目录。复制下面第一条命令并回车，看到提示后再粘贴 OpenAI 密钥并回车。粘贴时屏幕不显示字符是正常的。这样输入，实际密钥不会出现在 shell 命令里。
-
-```sh
-printf 'OpenAI API key（隐藏输入）：'; IFS= read -r -s OPENAI_API_KEY </dev/tty && export OPENAI_API_KEY; printf '\n'
-```
-
-Windows PowerShell 用户在项目目录运行下面这条命令，然后在隐藏提示处粘贴密钥。
-
-```powershell
-$env:OPENAI_API_KEY = [System.Net.NetworkCredential]::new('', (Read-Host 'OpenAI API key' -AsSecureString)).Password
-```
-
-在**同一个终端**运行 `codex`，然后说 **“检查回复润色环境”**。这样设置只对当前 shell 和它启动的子进程有效。长期用的话，可以让密码管理器或进程管理器在每次启动执行器时注入同名变量。
-
-如果你用的是 **Codex 桌面端或 T3 Code**，从 Dock 启动的应用和已经在跑的后台进程都可能读不到另一个终端里的 `export`。如果这个 macOS 桌面应用会自己启动本地后端，可以先结束正在进行的任务并退出应用，再从上面配好变量的终端直接运行它的可执行文件。装了 T3 Code Beta 的话，可以用下面这条命令启动它。
-
-```sh
-"/Applications/T3 Code (Beta).app/Contents/MacOS/T3 Code (Beta)"
-```
-
-如果 T3 或桌面端连的是**独立 Codex daemon 或远程执行器**，要在对应后端的服务启动环境里配好变量、重启后端，再开一个新会话。在新会话里说“检查回复润色环境”，以这次结果为准。如果安装窗口能看到密钥，但会话里看不到，就检查后端启动环境和宿主的 shell 环境变量过滤规则。[Codex shell 环境配置](https://learn.chatgpt.com/docs/config-file/config-advanced#shell-environment-policy)
+已发布的 `0.0.1-beta.8` 仍从 Codex 进程环境读取 `OPENAI_API_KEY`，尚无 `openai` 命令。源码版忽略这个变量。等此改动发布到 npm beta 后，也可运行 `npx @kyun.si/codex-polish@beta openai` 打开菜单，Windows PowerShell 使用 `npx.cmd @kyun.si/codex-polish@beta openai`。
 
 ## 确认配置
 

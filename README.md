@@ -50,6 +50,12 @@ To set defaults for all projects in this Codex profile, run `node scripts/instal
 - **Before trusting the hook:** Ask **“Why does a cache hit still take time? Polish the answer.”** Asking for a polish uses Turbo. Gemini receives the draft without earlier exchanges.
 - **Automatic mode (default):** Trust `UserPromptSubmit` in Codex **Settings → Hooks** (`/hooks` in the CLI) and start a **new chat**. Codex then runs the polishing workflow on ordinary questions and can include recent exchanges.
 
+### Optional OpenAI check (unreleased)
+
+On first interactive setup from source, choosing Normal offers an OpenAI style check. Press **Enter** to skip it and use Gemini alone. If you opt in, OpenAI receives your current question, draft and any custom polishing prompt. Create a key in the OpenAI project that will pay for the checks and enter it at the hidden terminal prompt. The key is saved for this Codex profile. Turbo always goes directly to Gemini. [OpenAI API keys](https://platform.openai.com/api-keys)
+
+To add, replace or remove the key later, run `node scripts/install.mjs openai` from the checkout. The published `0.0.1-beta.8` still uses `OPENAI_API_KEY`. The source version ignores that variable. [Credentials guide](plugins/codex-polish/skills/codex-polish-setup/references/credentials.en.md#optional-openai-style-check)
+
 ## Useful chat prompts
 
 - **“Have Gemini rewrite your last answer in two sentences.”** You can name an earlier answer in the same chat. Asking to rewrite the original again uses the question that first prompted it. If Codex can’t identify the original, it asks you to point it out or quote it. A request to polish or rewrite skips the OpenAI check even when automatic polishing is set to Normal.
@@ -61,7 +67,7 @@ To set defaults for all projects in this Codex profile, run `node scripts/instal
 
 Codex Polish sends the selected text as written, including any keys or tokens it contains. Say **“Skip polishing this time”** to keep this reply out of the polishing workflow. If you ask for JSON only, a single command, or a verbatim quote, Codex delivers that format directly.
 
-- **OpenAI** receives the current question, draft and any custom prompt only when automatic polishing runs the optional Normal-mode style check. With no `OPENAI_API_KEY`, with the check off, or if it’s unavailable, drafts go directly to Gemini. Turbo always skips the check.
+- **OpenAI** receives the current question, draft and any custom prompt only when automatic polishing runs the optional Normal-mode style check. If the check is off or unavailable, drafts go directly to Gemini.
 - **Google** receives the original question and draft when you polish a whole reply, along with any custom profile prompt and directions for this edit. A trusted hook can include up to two earlier exchanges by default. Set history to 0–10 exchanges or say **“Leave out history this time.”**
 - **Selected passages:** Saying **“Rewrite this passage in two sentences”** sends the passage, your editing direction, and the profile’s custom prompt or the built-in Turbo prompt. Saying **“Only send this passage to Gemini”** sends just the passage with the built-in Turbo prompt and keeps any extra directions and your profile prompt local. Neither sends the surrounding question or chat history.
 - **Follow-up passage edits:** Asking to shorten that last edited passage again sends the displayed version you chose with your new direction and active prompt, while the original question and chat history stay local. The plugin keeps no draft log of its own.
@@ -76,6 +82,6 @@ Codex Polish sends the selected text as written, including any keys or tokens it
 
 In Windows PowerShell, use `npx.cmd` to run `doctor`, `update`, and `uninstall`. `doctor` checks local dependencies, project settings and hook trust. Ask **“Choose a rewrite model”** to check your Antigravity sign-in and see the available models. After an update, Codex may ask you to trust the hook again.
 
-The current source uninstaller deletes this profile’s saved rewrite mode, model and custom prompt, and cleans up recorded project settings. [Uninstall details](docs/technical.en.md#installation-updates-and-uninstall)
+The current source uninstaller deletes this profile’s saved rewrite mode, model, custom prompt and OpenAI key, and cleans up recorded project settings. [Uninstall details](docs/technical.en.md#installation-updates-and-uninstall)
 
 [Credentials Guide](plugins/codex-polish/skills/codex-polish-setup/references/credentials.en.md) · [Technical Reference](docs/technical.en.md) · [Evaluation](evaluation/README.en.md) · [Contributing](CONTRIBUTING.en.md) · [Security](SECURITY.en.md) · [Changelog](CHANGELOG.md) · [Apache-2.0 License](LICENSE)

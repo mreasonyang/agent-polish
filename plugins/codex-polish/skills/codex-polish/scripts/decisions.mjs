@@ -4,6 +4,7 @@ import http from 'node:http';
 import https from 'node:https';
 import tls from 'node:tls';
 import { parseArgs } from 'node:util';
+import { openAIKeyStatus, readOpenAIKey } from '../../../hooks/openai_credentials.mjs';
 import { projectRewriteMode } from '../../../hooks/rewrite_mode.mjs';
 import { isMain, readLimited, utf8 } from './cli_io.mjs';
 import { MaterialError, primaryMaterial, projectMaterial } from './rewrite_material.mjs';
@@ -185,17 +186,17 @@ export async function decide(args, stream, env = process.env, request = send, ca
     if (rewriteMode === 'turbo') fail('decision_route_changed');
     if (!canSend) {
       // Standalone judge calls also respect the project's opt-outs.
-      const { projectSettings, decisionsSettings } = await import('../../../hooks/preferences.mjs');
+      const { projectSettings, projectDecisionsMode } = await import('../../../hooks/preferences.mjs');
       if (projectSettings(directory)[0] !== 'auto') fail('project_mode');
-      if (decisionsSettings(directory, rewriteMode).decisions_mode !== 'auto') fail('decision_route_changed');
+      if (projectDecisionsMode(directory) !== 'auto') fail('decision_route_changed');
     }
-    const key = env.OPENAI_API_KEY;
-    if (!key) fail('missing_api_key');
-    if (/[^!-~]/.test(key)) fail('invalid_api_key');
     const { evidence: data } = projectMaterial(primary, cwd);
     if (Buffer.byteLength(JSON.stringify(data)) > MAX_DECISION_DATA_BYTES) fail('decision_input_too_large');
     const instructions = Object.hasOwn(data, 'editor_prompt') ? CUSTOM_STYLE : STYLE;
-    if (canSend && !canSend()) fail('decision_route_changed');
+    const key = readOpenAIKey();
+    if (canSend && !canSend(openAIKeyStatus(key))) fail('decision_route_changed');
+    if (key === null) fail('missing_api_key');
+    if (!key) fail('invalid_api_key');
     const probability = await boundedProbability(data, instructions, key, timeout, env, request);
     return probability > 0.5 ? {action:'rewrite', probability, reason:'needs_rewrite'}
       : {action:'keep', probability, reason:'already_clear'};

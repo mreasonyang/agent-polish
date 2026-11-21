@@ -4,6 +4,7 @@ import path from 'node:path';
 import { executable, windows } from './platform.mjs';
 import { parseArgs } from 'node:util';
 import { projectRoot, readProjectSetting, readSettingWithDefault, writeProfileDefault } from './project_setting.mjs';
+import { openAIKeyStatus } from './openai_credentials.mjs';
 import { changeProjectSetting } from './owned_settings.mjs';
 import { PROMPT_FILE, readEditorPrompt, readPromptInput } from './editor_prompt.mjs';
 import { REWRITE_MODES, REWRITE_MODE_FILE, REWRITE_TRIGGERS, projectRewriteMode, rewriteModeSettings } from './rewrite_mode.mjs';
@@ -59,12 +60,15 @@ export function projectHistoryTurns(cwd) {
   }
 }
 
-export function decisionsSettings(cwd, rewriteMode = projectRewriteMode(cwd), triggerMode = projectSettings(cwd)[0]) {
+export function projectDecisionsMode(cwd) {
   const [value] = readProjectSetting(cwd, DECISIONS_FILE, 16);
-  const mode = decisionMode(value?.toLowerCase() ?? 'auto');
-  const key = process.env.OPENAI_API_KEY;
-  const hasKey = Boolean(key?.trim());
-  return { decisions_mode: mode, openai_key_configured: hasKey, openai_key_malformed: hasKey && /[^!-~]/.test(key), decisions_enabled: triggerMode === 'auto' && rewriteMode === 'normal' && mode === 'auto' && hasKey };
+  return decisionMode(value?.toLowerCase() ?? 'auto');
+}
+
+export function decisionsSettings(cwd, rewriteMode = projectRewriteMode(cwd), triggerMode = projectSettings(cwd)[0], keyStatus = openAIKeyStatus()) {
+  const mode = projectDecisionsMode(cwd);
+  return { decisions_mode: mode, ...keyStatus,
+    decisions_enabled: triggerMode === 'auto' && rewriteMode === 'normal' && mode === 'auto' && keyStatus.openai_key_configured };
 }
 
 function decisionMode(value) {
@@ -174,7 +178,7 @@ function supportedNode() {
   return major > 22 || (major === 22 && minor >= 16);
 }
 
-export function runtimeStatus(cwd, mode, trigger, { selectionOnly = false, noHistory = false } = {}) {
+export function runtimeStatus(cwd, mode, trigger, { selectionOnly = false, noHistory = false, keyStatus } = {}) {
   const googleAuth = process.env.CODEX_POLISH_AGY_AUTH ?? 'existing-session';
   const agy = findAgy();
   const rewriteSettings = rewriteModeSettings(cwd, trigger);
@@ -185,7 +189,7 @@ export function runtimeStatus(cwd, mode, trigger, { selectionOnly = false, noHis
   const status = {
     mode, ...rewriteSettings, node_available: supportedNode(),
     codex_available: Boolean(executable('codex')), agy_available: Boolean(agy), agy_path: agy,
-    ...decisionsSettings(cwd, rewriteMode, mode), ...modelPreference(cwd), prompt_source: promptSource,
+    ...decisionsSettings(cwd, rewriteMode, mode, keyStatus), ...modelPreference(cwd), prompt_source: promptSource,
     history_turns: noHistory || selectionOnly ? 0 : projectHistoryTurns(cwd),
     google_auth_method: GOOGLE_AUTH_MODES.includes(googleAuth) ? googleAuth : 'unsupported',
     gemini_key_configured: googleAuth === 'existing-session' ? null : Boolean(process.env.GEMINI_API_KEY?.trim()),
@@ -217,8 +221,8 @@ async function runOpenaiDecision(cwd, pinned, hostInput) {
   try {
     const { decide } = await import('../skills/codex-polish/scripts/decisions.mjs');
     const input = hostInput ? [await readHostLine()] : process.stdin;
-    output = await decide(['judge', '--cwd', cwd], input, process.env, undefined, () => {
-      policy = workflowPolicy(cwd, pinned);
+    output = await decide(['judge', '--cwd', cwd], input, process.env, undefined, keyStatus => {
+      policy = workflowPolicy(cwd, { ...pinned, keyStatus });
       return policy.action === 'accept';
     });
     if (policy?.action === 'keep') return [policy, 0];
@@ -237,14 +241,14 @@ async function runOpenaiDecision(cwd, pinned, hostInput) {
   return [{ action, reason, probability }, 0];
 }
 
-export function workflowPolicy(cwd, { trigger, route, rewriteMode, model, selectionOnly = false, noHistory = false }) {
+export function workflowPolicy(cwd, { trigger, route, rewriteMode, model, selectionOnly = false, noHistory = false, keyStatus }) {
   const [mode] = projectSettings(cwd);
   const keep = reason => ({ action: 'keep', reason });
   if (mode === null) return keep('mode_invalid');
   if (!REWRITE_TRIGGERS.includes(trigger) || mode === 'off' || (mode !== 'auto' && trigger === 'auto'))
     return keep('project_mode');
   if (selectionOnly && trigger !== 'explicit') return keep('invalid_options');
-  const status = runtimeStatus(cwd, mode, trigger, { selectionOnly, noHistory });
+  const status = runtimeStatus(cwd, mode, trigger, { selectionOnly, noHistory, keyStatus });
   if (status.blockers.length) return { ...keep(status.blockers[0]), blockers: status.blockers };
   if (rewriteMode !== undefined && rewriteMode !== status.rewrite_mode) return keep('rewrite_mode_changed');
   if (model !== undefined && model !== status.gemini_model) return keep('gemini_model_changed');

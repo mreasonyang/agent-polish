@@ -17,6 +17,8 @@
 - 要润色一段文字，可选中或引用原文。Gemini 会收到所选文字、当前生效的润色提示词和本次编辑要求。原问题、其余文字和聊天历史留在本地。说“只把这段原文发给 Gemini”，就只发送所选文字并使用内置 Turbo 提示词。全局提示词和另提的编辑要求也留在本地。
 - 要停止当前项目后续的改写请求，将 `.codex/codex-polish.mode` 设为 `off`。
 - 要让 Gemini 省略附带的历史问答，将 `.codex/codex-polish.history-turns` 设为 `0`，或说“这次润色不带历史”。这时仍可点名重写之前的某条回复。受信任的 hook 会在本机保存会话位置与轮次。为再次定位原稿，本地缓存记录来源类型、相关轮次和已展示回复的指纹，不存草稿正文。
-- 要关闭插件的 OpenAI 检查，将 `.codex/codex-polish.decisions` 设为 `off`。
+- 要关闭当前项目的 OpenAI 检查，将 `.codex/codex-polish.decisions` 设为 `off`。
+
+尚未发布的源码版默认只用 Gemini。可选的 OpenAI 检查使用你在安装器的隐藏输入框中填写的密钥，保存在当前 Codex 配置的 `$CODEX_HOME/codex-polish/credentials/openai.key`。可从源码仓库根目录运行 `node scripts/install.mjs openai` 移除本地副本，卸载时也会删除。已发布的 `0.0.1-beta.8` 仍使用 Codex 进程中的 `OPENAI_API_KEY`。[凭据指南](plugins/codex-polish/skills/codex-polish-setup/references/credentials.md#选配-openai-风格检查)
 
 如果密钥或令牌可能已经泄露，请到相应服务商处撤销受影响的凭据，并在使用它的配置中换用新凭据。

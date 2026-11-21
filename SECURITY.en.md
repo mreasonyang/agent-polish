@@ -17,6 +17,8 @@ When the automatic hook runs the optional style check in Normal mode, OpenAI rec
 - To polish a selection, select or quote the passage. Gemini receives the passage with the profile’s custom prompt or the built-in Turbo prompt and any editing directions you give. The surrounding message and chat history stay local. Say “Only send this passage to Gemini” to share just the selected text with the built-in Turbo prompt. Any separate directions and the profile prompt also stay local.
 - To stop future rewrite requests in the current project, set `.codex/codex-polish.mode` to `off`.
 - To omit additional exchanges, set `.codex/codex-polish.history-turns` to `0` or say “Leave out history this time.” You can still request a rewrite of an earlier answer. The trusted hook stores the transcript location and turn locally. For repeat rewrites, the local cache records the source type, turn references and a fingerprint of the displayed reply. It stores no draft text.
-- To turn off the OpenAI style check, set `.codex/codex-polish.decisions` to `off`.
+- To turn off the OpenAI style check for one project, set `.codex/codex-polish.decisions` to `off`.
+
+In the unreleased source version, Gemini runs alone by default. The optional OpenAI check uses the key explicitly entered at the installer’s hidden terminal prompt. It is saved in `$CODEX_HOME/codex-polish/credentials/openai.key` for this Codex profile. Remove the local copy through `node scripts/install.mjs openai` from the checkout or by uninstalling. Published `0.0.1-beta.8` still uses the Codex process’s `OPENAI_API_KEY`. [Credentials guide](plugins/codex-polish/skills/codex-polish-setup/references/credentials.en.md#optional-openai-style-check)
 
 If a key or token may have been exposed, revoke it with the provider and replace it wherever it is configured.

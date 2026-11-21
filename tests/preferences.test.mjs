@@ -6,7 +6,8 @@ import { execFile, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { windowsSystemTool } from '../plugins/codex-polish/hooks/platform.mjs';
 import { promisify } from 'node:util';
-import { makeProject, json, mkfifo, agyName, windows, homeEnv, runHookCommand, supportsFileSymlink, preferences, plugin, run } from './hook_fixture.mjs';
+import { makeProject, json, mkfifo, agyName, windows, homeEnv, runHookCommand, supportsFileSymlink, preferences, plugin, run, useTestProfile } from './hook_fixture.mjs';
+import { saveOpenAIKey } from '../plugins/codex-polish/hooks/openai_credentials.mjs';
 import { accessProjectSetting } from '../plugins/codex-polish/hooks/project_setting.mjs';
 
 const exec = promisify(execFile);
@@ -111,7 +112,7 @@ test('profile settings work without a project, stay isolated by profile, and yie
   const defaults = json(profile(['check']));
   assert.equal(defaults.gemini_model, 'gemini-4-argon');
   assert.equal(defaults.rewrite_mode, 'turbo');
-  assert.equal(defaults.openai_key_configured, true);
+  assert.equal(defaults.openai_key_configured, false);
   assert.ok(!JSON.stringify(defaults).includes(key));
   assert.equal(call(['set-rewrite-mode', '--reset', 'turbo']).status, 2);
   assert.equal(json(call(['set-rewrite-mode', '--reset'])).rewrite_mode, 'turbo');
@@ -161,6 +162,8 @@ test('outside Git the chosen folder owns its settings', t => {
 
 test('Decisions settings recognize ON and OFF and report unknown values', t => {
   const { check, call, env, mode, cwd, project } = fixture(t), options = { env: { ...env, OPENAI_API_KEY: 'example' } };
+  useTestProfile(t, env.CODEX_HOME);
+  saveOpenAIKey('plugin-example');
   const policy = () => { const s = check(options); return [s.mode, s.decisions_mode, s.decisions_enabled]; };
   fs.writeFileSync(mode, 'auto');
   assert.deepEqual(policy(), ['auto', 'auto', true]);
@@ -191,6 +194,9 @@ test('automatic Normal bypasses an invalid Decisions setting when there is no Op
   assert.deepEqual(json(call(['decision', 'judge', '--trigger', 'auto', '--route', 'acp'], options)),
     { action: 'rewrite', reason: 'direct_acp', route: 'acp' });
   options.env.OPENAI_API_KEY = 'example';
+  assert.deepEqual(json(call(['check', '--trigger', 'auto'], options)).blockers, []);
+  useTestProfile(t, env.CODEX_HOME);
+  saveOpenAIKey('plugin-example');
   assert.ok(json(call(['check', '--trigger', 'auto'], options)).blockers.includes('decisions_mode_invalid'));
 });
 
@@ -446,10 +452,12 @@ test('Windows keeps a locked setting intact and completes atomic replacement onc
 
 test('check never launches agy or returns credentials', t => {
   const { project, cwd, call, env } = fixture(t);
+  useTestProfile(t, env.CODEX_HOME);
+  saveOpenAIKey('saved-private-openai');
   fs.writeFileSync(path.join(project, agyName), '#!/bin/sh\n: > invocations\n', { mode: 0o700 });
   const result = call(['check'], { cwd, env: { ...env, PATH: project, OPENAI_API_KEY: 'private-openai', GEMINI_API_KEY: 'private-gemini', CODEX_POLISH_AGY_AUTH: 'private-unknown' } });
   const s = json(result);
-  for (const secret of ['private-openai', 'private-gemini', 'private-unknown']) assert.ok(!(result.stdout + result.stderr).includes(secret));
+  for (const secret of ['private-openai', 'saved-private-openai', 'private-gemini', 'private-unknown']) assert.ok(!(result.stdout + result.stderr).includes(secret));
   assert.equal(s.agy_available, true); assert.equal(s.codex_available, false); assert.equal(s.openai_key_configured, true);
   assert.equal(s.gemini_key_configured, true); assert.equal(s.google_auth_method, 'unsupported');
   assert.ok(!fs.existsSync(path.join(cwd, 'invocations')) && !fs.existsSync(path.join(cwd, '.codex')));

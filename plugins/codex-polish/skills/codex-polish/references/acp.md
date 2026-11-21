@@ -26,7 +26,7 @@
 3. 对输入管道逐次写入一条完整的 JSON 行，然后从同一运行句柄读返回值。用执行工具在临时目录执行 `printf '%s\n' '<已安全引用的一帧>' > .acp-in`；有参数的文本始终交给 JSON 序列化器和安全引用，不拼入命令代码。若管道写入阻塞，检查官方进程是否仍在运行；若宿主取消或进程已退出，中断写入并回收。每帧通过 JSON 序列化器生成，末尾追加一个换行。正文中的换行属于 JSON 字符串；不可拆成多个请求或把正文当作 shell 命令执行。先发下列帧并等待对应的 `id`：
 
    ```json
-   {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{},"clientInfo":{"name":"codex-polish","version":"0.0.1-beta.4"}}}
+   {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{},"clientInfo":{"name":"codex-polish","version":"0.0.1-beta.5"}}}
    ```
 
    确认 `result.protocolVersion == 1`。生产中若服务端提供 `agentInfo.name`，应与官方 `Antigravity ACP Server` 一致，身份或协议版本冲突记 `acp_protocol_error`。

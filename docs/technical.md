@@ -1,8 +1,8 @@
 # 技术参考
 
-[English](technical.en.md) · [项目首页](../README.md)
+[English](technical.en.md) · [项目首页](README.zh-CN.md)
 
-`codex-polish` 的自动 hook 让 Codex 在原稿写完后直接执行[润色流程](../plugins/codex-polish/skills/codex-polish/WORKFLOW.md)，只在最终回复中展示结果。用户点名润色时，[改写技能](../plugins/codex-polish/skills/codex-polish/SKILL.md) 执行同一份流程。[设置技能](../plugins/codex-polish/skills/codex-polish-setup/SKILL.md) 检查运行环境并保存项目设置。
+Codex Polish 支持 macOS 和 Linux，本地脚本使用 Node.js 22.16 或更高版本的内置模块。自动 hook 让 Codex 在原稿写完后直接执行[润色流程](../plugins/codex-polish/skills/codex-polish/WORKFLOW.md)，只在最终回复中展示结果。用户点名润色时，[改写技能](../plugins/codex-polish/skills/codex-polish/SKILL.md) 执行同一份流程。[设置技能](../plugins/codex-polish/skills/codex-polish-setup/SKILL.md) 检查运行环境并保存项目设置。
 
 ## 模式、配置文件与查找规则
 
@@ -55,6 +55,8 @@ Gemini 返回的正文有改动时，Codex 在同一条最终消息中先显示 
 
 如果 Gemini 确实返回了相同的文字，回复会说明 Gemini 返回了原文，正文只显示一次。发送前跳过润色，或 ACP 请求未能取得完整正文时，回复说明可确认的原因，并显示原稿。明确要求“只给润色后的正文”时，改写完成后只显示 Gemini 正文。JSON、单条命令及其他逐字输出按用户要求直接交付，不加标题或状态。
 
+用户选中一段文字或指定改写之前的 Gemini 版本时，折叠标题为“查看原文”。这种请求会附上对应的问题和本次改写要求，省略额外的历史问答。
+
 排版时，如果 ACP 回复中的图表引用丢失了分隔符，且能明确对应原稿中的引用，插件会补回分隔符。Gemini 更改或省略图表引用时，仍显示它返回的正文。无法对应原稿的新增图表标记以文本显示。
 
 ## 发送给服务商的内容与历史限制
@@ -85,13 +87,15 @@ Google 为默认模型 `gemini-4-hydrogen` 的 Gemini API 公布了 1,048,576 to
 
 ## 安装、更新和卸载
 
-测试版发布到 npm 后，运行 `npx @kyun.si/codex-polish@beta setup` 即可安装。将最后一个参数换成 `update`、`doctor` 或 `uninstall` 即可更新、检查当前项目或卸载。从 GitHub 源码安装时，在仓库根目录运行 `node scripts/install.mjs setup`，其余子命令相同。[安装步骤](../README.md#三步快速开始)
+在项目目录运行 `npx @kyun.si/codex-polish@beta setup` 即可安装。将最后一个参数换成 `update`、`doctor` 或 `uninstall` 即可更新、检查当前项目或卸载。从 GitHub 源码安装时，在仓库根目录运行 `node scripts/install.mjs setup`，其余子命令相同。[安装步骤](README.zh-CN.md#快速开始)
+
+在 macOS 上也可以解压仓库，在 Finder 中双击[安装回复润色.command](../安装回复润色.command)，按提示选择要配置的项目。
 
 `setup` 和 `update` 支持 `--install-agy`，在缺少 Antigravity CLI 时可自动安装。更新会保留项目设置与插件启用状态。同一版本号的新构建也能用 `update` 覆盖或重试中断的更新。
 
 安装器为每份 Codex 配置注册一个本地市场。更新时先准备并校验新快照，然后原子替换市场清单，再请 Codex 刷新插件缓存。刷新失败时会恢复原快照和启用状态。Codex 判断 hook 信任时会核对已安装插件的内容，所以即使命令没变，内置提示词或配置指南的改动也可能触发重新确认。安装器和 `doctor` 都从 `hooks/list` 读取实际状态。
 
-手头有本地打包的 `0.0.1-beta.4` 版时，也可以在压缩包所在目录运行 `npx --yes file:./kyun.si-codex-polish-0.0.1-beta.4.tgz uninstall`。卸载会清理该插件与专用市场，按当前 Codex 配置清除会话指针，保留各项目的 `.codex/` 配置和共用的 `agy`，并提示被手动修改过的安装文件备份位置。
+手头有本地打包的 `0.0.1-beta.5` 版时，也可以在压缩包所在目录运行 `npx --yes file:./kyun.si-codex-polish-0.0.1-beta.5.tgz uninstall`。卸载会清理该插件与专用市场，按当前 Codex 配置清除会话指针，保留各项目的 `.codex/` 配置和共用的 `agy`，并提示被手动修改过的安装文件备份位置。
 
 ## 已验证记录与真机验收
 
@@ -106,12 +110,12 @@ node evaluation/report.mjs evaluation/example.jsonl
 
 Decisions 测试使用模拟的 OpenAI 响应检查风格判定阈值和接口报错时的处理。
 
-源码中的 `tests/fixture_acp.mjs` 是专供测试的模拟服务端，覆盖正常改写、认证失败、模型缺失、生成期换模型、权限请求、静默超时、断流和跨会话消息交错，不会安装到最终产物中。安装回归测试会在本机已装好 Codex CLI 和 npm 的前提下创建一次性 Codex 配置，打出发版压缩包，验证 macOS 双击脚本以及从 `.tgz` 安装、更新、检查和卸载的全流程，并通过 Codex CLI 确认 Setup 已启用、`UserPromptSubmit` 已注册且等待信任。本地 T3 Code Beta 的 Codex 配置中也能发现 `codex-polish` 和 `codex-polish-setup`，两者都显示已启用。T3 聊天界面从触发改写到显示最终回复的全流程仍待验收。
+源码中的 `tests/fixture_acp.mjs` 是专供测试的模拟服务端，覆盖正常改写、认证失败、模型缺失、生成期换模型、权限请求、取消无响应的生成、断流和跨会话消息交错，不会安装到最终产物中。安装回归测试会在本机已装好 Codex CLI 和 npm 的前提下创建一次性 Codex 配置，打出发版压缩包，验证 macOS 双击脚本以及从 `.tgz` 安装、更新、检查和卸载的全流程，并通过 Codex CLI 确认 Setup 已启用、`UserPromptSubmit` 已注册且等待信任。本地 T3 Code Beta 的 Codex 配置中也能发现 `codex-polish` 和 `codex-polish-setup`，两者都显示已启用。一次 T3 Code 实测中，用户要求用单次 Turbo 重写当前对话里可见的上一条答复。Codex 通过 ACP 调用 Gemini 4 Hydrogen，最终消息包含改稿和原稿。
 
 在 macOS 上用 Node.js 22.16 和官方 Antigravity CLI 1.5.12 做过一次真实改写。测试环境的 PATH 中没有 Python，也没有配置 OpenAI 密钥。当前 Codex agent 通过 ACP 选中了 `gemini-4-hydrogen`，改稿保留了本地测试通过、线上尚未验证的事实。Node 辅助脚本没有向网络发出请求。
 
 真人偏好仍待盲评。可用已获授权并去除敏感信息的真实样本完成以下验收。
 
-1. 分别在无 OpenAI 密钥和开启 Decisions 的项目中核对工具轨迹，确认只有当前 agent 持有 ACP 进程、模型选择准确且结束后进程回收干净。
+1. 在 T3 Code 的普通模式下，分别在无 OpenAI 密钥和开启 Decisions 的项目中核对工具记录，确认只有当前 agent 持有 ACP 进程、模型选择准确且结束后进程回收干净。
 2. 用超过 4 KiB 的中文长文在两个 Codex 会话中并发运行，确认正文和会话 ID 不串线，并核对缺模型、权限请求、取消和断流时的回退表现。
 3. 在原生最终消息和重开会话后的记录中核对状态、两版顺序及正文。在支持折叠的客户端，确认新回复里的原稿默认收起，展开后对照原稿，并将润色版与 Gemini 返回的改稿逐字核对。统计盲评偏好、严重事实反转、漏调率、选定正文的逐字一致率和端到端延迟。统计门槛要求校准集和盲评集合计至少 200 个已交付的真实样本。[验收数据格式和指标](../evaluation/README.md)

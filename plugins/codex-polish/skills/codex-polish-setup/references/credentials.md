@@ -2,19 +2,19 @@
 
 [English](credentials.en.md)
 
-在项目目录交互运行 `setup`，用 **↑ / ↓** 选择改写模式，按 **回车** 确认。默认选中 **普通（Normal）**，可使用下文的 OpenAI 风格检查。**Turbo** 跳过 OpenAI，直接让 Gemini 改写符合条件的草稿。也可以在项目聊天里说 **“配置回复润色”**，然后点选模式。如果聊天只支持文字，回复模式名即可。项目会记住你的选择。Gemini 默认沿用 Antigravity 登录。 接着可以选默认的 Gemini 4 Hydrogen，或让 Codex 查询你的 Antigravity 账号可用的模型。只有查询账号模型才会启动 Codex 会话。
+在项目目录交互运行 `setup`，用 **↑ / ↓** 选择改写模式，按 **回车** 确认。默认选中 **普通（Normal）**，可使用下文的 OpenAI 风格检查。**Turbo** 跳过 OpenAI，直接让 Gemini 改写符合条件的草稿。也可以在项目聊天里说 **“配置回复润色”**，然后点选模式。如果聊天只支持文字，回复模式名即可。项目会记住你的选择。接着可以选默认的 Gemini 4 Hydrogen，或让 Codex 查询你的 Antigravity 账号可用的模型。只有查询账号模型才会启动 Codex 会话。
 
 ## 准备 Antigravity
 
-在实际运行 Codex 的机器上，用同一个系统账户安装插件。插件先在 Codex 的 PATH 里找 `agy`，再查 `~/.local/bin/agy`。首次双击安装或在终端交互运行 `setup` 时，如果缺少 `agy`，你可以同意安装 Google 官方 CLI，也可以跳过。无人值守安装或之后想补装时，在解压目录运行 `node scripts/install.mjs setup --install-agy`。也可以按 Google 的指南单独安装。[官方 CLI 安装指南](https://antigravity.google/docs/getting-started/?tab=cli)
+在实际运行 Codex 的机器上，用同一个系统账户安装插件。插件先在 Codex 的 PATH 里找 `agy`，再查 `~/.local/bin/agy`。首次双击安装或在终端交互运行 `setup` 时，如果缺少 `agy`，你可以同意安装 Google 官方 CLI，也可以跳过。无人值守安装或之后想补装时，运行 `npx @kyun.si/codex-polish@beta setup --install-agy`。用源码安装时，在仓库里运行 `node scripts/install.mjs setup --install-agy`。也可以按 Google 的指南单独安装。[官方 CLI 安装指南](https://antigravity.google/docs/getting-started/?tab=cli)
 
 只有 Antigravity 提示需要登录时，才需要在自己的终端运行 `agy` 登录。如果终端找不到命令，可以直接运行 `~/.local/bin/agy`。登录后回 Codex 再试一次改写。[ACP 认证说明](https://antigravity.google/docs/ide/extensions/acp#authentication)
 
-项目默认自动润色。改写时，Google 会收到本轮问题和草稿的原文，其中的代码、命令和路径也按原样发送。Gemini 还会收到自定义润色提示词（如有），默认最多附带之前 2 轮完整问答的原文。在 Codex 的 **设置 → Hooks**（CLI 输入 `/hooks`）里信任插件的 `UserPromptSubmit`，再开一个项目聊天，问 **“用一句话解释 DNS。”** 如果想自己决定何时润色，可以说 **“只在我要求时润色”**。信任 hook 前也可以点名润色本轮问答。想停用就说 **“关闭回复润色”**。
+项目默认自动润色。改写已有答复时，Google 收到的是那条答复、它所回答的问题，以及你这次提出的改写要求。改写材料按原文发送，包括其中的代码、命令、路径和已设置的自定义提示词。默认还会附上目标答复之前最多 2 轮问答。在 Codex 的 **设置 → Hooks**（CLI 输入 `/hooks`）里信任插件的 `UserPromptSubmit`，再开一个项目聊天，问 **“用一句话解释 DNS。”** 如果想自己决定何时润色，可以说 **“只在我要求时润色”**。信任 hook 前也可以点名润色本轮问答。想停用就说 **“关闭回复润色”**。
 
-## 选配 OpenAI Decisions
+## 选配 OpenAI 风格检查
 
-普通模式默认有 `OPENAI_API_KEY` 时启用 Decisions，没有时直接走 ACP。要把每份符合条件的草稿直接交给 Gemini，可以说 **“切换到 Turbo 模式”**。Turbo 跳过 OpenAI，即使配了密钥也一样。说 **“恢复普通模式”** 即可重新使用项目的 Decisions 设置。OpenAI 只收到本轮问题、草稿和项目已设置的自定义润色提示词，用来判断是否需要改写。项目的历史轮数仅用于 Gemini 改写。在项目里说 **“有 key 时用 Decisions”** 可以恢复这个默认设置。想保留现有 OpenAI key、只关掉本项目的风格检查，就说 **“这个项目只用 ACP”**。
+在普通模式中，配好 `OPENAI_API_KEY` 后，OpenAI 可以在润色前判断草稿是否需要改写。没有密钥时，草稿直接交给 Gemini。要把每份符合条件的草稿直接交给 Gemini，可以说 **“切换到 Turbo 模式”**。Turbo 跳过 OpenAI，即使配了密钥也一样。说 **“恢复普通模式”** 即可重新使用项目的 Decisions 设置。OpenAI 只收到本轮问题、草稿和项目已设置的自定义润色提示词，用来判断是否需要改写。项目的历史轮数仅用于 Gemini 改写。在项目里说 **“有密钥时用 OpenAI 检查”** 可以恢复这个默认设置。要单独关闭本项目的风格检查，可以说 **“这个项目只用 Gemini 改写”**。
 
 要启用 Decisions，可以直接用自己已有的项目密钥，也可以按下面的步骤新建一个。
 
@@ -54,3 +54,5 @@ printf 'Gemini API key（隐藏输入）：'; IFS= read -r -s GEMINI_API_KEY </d
 ```
 
 用企业身份时，设置 `CODEX_POLISH_AGY_AUTH=agent-platform`，并由管理员给运行环境配好 Application Default Credentials（ADC）、Google Cloud 项目和区域。这三种方式都通过同一个官方 `agy acp` 进程提交改写。[Antigravity ACP 认证](https://antigravity.google/docs/ide/extensions/acp#authentication)
+
+更换身份后，新开项目聊天，说 **“选择改写模型”**。成功列出模型表示当前账号已连通，这一步只读取模型列表。

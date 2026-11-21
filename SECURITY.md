@@ -1,6 +1,6 @@
 # 安全说明
 
-[English](SECURITY.en.md) · [使用说明](README.md) · [技术说明](docs/technical.md)
+[English](SECURITY.en.md) · [使用说明](docs/README.zh-CN.md) · [技术说明](docs/technical.md)
 
 ## 私下报告漏洞
 

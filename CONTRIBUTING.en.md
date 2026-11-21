@@ -2,7 +2,7 @@
 
 [简体中文](CONTRIBUTING.md)
 
-For installation, see the [project README](README.en.md). For details on when the plugin sends a draft and how it displays the reply, see the [technical reference](docs/technical.en.md).
+For installation, see the [project README](README.md). For details on when the plugin sends a draft and how it displays the reply, see the [technical reference](docs/technical.en.md).
 
 ## Where to Make Changes
 
@@ -22,7 +22,7 @@ mkdir -p dist
 npm pack --ignore-scripts --pack-destination dist
 ```
 
-`npm pack` writes version `0.0.1-beta.4` of `@kyun.si/codex-polish` to `dist/kyun.si-codex-polish-0.0.1-beta.4.tgz`. Default tests need no API key. Native installer tests use a temporary Codex profile. The Decisions tests use mock responses to exercise the style check.
+`npm pack` writes version `0.0.1-beta.5` of `@kyun.si/codex-polish` to `dist/kyun.si-codex-polish-0.0.1-beta.5.tgz`. Default tests need no API key. Native installer tests use a temporary Codex profile. The Decisions tests use mock responses to exercise the style check.
 
 ## Reporting Bugs
 
@@ -36,11 +36,11 @@ Open a GitHub pull request with the reason for the change, steps to reproduce or
 
 ## Publishing a beta
 
-Set the version in both `package.json` and the plugin manifest to `X.Y.Z-beta.N`. Commit the change and push the matching Git tag. For example, to publish `0.0.1-beta.4`:
+Set the version in both `package.json` and the plugin manifest to `X.Y.Z-beta.N`. Commit the change and push the matching Git tag. For example, to publish `0.0.1-beta.5`:
 
 ```sh
-git tag v0.0.1-beta.4
-git push origin v0.0.1-beta.4
+git tag v0.0.1-beta.5
+git push origin v0.0.1-beta.5
 ```
 
 GitHub Actions tests the tagged code, publishes the package to npm with the `beta` tag, and creates a GitHub prerelease. If a step fails, run the publishing workflow again from the Actions tab and enter the existing tag.

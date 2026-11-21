@@ -1,6 +1,11 @@
 # 更新记录 / Changelog
 
-[中文使用说明](README.md) · [English README](README.en.md)
+[中文使用说明](docs/README.zh-CN.md) · [English README](README.md)
+
+## 0.0.1-beta.5
+
+- The repository and npm beta now open with the English README. The Simplified Chinese guide is linked at the top. Both guides cover first setup, one-time Turbo rewrites, and what each provider receives.
+- 仓库和 npm 测试包默认展示英文 README，顶部可切换至简体中文。两份指南都更新了安装步骤、单次 Turbo 用法和数据发送范围。
 
 ## 0.0.1-beta.4
 

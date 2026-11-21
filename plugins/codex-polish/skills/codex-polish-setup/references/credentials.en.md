@@ -6,13 +6,13 @@ Run interactive `setup` from your project directory. Use **↑ / ↓** to select
 
 ## Use your Antigravity sign-in
 
-1. Install the plugin on the machine that runs Codex, using the same system account. It looks for `agy` on the Codex process’s PATH and then at `~/.local/bin/agy`. On a first install from Finder or an interactive terminal, you can accept the offer to install Google’s official CLI or skip it. For an unattended install or to add the CLI later, run `node scripts/install.mjs setup --install-agy` from the extracted package. You can also install it directly from Google. [Antigravity installation guide](https://antigravity.google/docs/getting-started/?tab=cli)
+1. Install the plugin on the machine that runs Codex, using the same system account. It looks for `agy` on the Codex process’s PATH and then at `~/.local/bin/agy`. On a first install from Finder or an interactive terminal, you can accept the offer to install Google’s official CLI or skip it. For an unattended install or to add the CLI later, run `npx @kyun.si/codex-polish@beta setup --install-agy`. From a source checkout, use `node scripts/install.mjs setup --install-agy`. You can also install it directly from Google. [Antigravity installation guide](https://antigravity.google/docs/getting-started/?tab=cli)
 2. The plugin uses your existing Antigravity sign-in. If Antigravity requests authentication, run `agy` in your terminal and sign in. If your shell can’t find the installed CLI, open `~/.local/bin/agy` directly.
-3. Projects default to automatic polishing. On a rewrite, Google receives your current question and draft as written, including any code, commands, and paths. Gemini also receives any custom polishing prompt and, by default, up to two earlier completed exchanges as written. In Codex **Settings → Hooks** (`/hooks` in the CLI), trust the plugin’s `UserPromptSubmit` hook. Start a fresh project chat and ask **“Explain what DNS does in one sentence.”**
+3. Projects default to automatic polishing. When you ask to rewrite an earlier answer, Google receives that draft, the question it answers and any directions for this rewrite. The plugin sends the text as written, including code, commands, paths and any custom project prompt. By default it also includes up to two exchanges from before the selected answer. In Codex **Settings → Hooks** (`/hooks` in the CLI), trust the plugin’s `UserPromptSubmit` hook. Start a fresh project chat and ask **“Explain what DNS does in one sentence.”**
 
 Say **“Only polish when I ask”** for manual mode or **“Turn off Codex Polish”** to disable polishing. Before trusting the hook, you can still ask explicitly to polish a reply without including earlier exchanges. The default setup works without API keys. If Codex runs on a remote machine, follow these steps there.
 
-Say **“Check Codex Polish setup”** to inspect the local configuration or **“Choose a rewrite model”** to see the Gemini models your account can use.
+Say **“Check Codex Polish setup”** to inspect the local configuration and **“Test the ACP connection”** to check the live connection. **“Choose a rewrite model”** lists the models your account can use. Neither live check sends a draft.
 
 ## Optional OpenAI style check
 

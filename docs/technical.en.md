@@ -1,8 +1,8 @@
 # Codex Polish Technical Reference
 
-[简体中文](technical.md) · [Overview](../README.en.md)
+[简体中文](technical.md) · [Overview](../README.md)
 
-Codex Polish `0.0.1-beta.4` is a Codex plugin for macOS and Linux. Its local scripts use built-in Node.js modules and require Node.js 22.16 or newer. The automatic hook directs Codex to follow the [polishing workflow](../plugins/codex-polish/skills/codex-polish/WORKFLOW.md) once the draft is ready and show the result in the final reply. Explicit requests use the same workflow through the [rewrite skill](../plugins/codex-polish/skills/codex-polish/SKILL.md). The [setup skill](../plugins/codex-polish/skills/codex-polish-setup/SKILL.md) checks the environment and manages project settings.
+Codex Polish `0.0.1-beta.5` is a Codex plugin for macOS and Linux. Its local scripts use built-in Node.js modules and require Node.js 22.16 or newer. The automatic hook directs Codex to follow the [polishing workflow](../plugins/codex-polish/skills/codex-polish/WORKFLOW.md) once the draft is ready and show the result in the final reply. Explicit requests use the same workflow through the [rewrite skill](../plugins/codex-polish/skills/codex-polish/SKILL.md). The [setup skill](../plugins/codex-polish/skills/codex-polish-setup/SKILL.md) checks the environment and manages project settings.
 
 ## Project Settings
 
@@ -12,7 +12,7 @@ Settings live in the nearest Git repository’s root .codex directory. All direc
 | --- | --- | --- |
 | `.codex/codex-polish.mode` | `auto` (default), `manual`, `off` | Without a saved mode, the project uses `auto`. The trusted hook triggers polishing for ordinary questions. `manual` runs only on explicit requests. `off` skips rewrites even when requested. |
 | `.codex/codex-polish.rewrite-mode` | `normal` (default), `turbo` | Once polishing is triggered, normal uses the saved Decisions setting. Turbo sends each eligible draft directly to Gemini. |
-| `.codex/codex-polish.model` | Model ID, default `gemini-4-hydrogen` (Gemini 4 Hydrogen) | Stores the per-project Gemini model discovered from the signed-in Antigravity account over ACP. |
+| `.codex/codex-polish.model` | Model ID, default `gemini-4-hydrogen` (Gemini 4 Hydrogen) | The model picker lists models from the signed-in Antigravity account without sending a draft or history. If the saved model becomes unavailable, that rewrite keeps the original draft. |
 | `.codex/codex-polish.prompt.md` | UTF-8 text, defaults to the active mode’s built-in prompt | Custom text takes effect on the next rewrite and carries over to new chats in the same project. |
 | `.codex/codex-polish.history-turns` | Integer `0`–`10`, default `2` | Maximum completed exchanges to attach to a Gemini rewrite. Use `0` to omit earlier exchanges. Saving a value above `10` returns an error. An invalid or out-of-range setting disables history. Changes apply on the next rewrite. |
 | `.codex/codex-polish.decisions` | `auto` (default), `off` | In normal mode, `auto` enables the OpenAI style check when `OPENAI_API_KEY` is set. `off` uses ACP only. This setting is independent of the trigger mode. |
@@ -56,6 +56,8 @@ The plugin requires the official Antigravity CLI 1.2.1 or later. By default it r
 
 When Gemini returns a changed reply, the final message starts with **Polished by Gemini**. In the Codex app, select “View original GPT draft” below the rewrite to expand the full draft. Select it again to collapse it. Drafts retain their Markdown formatting. When a draft contains disclosure tags or container delimiters, the expanded view shows its Markdown source so you can read those markers verbatim.
 
+For a selected passage or a previous Gemini version, the comparison is labeled **View original text**. Only the selected text and its question are used, along with any editing directions. Additional conversation history is omitted.
+
 If Gemini returns identical text, the reply says it left the draft unchanged and shows the text once. If polishing is skipped before sending or the ACP request ends without a complete reply, the status explains what happened and the reply shows the original. Asking for “only the polished text” shows just Gemini’s text when the rewrite completes. Requests for plain JSON, a single command, or other exact output receive the requested content without labels or status.
 
 When a visualization reference loses its delimiters in the ACP reply and unambiguously matches a reference in the draft, the formatter restores the delimiters. The formatter still displays Gemini’s reply if a reference changes or disappears. New visualization markers with no match in the draft appear as text.
@@ -97,24 +99,28 @@ npm test
 node evaluation/report.mjs evaluation/example.jsonl
 ```
 
-The Decisions tests use mock OpenAI responses to exercise the style threshold and API error handling.
+The Decisions tests use mock OpenAI responses to exercise the style threshold and API error handling. A simulated ACP server covers model changes, permission requests, interrupted replies and mixed session messages. The installer tests use a temporary Codex profile to install the packed archive, check hook registration, update the plugin and uninstall it.
 
 ### Verified on macOS
 
 Using Node.js 22.16 and Antigravity CLI 1.5.12, the Codex agent selected `gemini-4-hydrogen` over ACP and requested a rewrite. The reply reported that local tests passed and production verification was still pending. The test environment had no Python on PATH and no OpenAI key. The Node.js helpers made no network requests.
 
+In a T3 Code chat using the Codex backend, a one-time Turbo request rewrote the preceding visible answer through Gemini 4 Hydrogen. The delivered message contained the rewrite and the original draft.
+
 ### Checks still open
 
-- Verify a complete rewrite in the T3 chat interface. Exercise both routes with authorized, de-identified samples. Compare the tool trace with the selected model, completed output, and process cleanup. Check the status and section order in the native final message and again after reopening the chat. In clients that support folding, verify that a new reply starts with the draft collapsed. Expand it and compare each body with its source.
+- Exercise the Normal route in T3 Code both with and without Decisions, using authorized, de-identified samples. Compare the tool trace with the selected model, completed output, and process cleanup. Check the status and section order in the native final message and again after reopening the chat. In clients that support folding, verify that a new reply starts with the draft collapsed. Expand it and compare each body with its source.
 - Run Chinese drafts over 4 KiB in two chats simultaneously and check that each keeps its own text and session ID. Check fallback for an unavailable model, a permission request, cancellation, and a truncated stream.
 - Collect at least 200 delivered real samples across the calibration and blind splits. Use the blind split to measure preference rates, severe fact reversals, missed workflows, verbatim display match, and end-to-end latency. Current thresholds are initial defaults, and `evaluation/example.jsonl` contains synthetic records (`demo_only`). See the [evaluation specification](../evaluation/README.en.md) and [contribution guide](../CONTRIBUTING.en.md).
 
 ## Installation, Updates, and Uninstall
 
-Once the beta is published to npm, install it with `npx @kyun.si/codex-polish@beta setup`. Replace `setup` with `update` to upgrade, `doctor` to check the current project, or `uninstall` to remove the plugin. For a source installation, run `node scripts/install.mjs setup` from the root of the GitHub checkout. The same subcommands work there. [Quick Start](../README.en.md#quick-start)
+Install the published npm beta with `npx @kyun.si/codex-polish@beta setup`. Replace `setup` with `update` to upgrade, `doctor` to check the current project, or `uninstall` to remove the plugin. For a source installation, run `node scripts/install.mjs setup` from the root of the GitHub checkout. The same subcommands work there. [Quick Start](../README.md#quick-start)
+
+For a Finder install on macOS, extract the repository archive and double-click [Install Codex Polish.command](../Install%20Codex%20Polish.command). Select the project you want to configure when prompted.
 
 Both `setup` and `update` accept `--install-agy` to install the Google CLI when needed. Updates preserve `.codex` project settings and the plugin’s enabled state. Re-running `update` with the same version replaces the build or recovers an interrupted update.
 
 The installer registers one local marketplace per Codex profile. Updates stage a verified snapshot, atomically switch the marketplace manifest to the new snapshot and refresh the native plugin cache. If the refresh fails, the installer restores the previous snapshot and enabled state. Codex checks the installed plugin’s contents when deciding hook trust. An update to a bundled prompt or setup guide can therefore require a new approval even when the hook command is unchanged. The installer and `doctor` read the current status from `hooks/list`.
 
-If you packed version `0.0.1-beta.4` locally, you can also run `npx --yes file:./kyun.si-codex-polish-0.0.1-beta.4.tgz uninstall` in the directory containing the archive. Uninstall removes the plugin and its marketplace, clears session pointers for the active Codex profile, and prints the backup path for any manually edited installation files. It keeps shared `agy` binaries and project `.codex` files.
+If you packed version `0.0.1-beta.5` locally, you can also run `npx --yes file:./kyun.si-codex-polish-0.0.1-beta.5.tgz uninstall` in the directory containing the archive. Uninstall removes the plugin and its marketplace, clears session pointers for the active Codex profile, and prints the backup path for any manually edited installation files. It keeps shared `agy` binaries and project `.codex` files.

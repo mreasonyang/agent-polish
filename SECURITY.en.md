@@ -1,6 +1,6 @@
 # Security
 
-[简体中文](SECURITY.md) · [README](README.en.md) · [Technical reference](docs/technical.en.md)
+[简体中文](SECURITY.md) · [README](README.md) · [Technical reference](docs/technical.en.md)
 
 ## Report a vulnerability privately
 

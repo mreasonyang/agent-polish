@@ -95,14 +95,36 @@ function privateFile(file, entry, checkAcl = true) {
   return entry.uid === process.getuid() && !(entry.mode & 0o077);
 }
 
+function createCacheDirectory(dir) {
+  if (!windows) {
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    return;
+  }
+  if (fs.lstatSync(dir, { throwIfNoEntry: false })) return;
+  const parent = path.dirname(dir);
+  fs.mkdirSync(parent, { recursive: true });
+  const temporary = fs.mkdtempSync(path.join(parent, '.codex-polish-cache-'));
+  let published = false;
+  try {
+    // Publish the directory only after its ACL is private. A simultaneous
+    // hook can then validate and use the winner's directory immediately.
+    secureDirectory(temporary);
+    try {
+      fs.renameSync(temporary, dir);
+      published = true;
+    } catch (error) {
+      if (!fs.lstatSync(dir, { throwIfNoEntry: false })?.isDirectory()) throw error;
+    }
+  } finally {
+    if (!published) fs.rmdirSync(temporary);
+  }
+}
+
 export function withCache(mode, use) {
   const { DatabaseSync } = sqliteModule();
   const file = databasePath();
-  if (mode === 'create') {
-    const created = fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-    if (windows && created) secureDirectory(path.dirname(file));
-  }
   const directory = path.dirname(file);
+  if (mode === 'create') createCacheDirectory(directory);
   privateDirectory(directory, false);
   if (mode === 'create' && !fs.lstatSync(file, { throwIfNoEntry: false })) {
     if (windows) checkPrivatePath(directory);

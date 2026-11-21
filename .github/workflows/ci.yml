@@ -21,7 +21,8 @@ jobs:
           - { os: windows-latest, name: Windows ACP, pattern: '^acp' }
           - { os: windows-latest, name: Windows Codex host, pattern: '^acp_native' }
           - { os: windows-latest, name: Windows installer, pattern: '^install' }
-          - { os: windows-latest, name: Windows core, pattern: '^(?!acp|install)' }
+          - { os: windows-latest, name: Windows history, pattern: '^history' }
+          - { os: windows-latest, name: Windows core, pattern: '^(?!acp|install|history)' }
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20

@@ -1,15 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
-import { join } from 'node:path';
+import { join, parse } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { homedir, tmpdir } from 'node:os';
 import { PassThrough } from 'node:stream';
 import { setImmediate } from 'node:timers/promises';
 import { chooseSetupModel, chooseSetupMode, configurationSteps, showSetupGuidance, doctor } from '../scripts/install.mjs';
 import { rewriteModeSettings } from '../plugins/codex-polish/hooks/rewrite_mode.mjs';
 import { catalog } from '../plugins/codex-polish/skills/codex-polish/scripts/acp_models.mjs';
-import { makeProject } from './hook_fixture.mjs';
+import { makeProject, windows, homeEnv } from './hook_fixture.mjs';
 
 const checks = {
   ui_language: 'en',
@@ -279,14 +280,14 @@ test('setup outside a project lets the user defer or choose a project directory'
   const fresh = { ...checks, rewrite_mode_configured: false };
   const saveRewriteMode = t.mock.fn(), chooseMode = t.mock.fn(() => 'normal');
   t.mock.method(console, 'log', () => {});
-  for (const [cwd, answer] of [[homedir(), ''], ['/', null], [join(homedir(), 'Downloads'), '']]) {
+  for (const [cwd, answer] of [[homedir(), ''], [parse(homedir()).root, null], [join(homedir(), 'Downloads'), '']]) {
     const prompt = t.mock.fn(() => answer);
     await showSetupGuidance({ cwd, interactive: true, check: () => fresh, saveRewriteMode, chooseMode, prompt });
     assert.equal(prompt.mock.callCount(), 1);
     assert.equal(chooseMode.mock.callCount(), 0);
     assert.equal(saveRewriteMode.mock.callCount(), 0);
   }
-  const answers = [join(project, 'missing'), homedir(), '/', project];
+  const answers = [join(project, 'missing'), homedir(), parse(homedir()).root, project];
   await showSetupGuidance({
     cwd: homedir(), interactive: true,
     check: (where) => ({
@@ -400,7 +401,11 @@ test('bootstrap uses the official HTTPS endpoint, removes credentials, verifies 
   t.after(() => fs.rmSync(base, { recursive: true, force: true }));
   const bootstrap = join(base, 'bootstrap'),
     release = join(base, 'release');
-  const installer = [
+  const installer = windows ? [
+    'if ($env:OPENAI_API_KEY -or $env:GEMINI_API_KEY -or $env:BASH_ENV -or $env:ENV) { exit 3 }',
+    "if ($args[0] -ne '--dir' -or $args[1] -ne (Join-Path $env:LOCALAPPDATA 'agy/bin')) { exit 2 }",
+    "Copy-Item -LiteralPath (Join-Path $env:USERPROFILE 'release') -Destination (Join-Path $args[1] 'agy.exe')"
+  ].join('\n') : [
     '[[ -z "$OPENAI_API_KEY$GEMINI_API_KEY$ENV$BASH_ENV" ]] || exit 3',
     '[[ "$1" == "--dir" && "$2" == "$HOME/.local/bin" ]] || exit 2',
     '/bin/cp "$HOME/release" "$2/agy" && /bin/chmod 700 "$2/agy"'
@@ -419,7 +424,7 @@ test('bootstrap uses the official HTTPS endpoint, removes credentials, verifies 
     };
     await installAgy();`;
   const env = {
-    HOME: base,
+    ...homeEnv(base),
     PATH: base,
     LC_ALL: 'en',
     OPENAI_API_KEY: 'test',
@@ -433,25 +438,30 @@ test('bootstrap uses the official HTTPS endpoint, removes credentials, verifies 
       env: { ...env, ...extra },
       encoding: 'utf8'
     });
-  const binary = join(base, '.local/bin/agy');
+  const binary = windows ? join(env.LOCALAPPDATA, 'agy/bin/agy.exe') : join(base, '.local/bin/agy');
+  const endpoint = 'https://antigravity.google/cli/install.' + (windows ? 'ps1' : 'sh') + '\n';
   assert.notEqual(run({ FAIL_DOWNLOAD: '1' }).status, 0);
-  assert.equal(fs.readFileSync(join(base, 'requests'), 'utf8'), 'https://antigravity.google/cli/install.sh\n');
+  assert.equal(fs.readFileSync(join(base, 'requests'), 'utf8'), endpoint);
   fs.writeFileSync(bootstrap, 'exit 0\n');
   assert.notEqual(run().status, 0);
   fs.writeFileSync(bootstrap, installer);
   fs.writeFileSync(release, supported.replace('1.2.1', '1.2.0'));
   assert.notEqual(run().status, 0);
   assert.ok(!fs.existsSync(binary));
-  fs.unlinkSync(join(base, 'invocations'));
+  if (!windows) fs.unlinkSync(join(base, 'invocations'));
   fs.unlinkSync(join(base, 'requests'));
-  fs.writeFileSync(release, supported);
+  if (windows) fs.copyFileSync(process.execPath, release);
+  else fs.writeFileSync(release, supported);
   for (let i = 0; i < 2; i++) {
     const result = run();
     assert.equal(result.status, 0, result.stderr);
   }
-  assert.equal(fs.readFileSync(binary, 'utf8'), supported);
-  assert.equal(fs.readFileSync(join(base, 'invocations'), 'utf8'), '--version\n--version\n');
-  assert.equal(fs.readFileSync(join(base, 'requests'), 'utf8'), 'https://antigravity.google/cli/install.sh\n');
+  if (windows) assert.equal(spawnSync(binary, ['--version'], { encoding: 'utf8' }).stdout.trim(), process.version);
+  else {
+    assert.equal(fs.readFileSync(binary, 'utf8'), supported);
+    assert.equal(fs.readFileSync(join(base, 'invocations'), 'utf8'), '--version\n--version\n');
+  }
+  assert.equal(fs.readFileSync(join(base, 'requests'), 'utf8'), endpoint);
   for (const version of ['1.2.0', '1.2.1-rc.1', 'unreadable']) {
     const outdated = supported.replace('1.2.1', version);
     fs.writeFileSync(binary, outdated);
@@ -459,11 +469,11 @@ test('bootstrap uses the official HTTPS endpoint, removes credentials, verifies 
     assert.notEqual(existing.status, 0);
     assert.match(existing.stderr, /1\.2\.1 or later/);
     assert.equal(fs.readFileSync(binary, 'utf8'), outdated);
-    const report = spawnSync(process.execPath, [new URL('../scripts/install.mjs', import.meta.url).pathname, 'doctor'], {
+    const report = spawnSync(process.execPath, [fileURLToPath(new URL('../scripts/install.mjs', import.meta.url)), 'doctor'], {
       cwd: base, env, encoding: 'utf8'
     });
     assert.equal(report.status, 0, report.stderr);
     assert.match(report.stdout, /Antigravity CLI: requires version 1\.2\.1 or later/);
   }
-  assert.equal(fs.readFileSync(join(base, 'requests'), 'utf8'), 'https://antigravity.google/cli/install.sh\n');
+  assert.equal(fs.readFileSync(join(base, 'requests'), 'utf8'), endpoint);
 });

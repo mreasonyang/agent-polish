@@ -62,7 +62,7 @@ function openTurn(t, scenario, { catalog = false } = {}) {
     '--route', 'acp', '--rewrite-mode', 'turbo', '--display', 'zh', '--no-history'];
   const { workspace, editor_role_file, start } = JSON.parse(run(process.execPath,
     [workspaceTool, '--agy-path', agy, '--auth', 'existing-session', ...options], { env }));
-  assert.equal(start.workdir, workspace);
+  assert.equal(start.workdir, windows ? dirname(workspace) : workspace);
   assert.ok(start.tty);
   assert.match(fs.readFileSync(editor_role_file, 'utf8'), /codex-polish-editor/);
 
@@ -77,7 +77,7 @@ function openTurn(t, scenario, { catalog = false } = {}) {
       serveFixture(new Fixture(${JSON.stringify(scenario)}), frame =>
         fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify(frame) + '\\n')));`);
 
-  const host = spawn(start.shell, shellArgs(start), { cwd: workspace, env });
+  const host = spawn(start.shell, shellArgs(start), { cwd: start.workdir, env });
   const done = once(host, 'close');
   let diagnostic = '';
   host.stderr.setEncoding('utf8').on('data', data => { diagnostic += data; });
@@ -230,6 +230,17 @@ test('interrupting the host reaps the stalled native provider and its workspace'
   await submit(t, step.exec, ctx.env, { question: 'fixture-question', draft: '私有原稿' });
   await waitFor(() => ctx.requests().some(f => f.method === 'session/prompt'), 'the turn must be in progress');
   assert.ok(ctx.host.kill('SIGTERM'));
+  await ctx.done;
+  await ctx.cleaned();
+});
+
+test('a Windows cancellation descriptor stops only the active ACP session', { skip: !windows, timeout: 75_000 }, async t => {
+  const ctx = openTurn(t, 'stalled');
+  const step = await ctx.handshake();
+  await submit(t, step.exec, ctx.env, { question: 'fixture-question', draft: '私有原稿' });
+  ctx.exec(step.cancel);
+  assert.deepEqual(await ctx.event(), { event: 'error', stage: 'session/prompt', reason: 'acp_incomplete' });
+  assert.deepEqual(ctx.requests().at(-1), { jsonrpc: '2.0', method: 'session/cancel', params: { sessionId: SESSION } });
   await ctx.done;
   await ctx.cleaned();
 });

@@ -2,7 +2,7 @@
 
 [中文使用说明](docs/README.zh-CN.md) · [English README](README.md)
 
-## 0.0.1-beta.10
+## 0.0.1-beta.11
 
 - 修复了 Codex 桌面端在“未润色”和“Gemini 返回了原稿”等状态后显示 HTML 注释的问题。
 - Removed the visible HTML comment after skipped and unchanged reply headings in the Codex app.

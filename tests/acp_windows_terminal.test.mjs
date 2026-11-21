@@ -103,7 +103,7 @@ test('Windows Codex terminal sends a long Unicode frame to the native provider a
         screen += Buffer.from(message.params.deltaBase64, 'base64').toString('utf8');
         if (!sent && screen.includes('acp_console_ready')) {
           sent = true;
-          const characters = Array.from(JSON.stringify(frame) + '\n');
+          const characters = Array.from(JSON.stringify(frame));
           let id = 3;
           for (let i = 0; i < characters.length; i += 1500) {
             const slice = characters.slice(i, i + 1500).join('');
@@ -111,6 +111,8 @@ test('Windows Codex terminal sends a long Unicode frame to the native provider a
             // Let the terminal consume input between writes, as it would on separate tool calls.
             await delay(5);
           }
+          // Codex converts literal LF to CR in Windows PTYs. The Win32 event carries LF.
+          rpc(id, 'command/exec/write', { processId, deltaBase64: Buffer.from('\x1b[0;0;10;1;0;1_').toString('base64') });
         }
       } else if (message.id === 2) {
         assert.equal(message.result.exitCode, 0, screen);

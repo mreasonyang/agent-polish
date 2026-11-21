@@ -15,7 +15,7 @@ stty -icanon -echo -ixon -icrnl -onlcr isig intr '^C' min 1 time 0 && exec '/abs
 
 ## 握手、选择模型和档位
 
-每帧是一行 UTF-8 JSON 加一个 LF。用宿主的序列化器生成字符串。持续收集写入和空读返回的输出，按行解析，保留下一次才收全的尾行，直到收到本次请求的响应。流式字节使用连续的 UTF-8 解码器。留足输出预算，保证工具不会截掉原始响应。若已截断、JSON 损坏或进程异常退出，交付原稿；不要重发草稿。
+每帧是一行 UTF-8 JSON 加一个 LF。用宿主的序列化器生成字符串。Windows ConPTY 按[终端步骤](acp-windows.md)发送行末 LF。持续收集写入和空读返回的输出，按行解析，保留下一次才收全的尾行，直到收到本次请求的响应。流式字节使用连续的 UTF-8 解码器。留足输出预算，保证工具不会截掉原始响应。若已截断、JSON 损坏或进程异常退出，交付原稿；不要重发草稿。
 
 | id | 请求 | 如何使用响应 |
 | --- | --- | --- |
@@ -33,7 +33,7 @@ stty -icanon -echo -ixon -icrnl -onlcr isig intr '^C' min 1 time 0 && exec '/abs
 
 用本地 `scripts/acp_payload.mjs --host-input --cwd "<原项目>" --editor-role-file "<editor_role_file>" --trigger <trigger> --route <route> --rewrite-mode <mode> --model <model> --thinking-level <level>` 准备请求。带上本轮的 `--no-history`、`--turns-back N`、`--selection` 或 `--selection-only`。通过该离线工具自己的输入句柄传 `{sessionId, question, draft}` 或 `{sessionId, selection}`。主动请求可带 `rewrite_request`，只发选段时省略。
 
-1. 拼好离线工具返回的完整请求，使用宿主写入工具把这行原样发给 **agy 的句柄**，只在末尾追加一个 LF。长帧可按完整 Unicode 字符分块，只在最后一块追加 LF。不要重新输入、转述或重写材料。
+1. 拼好离线工具返回的完整请求，使用宿主写入工具把这行原样发给 **agy 的句柄**。长帧可按完整 Unicode 字符分块，只在最后一块加行尾符。Windows ConPTY 使用[终端步骤](acp-windows.md)中的输入序列，其他直接进程工具和终端追加一个 LF。不要重新输入、转述或重写材料。
 2. 保存从提交后开始收到的完整协议输出，包含各行的换行，持续读到 id 6 的终止响应。中途收到权限请求时用 agy 的句柄直接回应。其他会话或模型思考文本不得当作润色正文。
 3. 在本地运行 `scripts/acp_answer.mjs --host-input --cwd "<原项目>" --session-id "<sessionId>" --model <model> --thinking-level <level>`。选段时加 `--selection`，旧回答用 `--turns-back N`。传 `{draft, question?, output, display_language?, source_label?}`；这里的 `draft` 是实际提交的原稿（选段即选中的文字），`output` 是宿主已经收到的 id 6 阶段原始输出。常规展示传 `zh` 或 `en`；只要正文时省略 `display_language`。来源不明的可见原文传 `source_label:"quoted"`。该工具只在收到本会话非空正文且 id 6 返回 `end_turn` 时排版。按原文交付最终 Markdown。
 4. 两个离线工具均可用普通 stdin 或带 `--host-input` 的独立终端。后一种等 `input_ready` 后输入单行 JSON 和 LF。结果是 `{text, more}`；若 `more:true`，等下一次 `input_ready`，在**离线工具**句柄输入空行取下一页，按顺序直接拼接各页的 `text`。将字符串和工具返回值保留在宿主调用环境中，避免把草稿、协议流写入命令、项目文件或聊天进度消息。

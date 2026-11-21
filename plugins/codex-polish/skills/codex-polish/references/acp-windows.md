@@ -17,14 +17,15 @@ Add-Type -Name InputMode -Namespace AcpConsole -MemberDefinition @'
 $handle = [AcpConsole.InputMode]::GetStdHandle(-10)
 [uint32]$mode = 0
 if (-not [AcpConsole.InputMode]::GetConsoleMode($handle, [ref]$mode)) { throw 'Windows terminal input is unavailable' }
-if (-not [AcpConsole.InputMode]::SetConsoleMode($handle, (($mode - ($mode -band 6)) -bor 1))) { throw 'Could not set Windows terminal input mode' }
+# Clear line input and echo, and enable processed input and virtual-terminal input.
+if (-not [AcpConsole.InputMode]::SetConsoleMode($handle, (($mode - ($mode -band 6)) -bor 0x201))) { throw 'Could not set Windows terminal input mode' }
 $env:CODEX_POLISH_NATIVE_COMMAND = '"' + $agy + '" acp --agent codex-polish-editor --sandbox >>provider-output.jsonl'
 [Console]::WriteLine('acp_console_ready')
 & "$env:SystemRoot\System32\cmd.exe" /d /v:off /c '%CODEX_POLISH_NATIVE_COMMAND%'
 exit $LASTEXITCODE
 ```
 
-3. Wait for `acp_console_ready`. Keep its terminal session ID. Write each ACP frame yourself to that terminal with `write_stdin`. Serialize it once as UTF-8 JSON, then append a single LF (`\n`). Split large inputs across writes at Unicode character boundaries, with the LF only in the last write. Disabling line editing and echo lets the provider consume long frames without putting the draft on screen.
+3. Wait for `acp_console_ready`. Keep its terminal session ID. Write each ACP frame yourself to that terminal with `write_stdin`. Serialize it once as UTF-8 JSON. Split large inputs across writes at Unicode character boundaries. End the last write with `\u001b[0;0;10;1;0;1_`, using the actual ESC character (U+001B) followed by the remaining characters. Codex's Windows terminal converts a literal LF to an Enter key. The Win32 input sequence delivers one LF to the provider with virtual-terminal input enabled. Disabling line editing and echo lets the provider consume long frames without putting the draft on screen.
 4. For responses, run the same `--read-output` command with the last `next_offset`. Concatenate the returned `text` in order; dispatch complete LF-terminated JSON records. Carry any partial line until the next read. Pages contain at most 8 KiB of original UTF-8. If the offset stays the same the provider has not completed another character yet. Poll with a short pause and check the provider handle for startup or transport errors. Do not resubmit a frame while awaiting its acknowledgement. Only provider output goes in this private file.
 5. Follow the ACP workflow for closing or cancelling the session. Stop the foreground terminal after the last response using the host's termination operation, or Ctrl-C (`\u0003` with `write_stdin`), and confirm it exits. Run `--dispose "<workspace>" "<cleanup_token>"` from outside the workspace. The cleanup checks the staged file identities before removing the role and the transient response file.
 

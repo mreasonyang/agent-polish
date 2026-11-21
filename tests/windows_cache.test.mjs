@@ -6,17 +6,20 @@ import test from 'node:test';
 import { homeEnv, temporary, windows } from './hook_fixture.mjs';
 
 const helper = new URL('../plugins/codex-polish/skills/codex-polish/scripts/acp_windows_io.mjs', import.meta.url);
+const platform = new URL('../plugins/codex-polish/hooks/platform.mjs', import.meta.url);
 const probe = `
   import fs from 'node:fs';
   import path from 'node:path';
   import { execFileSync } from 'node:child_process';
-  import { secureDirectory, checkPrivatePaths, powershell } from ${JSON.stringify(helper.href)};
+  import { secureDirectory, checkPrivatePaths } from ${JSON.stringify(helper.href)};
+  import { windowsSystemTool } from ${JSON.stringify(platform.href)};
   let start = Date.now();
   function mark(label) {
     console.log(label + '=' + (Date.now() - start) + 'ms');
     start = Date.now();
   }
   const dir = process.argv[1];
+  const powershell = windowsSystemTool('WindowsPowerShell/v1.0/powershell.exe');
   execFileSync(powershell, ['-NoProfile', '-NonInteractive', '-Command', 'exit 0'], { stdio: 'ignore' });
   mark('PowerShell startup');
   secureDirectory(dir);

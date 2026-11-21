@@ -55,7 +55,7 @@ export async function observe(input, { auth, model, catalogOnly, log, directory,
   if (catalogOnly ? (display !== undefined || quotedSource) : (!['zh', 'en', 'body-only'].includes(display) || !Array.isArray(payloadArgs)))
     throw Error('invalid_display_scope');
   const scope = catalogOnly ? null : displayScope(payloadArgs);
-  const displayInput = scope && !transport && new Socket({ fd: openDisplayInput(token), readable: true, writable: false });
+  const displayInput = scope && !transport ? new Socket({ fd: openDisplayInput(token), readable: true, writable: false }) : null;
   // Start draining before offering submit. The producer finishes this local copy before it writes ACP.
   const material = transport ? transport.material : displayInput && readDisplay(displayInput, scope).catch(() => null);
   const command = args => [process.execPath, workspaceTool, '--write', token, ...args].map(quote).join(' ');

@@ -252,6 +252,22 @@ test('an observer crash ends the provider and a replaced marker survives disposa
 });
 
 for (const shell of ['/bin/sh', '/bin/dash'].filter(path => fs.existsSync(path))) {
+  test(`${shell} preserves a failed provider's status when USR1 stops only the observer`, t => {
+    const { agyPath, cwd } = fixture(t, 'IFS= read -r line || exit 1\nexit 37');
+    const { start, workspace } = prepare(t, { agyPath, cwd, ...base });
+    // Hold the output pipe open so the observer cannot see EOF when the provider exits.
+    const cmd = start.cmd.replace(/\nacp_wait$/, () => `
+exec 5>.acp-out
+printf 'finish\\n' >.acp-in
+while kill -0 "$acp_provider" 2>/dev/null; do /bin/sleep 0.01; done
+kill -0 "$acp_observer" || exit 1
+kill -USR1 "$$"`);
+    const run = spawnSync(shell, ['-c', cmd], { cwd: workspace, encoding: 'utf8', timeout: 5000 });
+    assert.ifError(run.error);
+    assert.equal(run.status, 37, run.stderr);
+    assert.equal(fs.existsSync(workspace), false);
+  });
+
   test(`${shell} reaps a TERM-ignoring provider on a terminal error with no host interrupt`, { timeout: 15000 }, async t => {
     const { agyPath, cwd } = fixture(t, `trap '' TERM
 printf '%s' "$$" > "$0.pid"

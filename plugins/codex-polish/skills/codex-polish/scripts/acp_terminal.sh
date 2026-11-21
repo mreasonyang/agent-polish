@@ -5,6 +5,7 @@ umask 077
 acp_provider=
 acp_observer=
 acp_reported_status=
+acp_provider_signalled=
 acp_stop_children() {
     acp_signalled=
     [ -n "$!" ] || return 0
@@ -26,7 +27,10 @@ acp_stop_children() {
         case "$acp_pid" in ''|*[!0-9]*) continue ;; esac
         # $! covers an interrupt before the launcher assigned the new child PID.
         case "$acp_pid" in "$acp_provider"|"$acp_observer"|"$!")
-            if kill -"$1" "$acp_pid" 2>/dev/null; then acp_signalled=1; fi ;;
+            if kill -"$1" "$acp_pid" 2>/dev/null; then
+                acp_signalled=1
+                if [ "$acp_pid" = "$acp_provider" ]; then acp_provider_signalled=1; fi
+            fi ;;
         esac
     done
 }
@@ -35,8 +39,7 @@ acp_finish() {
     trap '' HUP INT TERM USR1
     trap - 0
     acp_stop_children TERM
-    acp_terminated=$acp_signalled
-    if [ -n "$acp_terminated" ]; then
+    if [ -n "$acp_signalled" ]; then
         /bin/sleep 0.1
         acp_stop_children KILL
     fi
@@ -46,7 +49,7 @@ acp_finish() {
         if [ "$acp_provider_status" = 127 ] && [ -n "$acp_reported_status" ]; then
             acp_provider_status=$acp_reported_status
         fi
-        if [ "$acp_status" = 0 ] && [ -z "$acp_terminated" ]; then acp_status=$acp_provider_status; fi
+        if [ "$acp_status" = 0 ] && [ -z "$acp_provider_signalled" ]; then acp_status=$acp_provider_status; fi
     fi
     wait 2>/dev/null || :
     acp_dispose >/dev/null 2>&1

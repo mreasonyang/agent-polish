@@ -2,6 +2,8 @@
 
 [English](../README.md) | **简体中文**
 
+[Windows 安装](#windows-powershell) · [macOS 和 Linux 安装](#macos-和-linux)
+
 Codex 的回答太绕时，可以让 Gemini 换个说法。Codex 通过 Antigravity（`agy acp`）发送原稿，在聊天里显示改写后的版本。支持折叠的客户端还可以点开原稿对照。下面是一次实际改写。
 
 **Gemini 润色版**
@@ -21,11 +23,25 @@ Gemini 返回原文时，正文只显示一次。改写失败时，你会看到�
 
 支持 **Windows、macOS 和 Linux**，需要 **Node.js 22.16+**、支持插件的 [Codex CLI](https://developers.openai.com/codex/cli/)，以及 `agy` 1.2.1+。无需配置 API 密钥，直接复用本机已有的 Antigravity 登录。
 
+### Windows (PowerShell)
+
+在运行 Codex 的 Windows 电脑上打开 PowerShell，在任意目录执行下面的命令。
+
+```powershell
+npx.cmd @kyun.si/codex-polish@beta setup
+```
+
+### macOS 和 Linux
+
+在运行 Codex 的电脑上打开终端，在任意目录执行下面的命令。
+
 ```sh
 npx @kyun.si/codex-polish@beta setup
 ```
 
-在运行 Codex 的机器上，打开任意目录即可运行上面的命令。Windows PowerShell 用户运行 `npx.cmd @kyun.si/codex-polish@beta setup`。使用 T3 Code 时，选择 Codex 后端。
+### 完成设置
+
+使用 T3 Code 时，选择 Codex 后端。
 
 用 **↑ / ↓** 选择改写模式和 Gemini 模型，按**回车**确认。缺少 `agy` 时，安装器会在选模型前提示安装。npm 发行版 `0.0.1-beta.8` 将选项存入所选项目。
 

@@ -2,6 +2,8 @@
 
 **English** | [简体中文](docs/README.zh-CN.md)
 
+[Install on Windows](#windows-powershell) · [Install on macOS or Linux](#macos-and-linux)
+
 Codex Polish lets Gemini rewrite a Codex reply so it’s easier to read. Codex sends its draft through Antigravity (`agy acp`) and shows the rewrite in chat. In clients that support folding, you can expand the original underneath. Here’s an example translated from a Chinese test run.
 
 **Polished by Gemini**
@@ -21,11 +23,25 @@ If Gemini returns the original wording, you see it once. If the rewrite fails, y
 
 Requires **Windows, macOS, or Linux**, **Node.js 22.16+**, a [Codex CLI](https://developers.openai.com/codex/cli/) with plugin support, and `agy` 1.2.1+. No API key is needed—it reuses your Antigravity sign-in.
 
+### Windows (PowerShell)
+
+Open PowerShell on the machine running Codex and run this command from any folder.
+
+```powershell
+npx.cmd @kyun.si/codex-polish@beta setup
+```
+
+### macOS and Linux
+
+Open a terminal on the machine running Codex and run this command from any folder.
+
 ```sh
 npx @kyun.si/codex-polish@beta setup
 ```
 
-Run this from any folder on the machine running Codex. In Windows PowerShell, use `npx.cmd @kyun.si/codex-polish@beta setup`. For T3 Code, select the Codex backend.
+### Finish setup
+
+For T3 Code, select the Codex backend.
 
 Use **↑ / ↓** and **Enter** to choose a rewrite mode and Gemini model. Setup offers to install `agy` before model selection if needed. The npm release `0.0.1-beta.8` saves those choices in the selected project.
 

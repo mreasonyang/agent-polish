@@ -10,6 +10,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { executable } from '../plugins/codex-polish/hooks/platform.mjs';
+import { psArg } from '../plugins/codex-polish/skills/codex-polish/scripts/acp_windows_io.mjs';
 import { REPLY, SESSION } from './fixture_acp.mjs';
 
 const windows = process.platform === 'win32';
@@ -149,45 +150,26 @@ function openTurn(t, scenario, { catalog = false } = {}) {
 // Exercise the emitted submit command through a real terminal. A redirected pipe
 // cannot detect console echo, canonical input truncation, or ConPTY Unicode loss.
 async function submit(t, exec, env, material) {
+  if (!windows) return submitWithCodex(exec, env, material);
   const line = JSON.stringify(material) + '\n';
   assert.ok(exec.tty);
+  const pty = createRequire(import.meta.url)('node-pty');
+  const terminal = pty.spawn(exec.shell, shellArgs(exec), { cwd: exec.workdir, env,
+    cols: 160, rows: 40, name: 'xterm-256color', useConpty: true });
+  const closed = new Promise(resolve => terminal.onExit(e => resolve(e.exitCode)));
   let output = '';
   let sent = false;
-  let writer;
-  function onData(data) {
+  let code;
+  t.after(() => { if (code === undefined) terminal.kill(); });
+  terminal.onData(data => {
     output += data;
     if (!sent && output.includes('input_ready')) {
       sent = true;
-      writer(line);
+      terminal.write(line);
     }
-  }
-  let code;
-  if (windows) {
-    const pty = createRequire(import.meta.url)('node-pty');
-    const terminal = pty.spawn(exec.shell, shellArgs(exec), { cwd: exec.workdir, env,
-      cols: 160, rows: 40, name: 'xterm-256color', useConpty: true });
-    const closed = new Promise(resolve => terminal.onExit(e => resolve(e.exitCode)));
-    t.after(() => { if (code === undefined) terminal.kill(); });
-    writer = text => terminal.write(text);
-    terminal.onData(onData);
-    code = await byDeadline(closed, () => 'ConPTY submit timed out ' +
-      (sent ? 'after writing the complete JSON record' : 'before input_ready'));
-  } else {
-    const args = ['-c', `import os, pty, sys
-def read_terminal(fd):
-    data = os.read(fd, 4096)
-    if not data: raise OSError("terminal closed")
-    return data
-sys.exit(os.waitstatus_to_exitcode(pty.spawn(sys.argv[1:], read_terminal)))`,
-      exec.shell, ...shellArgs(exec)];
-    const terminal = spawn('python3', args, { cwd: exec.workdir, env });
-    const closed = once(terminal, 'close');
-    t.after(() => { if (code === undefined) terminal.kill(); });
-    writer = text => terminal.stdin.write(text);
-    terminal.stdout.setEncoding('utf8').on('data', onData);
-    terminal.stderr.setEncoding('utf8').on('data', onData);
-    [code] = await byDeadline(closed, () => 'PTY submit timed out ' + (sent ? 'after input' : 'before input_ready'));
-  }
+  });
+  code = await byDeadline(closed, () => 'ConPTY submit timed out ' +
+    (sent ? 'after writing the complete JSON record' : 'before input_ready'));
   assert.equal(code, 0, output);
   assert.ok(sent, 'the terminal must announce input_ready');
   assert.doesNotMatch(output, /私有原稿|fixture-question|rewrite_request|draft"/);
@@ -309,23 +291,34 @@ test('native catalog discovery returns the current model and never submits a pro
   await ctx.cleaned();
 });
 
-test('Codex app-server writes exact UTF-8 to the ACP submit terminal without echo', { timeout: 90_000 }, async t => {
-  const ctx = openTurn(t, 'unchanged');
-  const { exec } = await ctx.handshake();
+async function submitWithCodex(exec, fixtureEnv, material) {
   const codex = executable('codex');
   assert.ok(codex, 'install @openai/codex to exercise the actual Codex terminal');
-  fs.mkdirSync(ctx.env.CODEX_HOME, { recursive: true });
-  const env = Object.fromEntries(['PATH', 'HOME', 'USERPROFILE', 'SystemRoot', 'TEMP', 'TMP', 'LOCALAPPDATA', 'APPDATA',
-    'CODEX_HOME', 'XDG_CACHE_HOME'].filter(key => ctx.env[key]).map(key => [key, ctx.env[key]]));
-  const server = spawn(codex.command, [...codex.args, 'app-server', '--stdio'], { cwd: ctx.project, env });
+  const project = fixtureEnv.HOME;
+  fs.mkdirSync(fixtureEnv.CODEX_HOME, { recursive: true });
+  const systemKeys = new Set(['PATH', 'HOME', 'USERPROFILE', 'SYSTEMROOT', 'WINDIR', 'COMSPEC', 'PATHEXT', 'PSMODULEPATH',
+    'PROGRAMDATA', 'PROGRAMFILES', 'PROGRAMFILES(X86)', 'PROGRAMW6432', 'PROCESSOR_ARCHITECTURE', 'SYSTEMDRIVE',
+    'OS', 'TEMP', 'TMP', 'LOCALAPPDATA', 'APPDATA', 'CODEX_HOME', 'XDG_CACHE_HOME']);
+  const env = Object.fromEntries(Object.entries(fixtureEnv).filter(([key]) => systemKeys.has(key.toUpperCase())));
+  const server = spawn(codex.command, [...codex.args, 'app-server', '--stdio'], { cwd: project, env });
   const closed = once(server, 'close');
   let diagnostic = '';
   server.stderr.setEncoding('utf8').on('data', data => { diagnostic += data; });
   const messages = createInterface({ input: server.stdout, crlfDelay: Infinity });
   const rpc = (id, method, params) => server.stdin.write(JSON.stringify({ id, method, params }) + '\n');
   const processId = 'acp-submit';
-  const material = { draft: '  私有原稿 "🐕🏽"\r\n', question: 'fixture-question 共享组合字 e\u0301 和\t雪。\r\n'.repeat(650) };
   const output = [];
+  const probePath = join(project, 'console-probe.cjs');
+  const marker = join(project, 'console-startup.jsonl');
+  let probeOutput = '';
+  let probeStatus;
+  if (windows) fs.writeFileSync(probePath, `require('node:fs').appendFileSync(${JSON.stringify(marker)},
+    JSON.stringify({ node: true, stdin: !!process.stdin.isTTY, stdout: !!process.stdout.isTTY }) + '\\n');
+    console.log('node-ready');`);
+  const probe = () => windows ? ' Windows console probe: ' + JSON.stringify({
+    status: probeStatus, powershellOutput: probeOutput.includes('ps-ready'), nodeOutput: probeOutput.includes('node-ready'),
+    stages: fs.existsSync(marker) && fs.readFileSync(marker, 'utf8').trim(),
+  }) : '';
   let sent = false;
   let writeAcknowledged = false;
   let exitCode;
@@ -334,16 +327,25 @@ test('Codex app-server writes exact UTF-8 to the ACP submit terminal without ech
     const incoming = messages[Symbol.asyncIterator]();
     let waiting = 'initialize';
     for (;;) {
-      const item = await byDeadline(incoming.next(), () => 'Codex app-server timed out waiting for ' + waiting);
+      const item = await byDeadline(incoming.next(), () => 'Codex app-server timed out waiting for ' + waiting + probe());
       if (item.done) break;
       const message = JSON.parse(item.value);
       assert.ok(!message.error, JSON.stringify(message.error));
       if (message.id === 1) {
         server.stdin.write('{"method":"initialized"}\n');
         waiting = 'input_ready on the ACP submit terminal';
+        if (windows) {
+          const cmd = '[IO.File]::WriteAllText(' + psArg(marker) + ', "PowerShell started")\n' +
+            "Write-Output 'ps-ready'\n& " + psArg(process.execPath) + ' ' + psArg(probePath);
+          rpc(4, 'command/exec', { command: [exec.shell, ...shellArgs({ ...exec, cmd })], cwd: exec.workdir, env,
+            processId: 'stdio-probe', tty: true, timeoutMs: 10_000, sandboxPolicy: { type: 'dangerFullAccess' } });
+        }
         rpc(2, 'command/exec', { command: [exec.shell, ...shellArgs(exec)], cwd: exec.workdir, env, processId,
-          tty: true, timeoutMs: 30_000, sandboxPolicy: { type: 'dangerFullAccess' } });
-      } else if (message.method === 'command/exec/outputDelta' && message.params.processId === processId) {
+          tty: true, timeoutMs: 30_000, size: { rows: 40, cols: 160 }, sandboxPolicy: { type: 'dangerFullAccess' } });
+      } else if (message.id === 4) probeStatus = message.result.exitCode;
+      else if (message.method === 'command/exec/outputDelta' && message.params.processId === 'stdio-probe')
+        probeOutput += Buffer.from(message.params.deltaBase64, 'base64').toString();
+      else if (message.method === 'command/exec/outputDelta' && message.params.processId === processId) {
         assert.ok(!message.params.capReached);
         output.push(Buffer.from(message.params.deltaBase64, 'base64'));
         if (!sent && Buffer.concat(output).includes(Buffer.from('input_ready'))) {
@@ -355,13 +357,20 @@ test('Codex app-server writes exact UTF-8 to the ACP submit terminal without ech
       else if (message.id === 2) exitCode = message.result.exitCode;
       if (exitCode !== undefined && (!sent || writeAcknowledged)) break;
     }
-    assert.equal(exitCode, 0, diagnostic || Buffer.concat(output).toString());
+    assert.equal(exitCode, 0, (diagnostic || Buffer.concat(output).toString()) + probe());
     assert.ok(sent && writeAcknowledged, 'Codex must confirm the terminal write');
     assert.doesNotMatch(Buffer.concat(output).toString(), /fixture-question|私有原稿|draft"/);
   } finally {
     server.stdin.end();
     await closed;
   }
+}
+
+test('Codex app-server writes exact UTF-8 to the ACP submit terminal without echo', { timeout: 90_000 }, async t => {
+  const ctx = openTurn(t, 'unchanged');
+  const { exec } = await ctx.handshake();
+  const material = { draft: '  私有原稿 "🐕🏽"\r\n', question: 'fixture-question 共享组合字 e\u0301 和\t雪。\r\n'.repeat(650) };
+  await submitWithCodex(exec, ctx.env, material);
   assert.deepEqual(await ctx.event(), { event: 'delivery', markdown: '**Gemini 返回了原稿** <!-- codex-polish -->\n\n' + material.draft });
   const prompt = ctx.requests().find(frame => frame.method === 'session/prompt');
   assert.deepEqual(JSON.parse(prompt.params.prompt[0].text), material);

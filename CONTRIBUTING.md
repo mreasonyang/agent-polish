@@ -12,7 +12,7 @@
 
 ## 本地测试与打包
 
-在完整源码的根目录运行以下命令。支持 Windows、macOS 和 Linux，需要 Node.js 22.16 或更新版本。在 Windows 上先运行 `npm install --no-save --no-package-lock node-pty@1.1.0` 安装控制台测试用的依赖。打包需要 npm，原生安装测试还会用到 Codex CLI、npx 和 tar。[获取完整源码](https://github.com/mreasonyang/codex-polish)
+在完整源码的根目录运行以下命令。支持 Windows、macOS 和 Linux，需要 Node.js 22.16 或更新版本。在 Windows 上先运行 `npm install --no-save --no-package-lock node-pty@1.1.0` 安装控制台测试用的依赖。打包需要 npm，原生测试需要 Codex CLI 和 npx。macOS 和 Linux 上还会用到 tar。[获取完整源码](https://github.com/mreasonyang/codex-polish)
 
 ```sh
 npm test

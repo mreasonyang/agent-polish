@@ -36,7 +36,7 @@ node plugins/codex-polish/hooks/preferences.mjs set-prompt --cwd /path/to/projec
 node plugins/codex-polish/hooks/preferences.mjs set-prompt --reset --cwd /path/to/project
 ```
 
-可以直接编辑项目提示词文件，也可以链接到同项目 Git 跟踪的提示词。设置命令为仓库内已跟踪的文件保存相对路径；Windows 使用普通文件记录该路径，无需创建符号链接的权限。提交后在其他克隆中也能使用。若要共用项目外的提示词，或使用未跟踪的文件，在聊天里指定那个文件，或运行 `node plugins/codex-polish/hooks/preferences.mjs set-prompt --link /path/to/prompt.md --cwd /path/to/project`。文件需为非空白 UTF-8 文本。改用文字或恢复默认只会替换或移除项目里的链接。
+可以直接编辑项目提示词文件，也可以链接到同项目 Git 跟踪的提示词。设置命令为仓库内已跟踪的文件保存相对路径。Windows 使用普通文件记录该路径，无需创建符号链接的权限。提交后在其他克隆中也能使用。若要共用项目外的提示词，或使用未跟踪的文件，在聊天里指定那个文件，或运行 `node plugins/codex-polish/hooks/preferences.mjs set-prompt --link /path/to/prompt.md --cwd /path/to/project`。文件需为非空白 UTF-8 文本。改用文字或恢复默认只会替换或移除项目里的链接。
 
 ## 改写流程与判定阈值
 

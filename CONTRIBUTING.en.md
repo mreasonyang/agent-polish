@@ -13,7 +13,7 @@ For installation, see the [project README](README.md). For details on when the p
 
 ## Testing and Packaging from Source
 
-Run these commands from a source checkout on Windows, macOS or Linux with Node.js 22.16+. The plugin uses the Node standard library. Windows console tests also use `node-pty@1.1.0`; install it with `npm install --no-save --no-package-lock node-pty@1.1.0` before running them. Packaging requires npm. The native installation tests also use the Codex CLI, npx, and tar. [Get the full source](https://github.com/mreasonyang/codex-polish)
+Run these commands from a source checkout on Windows, macOS or Linux with Node.js 22.16+. The plugin uses the Node standard library. Windows console tests also use `node-pty@1.1.0`. Install it with `npm install --no-save --no-package-lock node-pty@1.1.0` before running them. Packaging requires npm. The native tests use the Codex CLI and npx. On macOS and Linux they also use tar. [Get the full source](https://github.com/mreasonyang/codex-polish)
 
 ```sh
 npm test

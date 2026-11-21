@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
+import { observe } from '../plugins/codex-polish/skills/codex-polish/scripts/acp_observe.mjs';
 import { prepareWorkspace } from '../plugins/codex-polish/skills/codex-polish/scripts/acp_workspace.mjs';
 import { originalReplyText } from '../plugins/codex-polish/skills/codex-polish/scripts/format_reply.mjs';
 import { Fixture, SESSION } from './fixture_acp.mjs';
@@ -23,7 +24,7 @@ const update = (id, type, fields) => line({method:'session/update', params:{sess
 const content = text => ({content:{type:'text', text}});
 const end = line({id:6,result:{stopReason:'end_turn'}});
 
-function context(t, catalogOnly = false, display = 'zh', scopeArgs = [], quoted = false) {
+function fifoContext(t, catalogOnly = false, display = 'zh', scopeArgs = [], quoted = false) {
   const project = fs.mkdtempSync(path.join(os.tmpdir(),'polish-observer-test-'));
   const agyPath = path.join(project,'agy');
   fs.writeFileSync(agyPath,'',{mode:0o700});
@@ -55,20 +56,39 @@ function context(t, catalogOnly = false, display = 'zh', scopeArgs = [], quoted 
   }};
 }
 
-test('observer handles batched model updates, refuses permission and delivers one exact answer', t=>{
+function context(t, catalogOnly = false, display = 'zh', scopeArgs = [], quoted = false) {
+  if (process.platform !== 'win32') return fifoContext(t, catalogOnly, display, scopeArgs, quoted);
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'polish-observer-test-'));
+  const log = catalogOnly ? path.join(directory, 'catalog.jsonl') : undefined;
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  let submitted = null;
+  return { log, mark() { submitted = session; }, async observe(frames, displayLine = '{"draft":"  原稿\\r\\n"}\n') {
+    const events = [];
+    const transport = {
+      submitted: () => submitted, material: Promise.resolve(JSON.parse(displayLine)),
+      write: frame => ({ cmd: JSON.stringify(frame) }), submit: args => ({ cmd: JSON.stringify(args) }),
+    };
+    await observe([Buffer.from(frames)], { auth: catalogOnly ? 'agent-platform' : 'existing-session',
+      directory, quotedSource: quoted, model, log, catalogOnly, transport,
+      display: catalogOnly ? undefined : display, payloadArgs: ['--cwd', directory, ...scopeArgs] }, e => events.push(e));
+    return events;
+  } };
+}
+
+test('observer handles batched model updates, refuses permission and delivers one exact answer', async t=>{
   const ctx = context(t); ctx.mark();
   const permission = line({id:6,method:'session/request_permission',params:{sessionId:session}});
   const other = update(SESSION,'agent_message_chunk',content('foreign'));
   const own = update(session,'agent_message_chunk',content(' \n雪🚲 \r\n'));
   const configuration = update(session,'config_option_update',{configOptions:selected});
-  const messages = ctx.observe(init+opened+selectedResponse+other+permission+configuration+own+end+permission);
+  const messages = await ctx.observe(init+opened+selectedResponse+other+permission+configuration+own+end+permission);
   assert.deepEqual(messages.map(m=>m.event),['send','send','send','submit','send','delivery']);
   assert.match(messages[4].exec.cmd,/cancelled/);
   assert.deepEqual(messages[5], { event: 'delivery', markdown: '**Gemini 润色版**\n\n \n雪🚲 \r\n\n\n<details><summary>查看 GPT 原稿</summary>\n\n  原稿\r\n\n\n</details>' });
   assert.equal(originalReplyText(messages[5].markdown), '  原稿\r\n');
 });
 
-test('delivery respects body-only mode, quoted scope, and identical replies', t => {
+test('delivery respects body-only mode, quoted scope, and identical replies', async t => {
   for (const [mode, args, quoted, draft, candidate, expected] of [
     ['body-only', [], false, 'source', '  copy\r\n\n', '  copy\r\n\n'],
     ['en', ['--selection-only'], false, ' \tsource\r\n', 'copy', '**Polished by Gemini**\n\ncopy\n\n<details><summary>View original text</summary>\n\n \tsource\r\n\n\n</details>'],
@@ -79,14 +99,14 @@ test('delivery respects body-only mode, quoted scope, and identical replies', t 
     const ctx = context(t, false, mode, args, quoted);
     ctx.mark();
     const wire = init + opened + selectedResponse + update(session, 'agent_message_chunk', content(candidate)) + end;
-    const result = ctx.observe(wire, JSON.stringify({draft}) + '\n').at(-1);
+    const result = (await ctx.observe(wire, JSON.stringify({draft}) + '\n')).at(-1);
     assert.deepEqual(result, { event:'delivery', markdown:expected });
     if (mode !== 'body-only') assert.equal(originalReplyText(result.markdown), draft);
   }
 });
 
-test('malformed local display material or a missing historical question never exposes the candidate', t => {
-  const ctx = context(t, false, 'en', ['--turns-back','3']);
+test('malformed local FIFO display material or a missing historical question never exposes the candidate', { skip: process.platform === 'win32' }, t => {
+  const ctx = fifoContext(t, false, 'en', ['--turns-back','3']);
   ctx.mark();
   const wire = init + opened + selectedResponse + update(session, 'agent_message_chunk', content('private candidate')) + end;
   for (const invalid of ['{"draft":"source"}\n','{"draft":"source","question":"q","history":[]}\n','{}\n']) {
@@ -102,19 +122,19 @@ test('malformed local display material or a missing historical question never ex
   assert.equal(originalReplyText(valid.at(-1).markdown), complete.draft);
 });
 
-test('a premature EOF or changed model never releases a partial answer', t=>{
+test('a premature EOF or changed model never releases a partial answer', async t=>{
   const ctx = context(t); ctx.mark();
   const before = init+opened+selectedResponse+update(session,'agent_message_chunk',content('partial'));
   for (const [tail,reason] of [[end.trimEnd(),'acp_incomplete'],[update(session,'config_option_update',{configOptions:config})+end,'acp_model_unavailable']]) {
-    const msgs=ctx.observe(before+tail);
+    const msgs=await ctx.observe(before+tail);
     assert.equal(msgs.at(-1).reason,reason);
     assert.ok(!msgs.some(x=>Object.hasOwn(x,'text')));
   }
 });
 
-test('catalog authenticates, records only the successful raw model response and never requests a prompt', t=>{
+test('catalog authenticates, records only the successful raw model response and never requests a prompt', async t=>{
   const ctx = context(t,true);
-  const msgs=ctx.observe(init+line({id:2,result:{}})+opened);
+  const msgs=await ctx.observe(init+line({id:2,result:{}})+opened);
   assert.equal(msgs[1].event,'send');
   assert.match(msgs[1].exec.cmd,/authenticate/);
   assert.deepEqual(msgs.map(m=>m.event),['send','send','send','catalog']);

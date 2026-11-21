@@ -5,7 +5,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "exec node \"${PLUGIN_ROOT}/hooks/preferences.mjs\" hook"
+            "command": "exec node \"${PLUGIN_ROOT}/hooks/preferences.mjs\" hook",
+            "commandWindows": "node -e \"import(require('node:url').pathToFileURL(require('node:path').join(process.env.PLUGIN_ROOT,'hooks/preferences.mjs'))).then(m=>process.exitCode=m.runHook()||0)\""
           }
         ]
       }

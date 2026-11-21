@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { temporary, plugin, run, json, mkfifo } from './hook_fixture.mjs';
+import { temporary, plugin, run, json, mkfifo, windows, supportsFileSymlink } from './hook_fixture.mjs';
 import { readHistory, readPreviousReply } from '../plugins/codex-polish/hooks/history.mjs';
 import { formatReply, originalReplyText } from '../plugins/codex-polish/skills/codex-polish/scripts/format_reply.mjs';
 
@@ -180,10 +180,13 @@ test('reads recent turns in large files, rejects malformed or special files', t 
   const args = ['--session-id', 's', '--transcript', file, '--turn-id', 'now'];
   assert.deepEqual(json(run(script, args)), read());
   assert.deepEqual(json(run(script, [...args, '--turns', '0'])), []);
-  fs.symlinkSync(file, file + '.link');
-  assert.deepEqual(readHistory(file + '.link', 's', 'now'), []);
+  if (supportsFileSymlink()) {
+    fs.symlinkSync(file, file + '.link');
+    assert.deepEqual(readHistory(file + '.link', 's', 'now'), []);
+  }
   fs.unlinkSync(file);
-  mkfifo(file);
+  if (windows) fs.mkdirSync(file);
+  else mkfifo(file);
   assert.deepEqual(read(), []);
 });
 

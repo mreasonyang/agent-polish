@@ -3,6 +3,7 @@ import * as fs from 'node:fs';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
+import { sameEntry } from '../plugins/codex-polish/hooks/platform.mjs';
 import { tr } from '../plugins/codex-polish/hooks/ui_locale.mjs';
 
 const { O_RDONLY, O_NOFOLLOW, O_NONBLOCK } = fs.constants;
@@ -10,21 +11,21 @@ export function treeContents(root) {
   const contents = new Map();
   function visit(relative) {
     const file = join(root, relative);
-    const info = fs.lstatSync(file);
+    const info = fs.lstatSync(file, { bigint: true });
     if (info.isDirectory()) {
-      contents.set(relative, info.mode & 0o7777);
+      contents.set(relative, Number(info.mode & 0o7777n));
       return fs.readdirSync(file).every((name) => visit(join(relative, name)));
     }
     if (!info.isFile()) return false;
     const fd = fs.openSync(file, O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
     try {
-      const actual = fs.fstatSync(fd);
-      if (!actual.isFile() || actual.dev !== info.dev || actual.ino !== info.ino) return false;
+      const actual = fs.fstatSync(fd, { bigint: true });
+      if (!actual.isFile() || !sameEntry(actual, info)) return false;
       const hash = createHash('sha256');
       const buffer = Buffer.allocUnsafe(65536);
       let count;
       while ((count = fs.readSync(fd, buffer)) > 0) hash.update(buffer.subarray(0, count));
-      contents.set(relative, [actual.mode & 0o7777, hash.digest('hex')]);
+      contents.set(relative, [Number(actual.mode & 0o7777n), hash.digest('hex')]);
       return true;
     } finally {
       fs.closeSync(fd);

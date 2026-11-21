@@ -21,6 +21,8 @@ import {
   bundleVersion,
   withLock
 } from '../scripts/install.mjs';
+import { windows, homeEnv, supportsFileSymlink } from './hook_fixture.mjs';
+import { executable } from '../plugins/codex-polish/hooks/platform.mjs';
 import { preserve } from '../scripts/native_cache.mjs';
 
 function temp(t) {
@@ -215,11 +217,13 @@ test('an altered or linked active marketplace manifest cannot redirect update or
   const external = join(base, 'external-index');
   write(external, original);
   fs.unlinkSync(active);
-  fs.symlinkSync(external, active);
+  if (supportsFileSymlink()) {
+    fs.symlinkSync(external, active);
   await assert.rejects(call('uninstall'), SetupError);
   assert.ok(fs.lstatSync(active).isSymbolicLink());
   assert.deepEqual(fs.readFileSync(external), original);
-  fs.unlinkSync(active);
+    fs.unlinkSync(active);
+  }
   write(active, original);
   await call('uninstall');
   assert.ok(!fs.existsSync(join(store, '.agents')));
@@ -227,13 +231,15 @@ test('an altered or linked active marketplace manifest cannot redirect update or
 test('uninstall retains edited files, empty directories, FIFOs and links, and rejects foreign manifests', async (t) => {
   const { base, state, call } = fixture(t);
   for (const kind of ['empty directory', 'note', 'FIFO', 'dangling link', 'directory link', 'edited plugin']) {
+    if (windows && kind === 'FIFO' || !supportsFileSymlink() && kind === 'dangling link') continue;
     await call('setup');
     const current = state.source;
     let extra = join(current, '.mine');
     if (kind === 'empty directory') fs.mkdirSync(extra);
     if (kind === 'note') write(extra, 'my data');
     if (kind === 'FIFO') assert.equal(spawnSync('mkfifo', [extra]).status, 0);
-    if (kind.endsWith('link')) fs.symlinkSync(kind === 'dangling link' ? join(base, 'absent') : base, extra);
+    if (kind === 'dangling link') fs.symlinkSync(join(base, 'absent'), extra);
+    if (kind === 'directory link') fs.symlinkSync(base, extra, 'junction');
     if (kind === 'edited plugin') {
       extra = join(current, PRODUCT, 'signature');
       write(extra, 'edited');
@@ -256,6 +262,7 @@ test('uninstall retains edited files, empty directories, FIFOs and links, and re
   const external = join(base, 'external');
   write(external, JSON.stringify(original));
   fs.unlinkSync(index);
+  if (!supportsFileSymlink()) return;
   fs.symlinkSync(external, index);
   await assert.rejects(call('uninstall'), SetupError);
   assert.equal(fs.readFileSync(external, 'utf8'), JSON.stringify(original));
@@ -288,6 +295,7 @@ test('broken deregistration retries and modified managed source offers recovery'
 test('cache preserves mode, bytes, links, nonregular files, empty directories and unknown sources', (t) => {
   const base = temp(t);
   for (const change of ['empty', 'link', 'fifo', 'bytes', 'mode', 'no source', 'cache link']) {
+    if (windows && change === 'fifo') continue;
     const profile = join(base, change),
       source = join(profile, 'original'),
       cache = join(profile, 'plugins/cache/local/rewrite'),
@@ -298,13 +306,13 @@ test('cache preserves mode, bytes, links, nonregular files, empty directories an
     const keep = () => preserve(profile, 'local', 'rewrite', '1.0.0', () => (change === 'no source' ? [] : [source]));
     if (change !== 'no source') assert.equal(keep(), null);
     if (change === 'empty') fs.mkdirSync(join(target, 'empty'));
-    if (change === 'link') fs.symlinkSync(source, join(target, 'link'));
+    if (change === 'link') fs.symlinkSync(source, join(target, 'link'), 'junction');
     if (change === 'fifo') assert.equal(spawnSync('mkfifo', [join(target, 'fifo')]).status, 0);
     if (change === 'bytes') write(join(target, 'known'), 'edited');
-    if (change === 'mode') fs.chmodSync(join(target, 'known'), 0o777);
+    if (change === 'mode') fs.chmodSync(join(target, 'known'), windows ? 0o444 : 0o777);
     if (change === 'cache link') {
       fs.rmSync(cache, { recursive: true });
-      fs.symlinkSync(source, cache);
+      fs.symlinkSync(source, cache, 'junction');
     }
     const backup = keep();
     assert.ok(fs.lstatSync(backup));
@@ -323,10 +331,10 @@ test('cache refuses linked ancestors and linked backup folder', (t) => {
     const parent = join(profile, 'plugins/cache'),
       market = join(parent, 'local');
     fs.mkdirSync(parent, { recursive: true });
-    if (problem === 'market') fs.symlinkSync(outside, market);
+    if (problem === 'market') fs.symlinkSync(outside, market, 'junction');
     else {
       write(join(market, 'rewrite', 'notes'), 'mine');
-      fs.symlinkSync(outside, join(profile, 'codex-polish-backups'));
+      fs.symlinkSync(outside, join(profile, 'codex-polish-backups'), 'junction');
     }
     assert.throws(() => preserve(profile, 'local', 'rewrite', null, () => []), /directory|目录/);
     assert.deepEqual(fs.readdirSync(outside), []);
@@ -361,7 +369,7 @@ test('missing Codex returns localized actionable errors; invalid CLI flags exit 
       encoding: 'utf8',
       env: {
         PATH: base,
-        HOME: base,
+        ...homeEnv(base),
         CODEX_HOME: join(base, 'profile'),
         LC_ALL: lang
       }
@@ -374,4 +382,19 @@ test('missing Codex returns localized actionable errors; invalid CLI flags exit 
     const flag = '--install-agy';
     assert.equal(spawnSync(process.execPath, [script, action, flag]).status, 2);
   }
+});
+
+test('Windows resolves the official npm Codex entry without passing arguments through cmd', { skip: !windows }, t => {
+  const prefix = join(temp(t), 'npm & tools');
+  const env = { ...homeEnv(prefix), PATH: '"' + prefix + '"' };
+  write(join(prefix, 'codex.cmd'), '@exit /b 91');
+  assert.equal(executable('codex', env), null);
+  const js = join(prefix, 'node_modules/@openai/codex/bin/codex.js');
+  write(js, 'console.log(JSON.stringify(process.argv.slice(2)))');
+  const shim = executable('codex', env);
+  assert.deepEqual(shim, { command: process.execPath, args: [js] });
+  const args = ['A & B', '%TEMP%', '中文 (example)'];
+  assert.deepEqual(JSON.parse(spawnSync(shim.command, [...shim.args, ...args], { encoding: 'utf8' }).stdout), args);
+  write(join(prefix, 'codex.exe'), '');
+  assert.deepEqual(executable('codex', env), { command: join(prefix, 'codex.exe'), args: [] });
 });

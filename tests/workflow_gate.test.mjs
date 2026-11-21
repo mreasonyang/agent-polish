@@ -2,14 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
-import { json, makeProject, plugin, run } from './hook_fixture.mjs';
+import { json, makeProject, plugin, run, windows, runHookCommand, agyName } from './hook_fixture.mjs';
 
 function fixture(t) {
   const f = makeProject(t), installed = path.join(f.home, 'installed'), bin = path.join(f.home, 'bin');
   fs.cpSync(plugin, installed, { recursive: true });
   fs.mkdirSync(bin);
-  const agy = path.join(bin, 'agy'); fs.writeFileSync(agy, '#!/bin/sh\n: > "$FAULT_TEST_CALLS.agy"\n', { mode: 0o700 });
+  const agy = path.join(bin, agyName); fs.writeFileSync(agy, '#!/bin/sh\n: > "$FAULT_TEST_CALLS.agy"\n', { mode: 0o700 });
   const script = path.join(installed, 'hooks/preferences.mjs'), helper = path.join(installed, 'skills/codex-polish/scripts/decisions.mjs');
   fs.writeFileSync(helper, `import fs from 'node:fs';
 import assert from 'node:assert/strict';
@@ -36,6 +35,19 @@ export async function decide(args, stream) {
   const logged = () => fs.readFileSync(calls, 'utf8').trim().split('\n');
   return { ...f, installed, bin, agy, env, calls, script, invoke, judge, check, helper, logged };
 }
+
+test('the interactive style check consumes one host record and keeps its contents private in stdout', t => {
+  const f = fixture(t);
+  const args = ['decision', 'judge', '--trigger', 'auto', '--route', 'decisions', '--host-input', '--cwd', f.cwd];
+  const { stdout, stderr, status } = run(path.join(f.installed, 'hooks/preferences.mjs'), args, {
+    env: f.env, input: JSON.stringify({ question: 'q', draft: 'private example' }) + '\n',
+  });
+  assert.equal(status, 0, stderr);
+  const [ready, result] = stdout.trimEnd().split('\n');
+  assert.equal(ready, 'input_ready');
+  assert.deepEqual(JSON.parse(result), { action: 'rewrite', reason: 'needs_rewrite', probability: 0.96, route: 'decisions' });
+  assert.deepEqual(f.logged(), ['judge']);
+});
 
 test('the workflow maps ordinary requests for a polish and earlier-answer rewrites to the correct trigger and draft', () => {
   const workflow = fs.readFileSync(path.join(plugin, 'skills/codex-polish/WORKFLOW.md'), 'utf8');
@@ -304,16 +316,17 @@ test('unrecognized helper output cannot be delivered or recorded', t => {
 
 test('an OpenAI outage leaves subsequent auto hooks available; missing Node reports a hook error', t => {
   const { installed, env, cwd, bin, judge, invoke } = fixture(t);
-  const command = JSON.parse(fs.readFileSync(path.join(installed, 'hooks/hooks.json'))).hooks.UserPromptSubmit[0].hooks[0].command;
+  const command = JSON.parse(fs.readFileSync(path.join(installed, 'hooks/hooks.json'))).hooks.UserPromptSubmit[0].hooks[0];
   const settings = { ...env, LANG: 'en_US.UTF-8', LC_ALL: 'en_US.UTF-8', PLUGIN_ROOT: installed };
-  const runHook = () => spawnSync('/bin/sh', ['-c', command], { env: settings, encoding: 'utf8', input: JSON.stringify({ hook_event_name: 'UserPromptSubmit', cwd }) });
+  const runHook = () => runHookCommand(command, { env: settings, encoding: 'utf8', input: JSON.stringify({ hook_event_name: 'UserPromptSubmit', cwd }) });
   const hook = () => {
     const p = runHook();
     assert.equal(p.status, 0); assert.equal(p.stderr, ''); return p.stdout;
   };
   const missing = runHook();
   assert.notEqual(missing.status, 0); assert.match(missing.stderr, /node/);
-  fs.symlinkSync(process.execPath, path.join(bin, 'node'));
+  if (windows) fs.copyFileSync(process.execPath, path.join(bin, 'node.exe'));
+  else fs.symlinkSync(process.execPath, path.join(bin, 'node'));
   const workflow = JSON.stringify(path.join(installed, 'skills/codex-polish/WORKFLOW.md'));
   const ready = () => assert.ok(JSON.parse(hook()).hookSpecificOutput.additionalContext.includes(workflow));
   ready();

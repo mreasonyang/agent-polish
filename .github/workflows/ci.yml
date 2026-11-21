@@ -1,21 +1,89 @@
 name: Test
-on: [push, pull_request]
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: true
 permissions:
   contents: read
 jobs:
   test:
     strategy:
+      fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        include:
+          - { os: ubuntu-latest, name: Linux }
+          - { os: macos-latest, name: macOS }
+          - { os: windows-latest, name: Windows ACP, pattern: '^acp' }
+          - { os: windows-latest, name: Windows installer, pattern: '^install' }
+          - { os: windows-latest, name: Windows history, pattern: '^history' }
+          - { os: windows-latest, name: Windows core, pattern: '^(?!acp|install|history)' }
+    name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.ref || github.sha }}
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '22.16.0'
       - run: npm install --global @openai/codex@0.170.0
       - run: codex --version
-      - run: npm test
+      - if: runner.os != 'Windows'
+        run: npm test
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          TEST_PATTERN: ${{ matrix.pattern }}
+        run: |
+          $files = @(Get-ChildItem tests -Filter '*.test.mjs' | Where-Object { $_.Name -match $env:TEST_PATTERN })
+          if (!$files.Count) { throw 'No tests matched' }
+          node --test $files.FullName
       - run: npm pack --ignore-scripts --dry-run
+  windows-package:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - run: npm install --global @openai/codex@0.170.0
+      - name: Install the packed plugin and Google's Windows CLI
+        shell: pwsh
+        run: |
+          $env:CODEX_HOME = Join-Path $env:RUNNER_TEMP 'Polish smoke profile'
+          $project = Join-Path $env:RUNNER_TEMP 'Polish smoke project'
+          New-Item -ItemType Directory -Path $project, $env:CODEX_HOME | Out-Null
+          $package = (npm.cmd pack --ignore-scripts --silent --pack-destination $project | Select-Object -Last 1)
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Set-Location $project
+          $archive = "file:./$package"
+          npx.cmd --yes $archive setup --install-agy
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $agy = Join-Path $env:LOCALAPPDATA 'agy/bin/agy.exe'
+          & $agy --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $agy acp --help
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npx.cmd --yes $archive update
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npx.cmd --yes $archive doctor
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npx.cmd --yes $archive uninstall
+      - name: Show isolated plugin registration on failure
+        if: failure()
+        shell: pwsh
+        run: |
+          $env:CODEX_HOME = Join-Path $env:RUNNER_TEMP 'Polish smoke profile'
+          codex plugin marketplace list --json
+          codex plugin list --marketplace codex-polish-local --json

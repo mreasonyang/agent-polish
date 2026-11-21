@@ -28,7 +28,7 @@ test('custom prompts keep literal UTF-8 bytes across CLI sessions and apply acro
   const parentText = '  \r\n用中文说明。\r\n\r\nKeep `$` and ${names} intact.\t\r\n  ';
   const saved = json(call(['set-prompt'], { where: project, input: parentText }));
   assert.deepEqual(saved, { prompt_source: 'custom', file: settingsFile(project) });
-  assert.equal(fs.statSync(saved.file).mode & 0o777, 0o600);
+  if (process.platform !== 'win32') assert.equal(fs.statSync(saved.file).mode & 0o777, 0o600);
   assert.equal(fs.readFileSync(saved.file, 'utf8'), parentText);
   assert.deepEqual(json(call(['prompt'])), { source: 'custom', text: parentText });
   assert.equal(check().prompt_source, 'custom');
@@ -45,6 +45,15 @@ test('custom prompts keep literal UTF-8 bytes across CLI sessions and apply acro
   json(call(['set-prompt', '--reset']));
   assert.ok(!fs.existsSync(saved.file));
   assert.equal(readEditorPrompt(project).source, 'default');
+});
+
+test('terminal input preserves the entire multiline custom prompt', t => {
+  const { call } = makeProject(t);
+  const prompt = "  首行\r\n`$HOME` 和 ' 引号\r\n  ";
+  const result = call(['set-prompt', '--host-input'], { input: JSON.stringify(prompt) + '\n' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(result.stdout.startsWith('input_ready\n'));
+  assert.equal(json(call(['prompt'])).text, prompt);
 });
 
 test('a saved custom prompt can be inspected when the automatic rewrite mode is invalid', t => {
@@ -101,14 +110,15 @@ test('unsafe or corrupt settings block use without exposing their contents', t =
   fs.linkSync(neighbor, file);
   invalid();
   fs.unlinkSync(file);
-  mkfifo(file);
+  if (process.platform === 'win32') fs.mkdirSync(file);
+  else mkfifo(file);
   invalid();
   assert.notEqual(call(['set-prompt'], { input: '替换' }).status, 0);
   assert.notEqual(call(['set-prompt', '--reset']).status, 0);
-  fs.unlinkSync(file);
+  fs.rmSync(file, { recursive: true });
   fs.rmdirSync(path.dirname(file));
   fs.writeFileSync(path.join(cwd, PROMPT_FILE), secret);
-  fs.symlinkSync(cwd, path.dirname(file));
+  fs.symlinkSync(cwd, path.dirname(file), 'junction');
   invalid();
   assert.notEqual(call(['set-prompt'], { input: '替换' }).status, 0);
   assert.notEqual(call(['set-prompt', '--reset']).status, 0);
@@ -134,7 +144,7 @@ test('tracked project links work directly; other prompt targets must be chosen e
     assert.match(call(['prompt']).stderr, /--link/);
   }
   json(call(['set-prompt', '--link', path.relative(cwd, external)]));
-  assert.equal(fs.realpathSync(link), external);
+  assert.equal(json(call(['prompt'])).text, 'shared');
   fs.writeFileSync(external, 'updated');
   assert.equal(json(call(['prompt'])).text, 'updated');
   fs.unlinkSync(link); fs.symlinkSync(untracked, link);
@@ -152,7 +162,8 @@ test('tracked project links work directly; other prompt targets must be chosen e
   assert.ok(check().blockers.includes('editor_prompt_invalid'));
   fs.unlinkSync(link);
   const fifo = path.join(project,'pipe');
-  mkfifo(fifo);
+  if (process.platform === 'win32') fs.mkdirSync(fifo);
+  else mkfifo(fifo);
   const invalid = call(['set-prompt', '--link', fifo]);
   assert.notEqual(invalid.status, 0);
   assert.match(invalid.stderr, /regular file containing nonempty UTF-8/);
@@ -170,12 +181,11 @@ test('set-prompt links to a tracked file survive a move and a clone without a pr
   fs.writeFileSync(path.join(project, filename), 'Use short sentences.');
   git('add', '--', filename);
   const saved = json(call(['set-prompt', '--link', 'Editing notes.md'], options));
-  assert.equal(fs.readlinkSync(saved.file), '../' + filename);
   assert.equal(json(call(['prompt'], options)).text, 'Use short sentences.');
   const untracked = path.join(project, 'untracked.md');
   fs.writeFileSync(untracked, 'Local prompt');
   assert.notEqual(call(['set-prompt', '--link', untracked], options).status, 0);
-  assert.equal(fs.readlinkSync(saved.file), '../' + filename);
+  assert.equal(json(call(['prompt'], options)).text, 'Use short sentences.');
   git('add', '--', path.relative(project, saved.file));
   git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', '-c', 'commit.gpgSign=false', 'commit', '-qm', 'Save prompt');
   const moved = path.join(home, 'moved');

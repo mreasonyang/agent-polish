@@ -1,6 +1,8 @@
 // Pages contain the final rendered Markdown. This socket never connects to ACP.
 import fs from 'node:fs';
 import net from 'node:net';
+import { dirname } from 'node:path';
+import { checkPrivatePath, exchange, listenPrivate, windowsCommand } from './acp_windows_io.mjs';
 import { fileURLToPath } from 'node:url';
 import { isMain, readLimited } from './cli_io.mjs';
 
@@ -10,6 +12,7 @@ const self = fileURLToPath(import.meta.url);
 const quote = value => "'" + value.replaceAll("'", "'\\''") + "'";
 
 function command(socket, offset, directory) {
+  if (process.platform === 'win32') return { ...windowsCommand([process.execPath, self, socket, String(offset)], directory), max_output_tokens: 8192 };
   return { cmd: [process.execPath, self, socket, String(offset)].map(quote).join(' '),
     workdir: directory, shell: '/bin/sh', login: false, max_output_tokens: 8192 };
 }
@@ -32,6 +35,23 @@ export async function answerEvent(text, directory = process.cwd(), { onDrained }
   if (text.length <= pageBytes && Buffer.byteLength(JSON.stringify(text)) <= pageBytes + 2)
     return { event: 'delivery', markdown: text };
 
+  function drained() {
+    const notify = onDrained;
+    onDrained = undefined;
+    notify?.();
+  }
+  if (process.platform === 'win32') {
+    checkPrivatePath(directory);
+    const pages = await listenPrivate((offset, afterFlush) => {
+      const page = pageAt(text, offset);
+      expiry.refresh();
+      if (page.next === null) afterFlush(() => { pages.server.unref(); drained(); });
+      return page;
+    });
+    const expiry = setTimeout(() => { pages.close(); drained(); }, idleMs).unref();
+    return { event: 'answer_pages', exec: command(pages.endpoint, 0, dirname(directory)), utf8_bytes: Buffer.byteLength(text) };
+  }
+
   const info = fs.statSync('.');
   if (fs.realpathSync(directory) !== fs.realpathSync('.') || info.uid !== process.getuid() || (info.mode & 0o077))
     throw Error('invalid_answer_directory');
@@ -39,11 +59,6 @@ export async function answerEvent(text, directory = process.cwd(), { onDrained }
   // temporary path component lets us check the exported socket's inode ourselves.
   const guard = fs.mkdtempSync('.acp-answer-');
   const socketPath = guard + '.sock';
-  function drained() {
-    const notify = onDrained;
-    onDrained = undefined;
-    notify?.();
-  }
   const server = net.createServer({ allowHalfOpen: true }, client => {
     client.on('error', () => {});
     client.setTimeout(10_000, () => client.destroy());
@@ -115,12 +130,16 @@ export async function answerEvent(text, directory = process.cwd(), { onDrained }
 if (isMain(import.meta.url)) {
   try {
     const [socketPath, rawOffset] = process.argv.slice(2);
-    if (!/^\.acp-answer-[A-Za-z0-9]{6}\.sock$/.test(socketPath) || !/^(0|[1-9]\d*)$/.test(rawOffset))
-      throw Error('invalid_page');
-    const client = net.createConnection(socketPath);
-    client.setTimeout(10_000, () => client.destroy(new Error('page_timeout')));
-    client.end(rawOffset);
-    const page = JSON.parse((await readLimited(client, pageBytes + 128)).toString('utf8'));
+    if (!/^(0|[1-9]\d*)$/.test(rawOffset)) throw Error('invalid_page');
+    let page;
+    if (process.platform === 'win32') page = await exchange(socketPath, Number(rawOffset), pageBytes + 128);
+    else {
+      if (!/^\.acp-answer-[A-Za-z0-9]{6}\.sock$/.test(socketPath)) throw Error('invalid_page');
+      const client = net.createConnection(socketPath);
+      client.setTimeout(10_000, () => client.destroy(new Error('page_timeout')));
+      client.end(rawOffset);
+      page = JSON.parse((await readLimited(client, pageBytes + 128)).toString('utf8'));
+    }
     if (typeof page.text !== 'string' || !page.text || (page.next !== null &&
         (!Number.isSafeInteger(page.next) || page.next !== Number(rawOffset) + page.text.length))) throw Error('invalid_page');
     console.log(JSON.stringify({ event: 'answer_page', text: page.text,

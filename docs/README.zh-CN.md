@@ -19,13 +19,13 @@ Gemini 返回原文时，正文只显示一次。改写失败时，你会看到�
 
 ## 快速开始
 
-支持 **macOS 和 Linux**，需要 **Node.js 22.16+**、支持插件的 [Codex CLI](https://developers.openai.com/codex/cli/)，以及 `agy` 1.2.1+。无需配置 API 密钥，直接复用本机已有的 Antigravity 登录。
+支持 **Windows、macOS 和 Linux**，需要 **Node.js 22.16+**、支持插件的 [Codex CLI](https://developers.openai.com/codex/cli/)，以及 `agy` 1.2.1+。无需配置 API 密钥，直接复用本机已有的 Antigravity 登录。
 
 ```sh
 npx @kyun.si/codex-polish@beta setup
 ```
 
-在项目目录运行上面的命令。交互安装时，如果缺少 `agy`，安装器会提示安装，也会让你选择自动润色时使用的改写模式，默认是**普通（Normal）**。使用内置提示词时，普通模式允许保留已经写清楚的原稿，**Turbo** 会要求 Gemini 改写每份草稿。如果用 T3 Code，选择 Codex 后端，并在运行后端的机器上安装插件。[其他安装方式](technical.md#安装更新和卸载)
+在项目目录运行上面的命令。Windows 上可打开 PowerShell，运行 `npx.cmd @kyun.si/codex-polish@beta setup`。交互安装时，如果缺少 `agy`，安装器会提示安装，也会让你选择自动润色时使用的改写模式，默认是**普通（Normal）**。使用内置提示词时，普通模式允许保留已经写清楚的原稿，**Turbo** 会要求 Gemini 改写每份草稿。如果用 T3 Code，选择 Codex 后端，并在运行后端的机器上安装插件。[其他安装方式](technical.md#安装更新和卸载)
 
 - **信任 hook 前手动试用：** 试试 **“为什么缓存命中了还要等？返回结果 polish。”** 主动要求润色就会用 Turbo。Gemini 会收到草稿，这次不附带以前的问答。
 - **自动模式（默认）：** 在 Codex **设置 → Hooks**（CLI 输入 `/hooks`）中信任 `UserPromptSubmit` 并**新开聊天**。之后照常提问就会触发润色流程，也可以附上最近几轮对话。

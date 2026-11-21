@@ -13,16 +13,16 @@ For installation, see the [project README](README.md). For details on when the p
 
 ## Testing and Packaging from Source
 
-Run these commands from a source checkout on macOS or Linux with Node.js 22.16+ (standard library only, no `npm install`). Packaging requires npm. The native installation tests also use the Codex CLI, npx, and tar. [Get the full source](https://github.com/mreasonyang/codex-polish)
+Run these commands from a source checkout on Windows, macOS or Linux with Node.js 22.16+. The plugin uses the Node standard library. Packaging requires npm. The native tests use the Codex CLI and npx. On macOS and Linux they also use tar. [Get the full source](https://github.com/mreasonyang/codex-polish)
 
 ```sh
 npm test
 node evaluation/report.mjs evaluation/example.jsonl
-mkdir -p dist
+node -e "require('node:fs').mkdirSync('dist', { recursive: true })"
 npm pack --ignore-scripts --pack-destination dist
 ```
 
-`npm pack` writes version `0.0.1-beta.6` of `@kyun.si/codex-polish` to `dist/kyun.si-codex-polish-0.0.1-beta.6.tgz`. Default tests need no API key. Native installer tests use a temporary Codex profile. The Decisions tests use mock responses to exercise the style check.
+`npm pack` writes version `0.0.1-beta.7` of `@kyun.si/codex-polish` to `dist/kyun.si-codex-polish-0.0.1-beta.7.tgz`. Default tests need no API key. Native installer tests use a temporary Codex profile. The Decisions tests use mock responses to exercise the style check.
 
 ## Reporting Bugs
 
@@ -36,11 +36,11 @@ Open a GitHub pull request with the reason for the change, steps to reproduce or
 
 ## Publishing a beta
 
-Set the version in both `package.json` and the plugin manifest to `X.Y.Z-beta.N`. Commit the change and push the matching Git tag. For example, to publish `0.0.1-beta.6`:
+Set the version in both `package.json` and the plugin manifest to `X.Y.Z-beta.N`. Commit the change and push the matching Git tag. For example, to publish `0.0.1-beta.7`:
 
 ```sh
-git tag v0.0.1-beta.6
-git push origin v0.0.1-beta.6
+git tag v0.0.1-beta.7
+git push origin v0.0.1-beta.7
 ```
 
 GitHub Actions tests the tagged code, publishes the package to npm with the `beta` tag, and creates a GitHub prerelease. If a step fails, run the publishing workflow again from the Actions tab and enter the existing tag.

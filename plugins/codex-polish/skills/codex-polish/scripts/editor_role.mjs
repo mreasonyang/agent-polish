@@ -1,8 +1,9 @@
-import { closeSync, constants, fstatSync, openSync, readSync } from 'node:fs';
+import { closeSync, fstatSync, readSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import { parseArgs } from 'node:util';
 import { readBundledEditorRole, readEditorPrompt } from '../../../hooks/editor_prompt.mjs';
 import { effectiveRewriteMode, REWRITE_TRIGGERS } from '../../../hooks/rewrite_mode.mjs';
+import { openRegular } from '../../../hooks/platform.mjs';
 import { isMain } from './cli_io.mjs';
 
 function renderEditorRole({ source, text }) {
@@ -18,7 +19,7 @@ export function editorRole(cwd, trigger, { selectionOnly = false } = {}) {
 
 export function checkStagedEditorRole(file, prompt) {
   const expected = Buffer.from(renderEditorRole(prompt));
-  const fd = openSync(file, constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW);
+  const fd = openRegular(file);
   try {
     const info = fstatSync(fd);
     if (!info.isFile() || info.size !== expected.length) throw new Error('editor_role_changed');

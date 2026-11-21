@@ -6,6 +6,35 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 export const plugin = fileURLToPath(new URL('../plugins/codex-polish/', import.meta.url));
+export const windows = process.platform === 'win32';
+export const agyName = windows ? 'agy.exe' : 'agy';
+export function homeEnv(home) {
+  if (!windows) return { HOME: home };
+  const runtime = {};
+  for (const key of ['ProgramData', 'ProgramFiles', 'ProgramFiles(x86)', 'ProgramW6432', 'PROCESSOR_ARCHITECTURE',
+    'SystemDrive', 'windir', 'PSModulePath', 'ALLUSERSPROFILE', 'CommonProgramFiles', 'CommonProgramFiles(x86)']) {
+    if (process.env[key]) runtime[key] = process.env[key];
+  }
+  return { ...runtime, HOME: home, USERPROFILE: home, LOCALAPPDATA: path.join(home, 'AppData', 'Local'),
+    APPDATA: path.join(home, 'AppData', 'Roaming'), SystemRoot: process.env.SystemRoot, ComSpec: process.env.ComSpec,
+    TEMP: os.tmpdir(), TMP: os.tmpdir(), PATHEXT: process.env.PATHEXT };
+}
+export function runHookCommand(handler, options) {
+  if (windows) return spawnSync(process.env.ComSpec, ['/d', '/s', '/c', '"' + handler.commandWindows + '"'],
+    { windowsVerbatimArguments: true, ...options });
+  return spawnSync('/bin/sh', ['-c', handler.command], options);
+}
+let fileSymlink;
+export function supportsFileSymlink() {
+  if (!windows) return true;
+  if (fileSymlink === undefined) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'polish-link-'));
+    try { fs.symlinkSync(path.join(dir, 'target'), path.join(dir, 'link'), 'file'); fileSymlink = true; }
+    catch (e) { if (e.code !== 'EPERM') throw e; fileSymlink = false; }
+    finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  }
+  return fileSymlink;
+}
 export const preferences = path.join(plugin, 'hooks/preferences.mjs');
 
 export function temporary(t) {
@@ -21,7 +50,7 @@ export function makeProject(t) {
   fs.mkdirSync(cwd, { recursive: true });
   fs.mkdirSync(path.join(project, '.git'));
   fs.mkdirSync(path.join(project, '.codex'));
-  const env = { HOME: home, XDG_CACHE_HOME: path.join(home, 'cache'), CODEX_HOME: path.join(home, 'profile'),
+  const env = { ...homeEnv(home), XDG_CACHE_HOME: path.join(home, 'cache'), CODEX_HOME: path.join(home, 'profile'),
     PATH: process.env.PATH, LC_ALL: 'en_US.UTF-8' };
   const mode = path.join(project, '.codex/codex-polish.mode');
   const call = (args, options = {}) => run(preferences, [...args, '--cwd', options.where || cwd], { env, ...options });
@@ -30,7 +59,7 @@ export function makeProject(t) {
 }
 
 export function run(script, args = [], options = {}) {
-  const result = spawnSync(process.execPath, [script, ...args], { encoding: 'utf8', timeout: 5000, ...options });
+  const result = spawnSync(process.execPath, [script, ...args], { encoding: 'utf8', timeout: windows ? 60_000 : 5000, ...options });
   assert.ifError(result.error);
   return result;
 }

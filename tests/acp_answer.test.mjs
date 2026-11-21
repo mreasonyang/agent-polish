@@ -7,14 +7,17 @@ import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import test from 'node:test';
 import { answerEvent } from '../plugins/codex-polish/skills/codex-polish/scripts/acp_answer.mjs';
+import { secureDirectory } from '../plugins/codex-polish/skills/codex-polish/scripts/acp_windows_io.mjs';
 
 const moduleUrl = new URL('../plugins/codex-polish/skills/codex-polish/scripts/acp_answer.mjs', import.meta.url);
+const windows = process.platform === 'win32';
 const expected = 'a'.repeat(6143) + '🐕' + '\0'.repeat(1050) + '\uD800' + '雪\n"\\🐕🏽'.repeat(900);
 
 async function session(t, { hold = false, expire = false } = {}) {
   const base = fs.mkdtempSync(join(tmpdir(), 'polish-answer-test-'));
-  const directory = fs.realpathSync(base) + '/' + 'long-private-workspace-'.repeat(5);
+  const directory = join(fs.realpathSync(base), 'long-private-workspace-'.repeat(5));
   fs.mkdirSync(directory, { mode: 0o700 });
+  if (windows) secureDirectory(directory);
   const program = `import { answerEvent } from ${JSON.stringify(moduleUrl.href)};
     import { mock } from 'node:test';
     if (process.env.ANSWER_EXPIRY) mock.timers.enable({ apis: ['setTimeout'] });
@@ -35,7 +38,8 @@ async function session(t, { hold = false, expire = false } = {}) {
 }
 
 function page(exec) {
-  const read = spawnSync(exec.shell, ['-c', exec.cmd], { cwd: exec.workdir, encoding: 'utf8', timeout: 3000 });
+  const args = windows ? ['-NoProfile', '-Command', exec.cmd] : ['-c', exec.cmd];
+  const read = spawnSync(exec.shell, args, { cwd: exec.workdir, encoding: 'utf8', timeout: 10000 });
   assert.equal(read.status, 0, read.stderr);
   assert.ok(Buffer.byteLength(read.stdout) < 8192);
   const output = JSON.parse(read.stdout);
@@ -48,13 +52,16 @@ test('short completed answers stay inline with exact whitespace', async () => {
   assert.deepEqual(await answerEvent(text, process.cwd(), { onDrained: assert.fail }), { event: 'delivery', markdown: text });
 });
 
-test('agent can page an exact answer after provider EOF from a long workspace path', { timeout: 10_000 }, async t => {
+test('agent can page an exact answer after provider EOF from a long workspace path', { timeout: 60_000 }, async t => {
   const { start, done, directory } = await session(t);
   assert.equal(start.event, 'answer_pages');
   assert.equal(start.utf8_bytes, Buffer.byteLength(expected));
   const files = fs.readdirSync(directory);
-  assert.equal(files.length, 1);
-  assert.ok(fs.lstatSync(join(directory, files[0])).isSocket());
+  if (windows) assert.deepEqual(files, []);
+  else {
+    assert.equal(files.length, 1);
+    assert.ok(fs.lstatSync(join(directory, files[0])).isSocket());
+  }
   const first = page(start.exec);
   assert.deepEqual(page(start.exec), first);
   assert.equal(first.text, 'a'.repeat(6143));
@@ -70,7 +77,7 @@ test('agent can page an exact answer after provider EOF from a long workspace pa
   assert.deepEqual(fs.readdirSync(directory), []);
 });
 
-test('the final page stays repeatable on a live handle and interrupt preserves a foreign replacement', { timeout: 6000 }, async t => {
+test('the final page stays repeatable on a live handle and interrupt preserves a foreign replacement', { timeout: 60_000 }, async t => {
   const { child, directory, done, start, events } = await session(t, { hold: true });
   let last = start.exec;
   let result = page(last);
@@ -79,6 +86,13 @@ test('the final page stays repeatable on a live handle and interrupt preserves a
     result = page(last);
   }
   assert.deepEqual(page(last), result);
+  if (windows) {
+    child.stdin.end();
+    await done;
+    assert.equal((await events.next()).value, 'drained');
+    assert.equal((await events.next()).done, true);
+    return;
+  }
   const [name] = fs.readdirSync(directory);
   const path = join(directory, name);
   fs.renameSync(path, path + '-moved');
@@ -90,7 +104,7 @@ test('the final page stays repeatable on a live handle and interrupt preserves a
   assert.equal(fs.readFileSync(path, 'utf8'), 'foreign');
 });
 
-test('an abandoned paged answer notifies the observer on idle expiry', { timeout: 6000 }, async t => {
+test('an abandoned paged answer notifies the observer on idle expiry', { timeout: 20_000 }, async t => {
   const { done, events, directory, start } = await session(t, { expire: true });
   assert.equal(start.event, 'answer_pages');
   assert.deepEqual(await done, [0, null]);

@@ -2,7 +2,7 @@
 
 [简体中文](technical.md) · [Overview](../README.md)
 
-Codex Polish is a Codex plugin for macOS and Linux. Its local scripts use built-in Node.js modules and require Node.js 22.16 or newer. The automatic hook directs Codex to follow the [polishing workflow](../plugins/codex-polish/skills/codex-polish/WORKFLOW.md) once the draft is ready and show the result in the final reply. Explicit requests use the same workflow through the [rewrite skill](../plugins/codex-polish/skills/codex-polish/SKILL.md). The [setup skill](../plugins/codex-polish/skills/codex-polish-setup/SKILL.md) checks the environment and manages project settings.
+Codex Polish is a Codex plugin for Windows, macOS, and Linux. Its local scripts use built-in Node.js modules and require Node.js 22.16 or newer. The automatic hook directs Codex to follow the [polishing workflow](../plugins/codex-polish/skills/codex-polish/WORKFLOW.md) once the draft is ready and show the result in the final reply. Explicit requests use the same workflow through the [rewrite skill](../plugins/codex-polish/skills/codex-polish/SKILL.md). The [setup skill](../plugins/codex-polish/skills/codex-polish-setup/SKILL.md) checks the environment and manages project settings.
 
 ## Project Settings
 
@@ -36,7 +36,7 @@ node plugins/codex-polish/hooks/preferences.mjs set-prompt --cwd /path/to/projec
 node plugins/codex-polish/hooks/preferences.mjs set-prompt --reset --cwd /path/to/project
 ```
 
-You can edit the project prompt file directly or link it to a prompt tracked by Git in the same project. The setup command creates a relative link for a tracked project file. Commit the link to share it across clones. To use a shared prompt elsewhere or an untracked file, name the file in chat or run `node plugins/codex-polish/hooks/preferences.mjs set-prompt --link /path/to/prompt.md --cwd /path/to/project`. The file must contain valid UTF-8 and at least one non-whitespace character. Replacing the prompt or restoring the default changes only the project link.
+You can edit the project prompt file directly or link it to a prompt tracked by Git in the same project. The setup command stores a relative reference for a tracked project file. On Windows this is a regular file, so the command works without permission to create symbolic links. Commit the link to share it across clones. To use a shared prompt elsewhere or an untracked file, name the file in chat or run `node plugins/codex-polish/hooks/preferences.mjs set-prompt --link /path/to/prompt.md --cwd /path/to/project`. The file must contain valid UTF-8 and at least one non-whitespace character. Replacing the prompt or restoring the default changes only the project link.
 
 ## Rewrite Routes, Stages, and Thresholds
 
@@ -49,6 +49,8 @@ You can edit the project prompt file directly or link it to a prompt tracked by 
 | 2. Style check | Direct ACP sends the selected text to Gemini. With Decisions enabled, OpenAI considers only the current question, draft, and any custom polishing prompt. Gemini rewrites when `P(needs rewrite) > 0.50`. |
 | 3. ACP rewrite | Gemini loads the polishing prompt for this request from the body of the editor role. The agent launches `agy acp` in a temporary workspace under a dedicated editor role, opens a session with the configured Antigravity identity, reads the live model list, and checks the project settings and selected model before sending. It rejects tool permission requests and collects only reply text from this session. The reply is ready to display once the agent has nonempty text and an `end_turn` matching the request ID. |
 | 4. Display | Identical replies appear once. The comparison keeps both versions if their indentation, whitespace, or line endings differ. |
+
+On Windows, the host uses Windows PowerShell and its built-in .NET runtime to start `agy.exe`. A Windows job object ties the provider and its child processes to the rewrite. The agent submits each protocol message itself. Draft input goes through a separate console handle, which accepts long UTF-8 text.
 
 During a rewrite, `agy` connects to Google. The plugin's Node.js scripts contact a provider only for the optional OpenAI style check. The current Codex agent starts and cleans up the ACP process, selects the model, and exchanges protocol messages. [ACP operating instructions](../plugins/codex-polish/skills/codex-polish/references/acp.md)
 
@@ -88,7 +90,7 @@ The plugin never invokes `agy -p` and writes no draft logs of its own. Codex ses
 
 | Failure Class | Handling |
 | --- | --- |
-| Unsupported Google authentication, missing agy, Node.js or host process tools | Keep the original. The plugin looks for agy in PATH and ~/.local/bin. |
+| Unsupported Google authentication, missing agy, Node.js or host process tools | Keep the original. The plugin looks for agy in `PATH` and the Google installer’s default directory (`%LOCALAPPDATA%\agy\bin` on Windows, `~/.local/bin` on macOS and Linux). |
 | Decisions unavailable, key invalid, response invalid, or input exceeds the provider limit | Continue to Gemini with the original draft. Each turn makes its own routing decision. |
 | ACP startup failure, auth failure, missing selected model, or mid-stream model switch | The agent aborts the rewrite, terminates the process, and delivers the original draft. |
 | Slow or interrupted generation | Wait while the ACP process is running. On an explicit timeout, cancellation, disconnect or truncated result, discard incomplete output. A request is sent at most once. |
@@ -104,4 +106,4 @@ Both `setup` and `update` accept `--install-agy` to install the Google CLI when 
 
 The installer registers one local marketplace per Codex profile. Updates stage a verified snapshot, atomically switch the marketplace manifest to the new snapshot and refresh the native plugin cache. If the refresh fails, the installer restores the previous snapshot and enabled state. Codex checks the installed plugin’s contents when deciding hook trust. An update to a bundled prompt or setup guide can therefore require a new approval even when the hook command is unchanged. The installer and `doctor` read the current status from `hooks/list`.
 
-If you packed version `0.0.1-beta.6` locally, you can also run `npx --yes file:./kyun.si-codex-polish-0.0.1-beta.6.tgz uninstall` in the directory containing the archive. Uninstall removes the plugin and its marketplace and clears session pointers and prompt file selections for the active Codex profile. It keeps shared `agy` binaries and project `.codex` files. If your prompt file is outside the project or untracked by Git, select it again after reinstalling. The uninstaller prints the backup path for any manually edited installation files.
+If you packed version `0.0.1-beta.7` locally, you can also run `npx --yes file:./kyun.si-codex-polish-0.0.1-beta.7.tgz uninstall` in the directory containing the archive. Uninstall removes the plugin and its marketplace and clears session pointers and prompt file selections for the active Codex profile. It keeps shared `agy` binaries and project `.codex` files. If your prompt file is outside the project or untracked by Git, select it again after reinstalling. The uninstaller prints the backup path for any manually edited installation files.

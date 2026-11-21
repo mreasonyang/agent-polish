@@ -1,5 +1,6 @@
 // Read recent visible chat turns from only the hook's own rollout.
 import fs from 'node:fs';
+import { openRegular } from './platform.mjs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { readReplyDisplay } from '../skills/codex-polish/scripts/reply_display.mjs';
@@ -176,7 +177,7 @@ function completedExchanges(rows, sessionId, turnId, limit, { previous = false, 
 function withTranscript(file, read) {
   if (typeof file !== 'string' || !path.isAbsolute(file)) return null;
   try {
-    const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK | fs.constants.O_NOFOLLOW);
+    const fd = openRegular(file);
     try {
       const info = fs.fstatSync(fd);
       if (!info.isFile()) return null;

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Install Codex Polish through the native Codex plugin manager.
 import * as fs from 'node:fs';
-import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, normalize, resolve } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
 import { createHash, randomUUID } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
@@ -13,6 +13,7 @@ import { createInterface as createPrompt } from 'node:readline/promises';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { isDeepStrictEqual } from 'node:util';
 import { fileURLToPath } from 'node:url';
+import { executable, windows, agyDirectory, windowsSystemTool, openRegular, sameEntry } from '../plugins/codex-polish/hooks/platform.mjs';
 import { language, tr } from '../plugins/codex-polish/hooks/ui_locale.mjs';
 import { DEFAULT_GEMINI_MODEL, findAgy } from '../plugins/codex-polish/hooks/preferences.mjs';
 import { removeProfileCache, sqliteModule } from '../plugins/codex-polish/hooks/recovery.mjs';
@@ -29,12 +30,12 @@ export const GUIDE = PRODUCT + '/skills/codex-polish-setup/references/credential
 const CODEX_INSTALL = 'https://developers.openai.com/codex/cli/';
 const GEMINI_KEYS = 'https://aistudio.google.com/apikey';
 const AGY_INSTALL = 'https://antigravity.google/docs/getting-started/?tab=cli';
-const AGY_BOOTSTRAP = 'https://antigravity.google/cli/install.sh';
+const AGY_BOOTSTRAP = 'https://antigravity.google/cli/install.' + (windows ? 'ps1' : 'sh');
 const VERSION = '[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][a-zA-Z0-9.+-]+)?';
 const validVersion = new RegExp('^' + VERSION + '$');
 const snapshotName = new RegExp('^' + VERSION + '-[0-9a-f]{20}$');
 const localSource = { source: 'local', path: './' + PRODUCT };
-const { O_RDONLY, O_NOFOLLOW, O_DIRECTORY, O_NONBLOCK } = fs.constants;
+const { O_RDONLY, O_DIRECTORY } = fs.constants;
 const isObject = (value) => !!value && typeof value === 'object' && !Array.isArray(value);
 const sha = (data) => createHash('sha256').update(data);
 const readJSON = (file) => JSON.parse(readPlain(file));
@@ -45,9 +46,8 @@ function statMaybe(path) {
   return fs.lstatSync(path, { throwIfNoEntry: false });
 }
 function readPlain(path) {
-  const fd = fs.openSync(path, O_RDONLY | O_NONBLOCK | O_NOFOLLOW);
+  const fd = openRegular(path);
   try {
-    if (!fs.fstatSync(fd).isFile()) throw fail('文件类型异常。', 'Unexpected file type.');
     return fs.readFileSync(fd);
   } finally {
     fs.closeSync(fd);
@@ -60,6 +60,10 @@ function canonical(path) {
   return join(canonical(dirname(path)), basename(path));
 }
 function registeredPath(path) {
+  // Rust canonicalize() returns Win32 device paths; the marketplace list
+  // displays the same directory using a DOS or UNC path.
+  if (windows && path.startsWith('\\\\?\\UNC\\')) path = '\\\\' + path.slice(8);
+  else if (windows && path.startsWith('\\\\?\\') && /^[a-z]:/i.test(path.slice(4))) path = path.slice(4);
   return join(canonical(dirname(path)), basename(path));
 }
 export function codexProfile() {
@@ -103,7 +107,7 @@ function productFiles(root) {
   return files;
 }
 function fingerprint(root) {
-  const files = [INDEX, ...productFiles(join(root, PRODUCT)).map((file) => join(PRODUCT, file))];
+  const files = [normalize(INDEX), ...productFiles(join(root, PRODUCT)).map((file) => join(PRODUCT, file))];
   const hash = createHash('sha256');
   for (const file of files) {
     const path = join(root,file);
@@ -171,7 +175,7 @@ function verifiedPaths(entry) {
     }
     return true;
   }
-  if (!walk('') || !actual.has(INDEX)) return null;
+  if (!walk('') || !actual.has(normalize(INDEX))) return null;
   try {
     const version = bundleVersion(entry),
       { digest, files } = fingerprint(entry);
@@ -229,18 +233,20 @@ function makeSnapshot(root, store, minimumVersions, registered) {
   }
   return [target, version];
 }
+function codexCommand(env = process.env) {
+  const found = executable('codex', env);
+  if (found) return found;
+  throw fail('没找到 Codex CLI。请按官方指南安装，或把 codex 加入 PATH。\n  ' + CODEX_INSTALL,
+    "Couldn't find Codex CLI. Follow the official installation guide or add codex to PATH.\n  " + CODEX_INSTALL);
+}
 export function codex(...args) {
-  const result = spawnSync('codex', ['plugin', ...args, '--json'], {
+  const cli = codexCommand();
+  const result = spawnSync(cli.command, [...cli.args, 'plugin', ...args, '--json'], {
     encoding: 'utf8',
     timeout: 120_000,
     maxBuffer: 16 * 1024 * 1024,
     stdio: ['ignore', 'pipe', 'pipe']
   });
-  if (result.error?.code === 'ENOENT')
-    throw fail(
-      '没找到 Codex CLI。请按官方指南安装，或把 codex 加入 PATH。\n  ' + CODEX_INSTALL,
-      "Couldn't find Codex CLI. Follow the official installation guide or add codex to PATH.\n  " + CODEX_INSTALL
-    );
   if (result.error || result.signal)
     throw fail(
       'Codex CLI 没有正常结束，请检查后再试。',
@@ -276,11 +282,22 @@ function lookup(run, field, key, value, ...args) {
     throw fail('Codex 返回了重复的市场或插件记录。', 'Codex returned duplicate marketplace or plugin records.');
   return found[0] ?? null;
 }
-function registration(run) {
+async function registration(run) {
   const row = lookup(run, 'marketplaces', 'name', MARKET, 'marketplace', 'list');
   if (!row) return null;
-  const info = row.marketplaceSource,
-    source = info?.source;
+  let info = row.marketplaceSource;
+  // Codex 0.170 on Windows can omit marketplaceSource from this list even
+  // for a registered plugin. Read its configured source and verify the root
+  // independently, including when the plugin itself has not been added yet.
+  if (!info && windows && typeof row.root === 'string' && isAbsolute(row.root)) {
+    const { config } = await nativeConfig('config/read', { includeLayers: false });
+    const saved = config.marketplaces?.[MARKET];
+    if (saved?.source_type === 'local' && typeof saved.source === 'string' && isAbsolute(saved.source) &&
+        registeredPath(saved.source) === registeredPath(row.root)) {
+      info = { sourceType: 'local', source: saved.source };
+    }
+  }
+  const source = info?.source;
   if (info?.sourceType !== 'local' || typeof source !== 'string' || !isAbsolute(source)) {
     throw fail(
       '同名市场用了其他来源。请在 Codex 的插件设置里核对。',
@@ -289,12 +306,12 @@ function registration(run) {
   }
   return registeredPath(source);
 }
-function registeredMarket(run, store) {
-  const path = registration(run);
-  if (path && path !== store)
-    throw fail('同名市场使用了其他来源，请在 Codex 插件设置中检查。',
-      'A marketplace with the same name uses a different source. Check it in Codex plugin settings.');
-  return path;
+async function registeredMarket(run, store) {
+  const path = await registration(run);
+  if (path && path !== canonical(store))
+    throw fail(`同名市场使用了其他来源。Codex 返回 ${path}，预期 ${store}。请在插件设置中核对。`,
+      `A marketplace with the same name uses a different source. Codex returned ${path}. Expected ${store}. Check it in Codex plugin settings.`);
+  return path ? store : null;
 }
 function marketIndex(snapshot) {
   bundleVersion(snapshot);
@@ -376,7 +393,8 @@ function verifyReceipt(receipt, target, version) {
   }
 }
 export async function nativeConfig(method, params, { experimental = false, cwd, env = process.env } = {}) {
-  const proc = spawn('codex', ['app-server', '--stdio'], { stdio: ['pipe', 'pipe', 'ignore'], cwd, env });
+  const cli = codexCommand(env);
+  const proc = spawn(cli.command, [...cli.args, 'app-server', '--stdio'], { stdio: ['pipe', 'pipe', 'ignore'], cwd, env });
   let ended = false;
   const closed = new Promise((done) =>
     proc.once('close', () => {
@@ -481,14 +499,14 @@ async function verifyInstalled(run, setEnabled, version, enabled) {
   }
 }
 async function rollback(run, setEnabled, previous, before, target, store) {
-  const market = registeredMarket(run, store);
+  const market = await registeredMarket(run, store);
   if (![null, previous, target].includes(activeSnapshot(store)))
     throw fail('其他进程修改了市场。', 'Another process changed the marketplace.');
   if (!before && installed(run)) run('remove', PLUGIN_ID);
   if (!previous && market) run('marketplace', 'remove', MARKET);
   activateSnapshot(store, previous);
   if (previous && !market) run('marketplace', 'add', store);
-  if (registeredMarket(run, store) !== (previous ? store : null) || activeSnapshot(store) !== previous)
+  if (await registeredMarket(run, store) !== (previous ? store : null) || activeSnapshot(store) !== previous)
     throw fail('Codex 没有恢复更新前的市场来源。', "Codex didn't restore the previous marketplace.");
   if (before) {
     verifyReceipt(run('add', PLUGIN_ID), previous, before.version);
@@ -499,7 +517,7 @@ async function rollback(run, setEnabled, previous, before, target, store) {
 export function pendingUpdate(store) {
   let fd;
   try {
-    fd = fs.openSync(join(store, '.pending-update.json'), O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
+    fd = openRegular(join(store, '.pending-update.json'));
   } catch (error) {
     if (error.code === 'ENOENT') return null;
     throw error;
@@ -534,6 +552,8 @@ export function pendingUpdate(store) {
   );
 }
 function syncStore(store) {
+  // Win32 does not expose a Node directory handle that supports fsync.
+  if (windows) return;
   const fd = fs.openSync(store, O_RDONLY | O_DIRECTORY);
   try {
     fs.fsyncSync(fd);
@@ -546,12 +566,15 @@ function writeAtomicJson(file, entry) {
   const tmp = join(dir, '.prepare-update-' + randomUUID());
   const fd = fs.openSync(tmp, 'wx', 0o600);
   try {
-    fs.writeFileSync(fd, JSON.stringify(entry));
-    fs.fsyncSync(fd);
+    try {
+      fs.writeFileSync(fd, JSON.stringify(entry));
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
     fs.renameSync(tmp, file);
     syncStore(dir);
   } finally {
-    fs.closeSync(fd);
     fs.rmSync(tmp, { force: true });
   }
 }
@@ -584,7 +607,7 @@ export function preserveNativeCache(store, previous, state, alternate) {
   }
 }
 async function setup(root, store, run, setEnabled, action) {
-  const market = registeredMarket(run, store);
+  const market = await registeredMarket(run, store);
   const active = activeSnapshot(store);
   if (market && !active)
     throw fail('已注册的市场缺少安装清单，请在 Codex 插件设置中检查。', 'The registered marketplace manifest is missing. Check it in Codex plugin settings.');
@@ -623,7 +646,7 @@ async function setup(root, store, run, setEnabled, action) {
     activateSnapshot(store, target);
     if (!market) run('marketplace', 'add', store);
     verifyReceipt(run('add', PLUGIN_ID), target, version);
-    if (registeredMarket(run, store) !== store || activeSnapshot(store) !== target)
+    if (await registeredMarket(run, store) !== store || activeSnapshot(store) !== target)
       throw fail(
         'Codex 没有确认这次安装的市场来源。',
         "Codex didn't confirm the marketplace source for this installation."
@@ -632,10 +655,11 @@ async function setup(root, store, run, setEnabled, action) {
   } catch (error) {
     try {
       await rollback(run, setEnabled, previous, before, target, store);
-    } catch {
+    } catch (rollbackError) {
+      const describe = err => err instanceof SetupError ? err.message : [err.code, err.syscall, err.path].filter(Boolean).join(' ') || err.message;
       throw fail(
-        '安装失败，Codex 没能恢复。本地快照已保留，请重新运行 setup。',
-        "Codex couldn't restore the previous installation. The local copy is still there. Run setup again."
+        `安装失败：${describe(error)}\n恢复失败：${describe(rollbackError)}\n本地快照已保留，请重新运行 setup。`,
+        `Installation failed: ${describe(error)}\nCodex couldn't restore the previous installation: ${describe(rollbackError)}\nThe local copy is still there. Run setup again.`
       );
     }
     if (before) finishPending(store);
@@ -684,16 +708,16 @@ async function setup(root, store, run, setEnabled, action) {
 function removeVerifiedEntries(entry, paths) {
   function enter(path, expected) {
     process.chdir(path);
-    const current = fs.statSync('.');
-    if (current.dev !== expected.dev || current.ino !== expected.ino)
+    const current = fs.statSync('.', { bigint: true });
+    if (!sameEntry(current, expected))
       throw new Error('Directory changed during cleanup');
   }
   function removeChildren(relative) {
-    const parent = fs.statSync('.');
+    const parent = fs.statSync('.', { bigint: true });
     for (const name of fs.readdirSync('.')) {
       const child = join(relative, name);
       if (!paths.has(child)) continue;
-      const info = fs.lstatSync(name);
+      const info = fs.lstatSync(name, { bigint: true });
       if (info.isDirectory()) {
         enter(name, info);
         removeChildren(child);
@@ -705,8 +729,8 @@ function removeVerifiedEntries(entry, paths) {
   const cwd = process.cwd();
   try {
     process.chdir(dirname(entry));
-    const store = fs.statSync('.');
-    const info = fs.lstatSync(basename(entry));
+    const store = fs.statSync('.', { bigint: true });
+    const info = fs.lstatSync(basename(entry), { bigint: true });
     if (!info.isDirectory()) throw new Error('Snapshot changed during cleanup');
     enter(basename(entry), info);
     removeChildren('');
@@ -764,7 +788,7 @@ function cleanUninstallData(store) {
   return message;
 }
 async function uninstall(store, run) {
-  const market = registeredMarket(run, store);
+  const market = await registeredMarket(run, store);
   const active = activeSnapshot(store);
   const previous = market && active;
   requireManagedSource(previous, store);
@@ -807,7 +831,7 @@ async function uninstall(store, run) {
   }
   if (market) {
     run('marketplace', 'remove', MARKET);
-    if (registration(run))
+    if (await registration(run))
       throw fail(
         'Codex 还是显示这个市场已注册，请再试一次卸载。',
         'Codex still lists the marketplace. Run uninstall again.'
@@ -845,7 +869,12 @@ export async function withLock(file, action) {
 }
 export async function manage(action, root, store, run = codex, setEnabled = writeEnabled) {
   fs.mkdirSync(store, { recursive: true, mode: 0o700 });
-  if (!fs.lstatSync(store).isDirectory() || fs.realpathSync.native(store) !== store) {
+  // Windows can expand 8.3 names and casing in a realpath. Inspect each
+  // named directory so those aliases work and junctions stay excluded.
+  let ordinary = isAbsolute(store);
+  for (let dir = store; ordinary && dir !== dirname(dir); dir = dirname(dir))
+    ordinary = fs.lstatSync(dir).isDirectory();
+  if (!ordinary) {
     throw fail(
       '快照目录路径异常，请检查后再试。',
       'Unexpected snapshot directory. Check this path before trying again.'
@@ -885,11 +914,16 @@ function saveSetupMode(mode, cwd) {
       `The plugin is installed, but the automatic rewrite mode could not be saved in ${cwd}. Check the project’s write permissions.`);
 }
 async function runBootstrap(script, target, options) {
-  const proc = spawn('/bin/bash', [script, '--dir', target], { ...options, stdio: 'ignore', detached: true });
+  const shell = windows ? windowsSystemTool('WindowsPowerShell/v1.0/powershell.exe') : '/bin/bash';
+  const args = windows ? ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File'] : [];
+  const proc = spawn(shell, [...args, script, '--dir', target], { ...options, stdio: 'ignore', detached: !windows, windowsHide: true });
   function killGroup() {
     if (proc.pid) {
       try {
-        process.kill(-proc.pid, 'SIGKILL');
+        if (windows) {
+          spawnSync(windowsSystemTool('taskkill.exe'), ['/PID', String(proc.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
+          proc.kill('SIGKILL');
+        } else process.kill(-proc.pid, 'SIGKILL');
       } catch (error) {
         if (error.code !== 'ESRCH') throw error;
       }
@@ -928,7 +962,9 @@ async function downloadBootstrap(file) {
 }
 function agyEnvironment() {
   const env = { ...process.env };
-  for (const key of ['OPENAI_API_KEY', 'GEMINI_API_KEY', 'BASH_ENV', 'ENV']) delete env[key];
+  for (const key of Object.keys(env)) {
+    if (['OPENAI_API_KEY', 'GEMINI_API_KEY', 'BASH_ENV', 'ENV'].includes(key.toUpperCase())) delete env[key];
+  }
   return env;
 }
 function supportedAgy(binary) {
@@ -940,7 +976,7 @@ function supportedAgy(binary) {
   return Boolean(version && compareVersions(version[1], '1.2.1') >= 0);
 }
 export async function installAgy() {
-  const target = join(homedir(), '.local/bin');
+  const target = agyDirectory();
   fs.mkdirSync(target, { recursive: true });
   await withLock(join(target, '.codex-polish-agy.sqlite'), async () => {
     const existing = findAgy();
@@ -948,11 +984,11 @@ export async function installAgy() {
       if (supportedAgy(existing)) return;
       throw fail('请将现有的 Antigravity CLI 更新到 1.2.1 或更高版本。', 'Update your existing Antigravity CLI to version 1.2.1 or later.');
     }
-    const binary = join(target, 'agy');
+    const binary = join(target, windows ? 'agy.exe' : 'agy');
     if (statMaybe(binary))
       throw fail(`请先检查 ${binary}，这个路径已被占用。`, `Check ${binary}. That path is already in use.`);
     const temp = fs.mkdtempSync(join(tmpdir(), 'codex-polish-agy-')),
-      script = join(temp, 'install.sh');
+      script = join(temp, windows ? 'install.ps1' : 'install.sh');
     const options = { cwd: temp, env: agyEnvironment() };
     try {
       await downloadBootstrap(script);
@@ -1140,6 +1176,8 @@ async function ask(prompt) {
   }
 }
 function openPage(url) {
+  if (windows)
+    return spawnSync(windowsSystemTool('rundll32.exe'), ['url.dll,FileProtocolHandler', url], { stdio: 'ignore', timeout: 5000 }).status === 0;
   return (
     spawnSync(process.platform === 'darwin' ? '/usr/bin/open' : 'xdg-open', [url], { stdio: 'ignore', timeout: 5000 })
       .status === 0
@@ -1157,7 +1195,8 @@ async function chooseSetupProject(cwd, prompt, lang) {
     const answer = await prompt(tr('输入要配置的项目目录，或按回车稍后在 Codex 里选择：',
       'Enter the project folder, or press Enter to choose later in Codex: ', lang));
     if (!answer) return null;
-    const name = answer.startsWith('~/') ? join(homedir(), answer.slice(2)) : resolve(cwd, answer);
+    const folder = windows ? answer.replace(/^"(.*)"$/, '$1') : answer;
+    const name = folder.startsWith('~/') || (windows && folder.startsWith('~\\')) ? join(homedir(), folder.slice(2)) : resolve(cwd, folder);
     try {
       const project = fs.realpathSync(name);
       if (isProjectDirectory(project) && fs.statSync(project).isDirectory()) return project;
@@ -1221,6 +1260,10 @@ export function chooseSetupMode(project, lang, input, output) {
 export async function discoverSetupModels(checks) {
   const workspace = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), 'codex-polish-models-')));
   try {
+    if (windows) {
+      const { secureDirectory } = await import('../plugins/codex-polish/skills/codex-polish/scripts/acp_windows_io.mjs');
+      secureDirectory(workspace);
+    }
     const skill = join(ROOT, PRODUCT, 'skills/codex-polish');
     const task = [
       'Discover the Gemini models available to this account. This is a metadata lookup. Do not send a prompt to Gemini.',
@@ -1231,7 +1274,8 @@ export async function discoverSetupModels(checks) {
         ' using node, with --catalog, the supplied --agy-path and --auth, and --catalog-log ' + JSON.stringify(join(workspace, 'acp-frames.jsonl')) + '.',
       'Execute its start options unchanged. Execute each send.exec in your host tools, then read the same session for the next event. On catalog, finish and stop. The passive decoder records the actual session/new response for the installer. Do not write the catalog file yourself. If lookup fails, stop.'
     ].join('\n');
-    const child = spawn('codex', ['exec', '--ephemeral', '--skip-git-repo-check', '-C', workspace,
+    const cli = codexCommand();
+    const child = spawn(cli.command, [...cli.args, 'exec', '--ephemeral', '--skip-git-repo-check', '-C', workspace,
       '-c', 'plugins."codex-polish@codex-polish-local".enabled=false', task], { cwd: workspace, stdio: 'ignore' });
     const interrupt = () => child.kill('SIGINT');
     const terminate = () => child.kill('SIGTERM');

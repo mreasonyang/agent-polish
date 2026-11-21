@@ -2,20 +2,20 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFile, spawnSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { makeProject, json, mkfifo, preferences, plugin, run } from './hook_fixture.mjs';
+import { makeProject, json, mkfifo, agyName, windows, homeEnv, runHookCommand, supportsFileSymlink, preferences, plugin, run } from './hook_fixture.mjs';
 import { accessProjectSetting } from '../plugins/codex-polish/hooks/project_setting.mjs';
 
 const exec = promisify(execFile);
 function fixture(t) {
   const f = makeProject(t);
   const alias = path.join(f.project, "plug'in with spaces");
-  fs.symlinkSync(plugin, alias);
+  fs.symlinkSync(plugin, alias, 'junction');
   const config = JSON.parse(fs.readFileSync(path.join(plugin, 'hooks/hooks.json')));
-  const command = config.hooks.UserPromptSubmit[0].hooks[0].command;
+  const command = config.hooks.UserPromptSubmit[0].hooks[0];
   const hook = (eventName = 'UserPromptSubmit', commandString = command) => {
-    const result = spawnSync('/bin/sh', ['-c', commandString], { encoding: 'utf8', env: { ...f.env, PLUGIN_ROOT: alias },
+    const result = runHookCommand(commandString, { encoding: 'utf8', env: { ...f.env, PLUGIN_ROOT: alias },
       input: JSON.stringify({ hook_event_name: eventName, cwd: f.cwd, prompt: '私密样本' }) });
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.stderr, '');
@@ -78,7 +78,7 @@ test('model selection is scoped and explicit reset restores Hydrogen', t => {
   assert.equal(fs.existsSync(path.join(cwd, '.codex')), false);
   const parent = json(call(['set-model', 'models/gemini-2.5-pro'], { where: project }));
   assert.equal(check().gemini_model, 'models/gemini-2.5-pro');
-  assert.equal(fs.statSync(parent.file).mode & 0o777, 0o600);
+  if (!windows) assert.equal(fs.statSync(parent.file).mode & 0o777, 0o600);
   const child = json(call(['set-model', 'MODEL_PLACEHOLDER_M8']));
   assert.equal(check().gemini_model, 'MODEL_PLACEHOLDER_M8'); assert.equal(fs.readFileSync(child.file, 'utf8'), 'MODEL_PLACEHOLDER_M8\n');
   assert.equal(json(call(['set-model', '--reset'])).gemini_model, def); assert.equal(check().gemini_model, def);
@@ -103,9 +103,12 @@ test('invalid ids preserve model; corrupt settings block rewrites; links are han
   assert.equal(decision.action, 'keep'); assert.ok(decision.blockers.includes('gemini_model_invalid'));
   fs.unlinkSync(file);
   const parent = path.join(project, '.codex/codex-polish.model');
-  fs.symlinkSync(parent, file);
+  if (supportsFileSymlink()) {
+    fs.symlinkSync(parent, file);
   assert.notEqual(call(['set-model', '--reset']).status, 0); assert.ok(fs.lstatSync(file).isSymbolicLink());
-  fs.unlinkSync(file); fs.rmdirSync(path.dirname(file)); fs.symlinkSync(path.dirname(parent), path.dirname(file));
+    fs.unlinkSync(file);
+  }
+  fs.rmdirSync(path.dirname(file)); fs.symlinkSync(path.dirname(parent), path.dirname(file), 'junction');
   assert.equal(check().gemini_model, 'gemini-4-hydrogen');
   fs.writeFileSync(parent, 'linked-model'); assert.ok(check().blockers.includes('gemini_model_invalid'));
 });
@@ -144,7 +147,7 @@ test('Decisions settings recognize ON and OFF and report unknown values', t => {
 test('automatic Normal bypasses an invalid Decisions setting when there is no OpenAI key', t => {
   const { project, env, call } = fixture(t);
   fs.writeFileSync(path.join(project, '.codex/codex-polish.decisions'), 'typo');
-  fs.writeFileSync(path.join(project, 'agy'), '#!/bin/sh\nexit 1\n', { mode: 0o700 });
+  fs.writeFileSync(path.join(project, agyName), '#!/bin/sh\nexit 1\n', { mode: 0o700 });
   const options = { env: { ...env, PATH: project } };
   assert.ok(json(call(['check'], options)).blockers.includes('decisions_mode_invalid'));
   const status = json(call(['check', '--trigger', 'auto'], options));
@@ -166,7 +169,7 @@ test('rewrite mode inherits independently of the trigger and Decisions settings'
   assert.deepEqual(modeSelection(), ['normal', false]);
   assert.equal(fs.existsSync(setting), false);
   assert.deepEqual(json(call(['set-rewrite-mode', 'turbo'], parent)), { rewrite_mode: 'turbo', file: setting });
-  assert.equal(fs.statSync(setting).mode & 0o777, 0o600);
+  if (!windows) assert.equal(fs.statSync(setting).mode & 0o777, 0o600);
   json(call(['set-mode', 'manual']));
   json(call(['set-decisions', 'off']));
   assert.deepEqual(modeSelection(), ['turbo', true]);
@@ -206,6 +209,7 @@ test('invalid or linked automatic rewrite settings block automatic polishing and
   fs.writeFileSync(file, 'typo'); inspect();
   fs.unlinkSync(file);
   const parent = json(call(['set-rewrite-mode', 'normal'], { where: project }));
+  if (!supportsFileSymlink()) return;
   fs.symlinkSync(parent.file, file); inspect();
   assert.notEqual(call(['set-rewrite-mode', 'turbo']).status, 0);
   assert.equal(fs.readFileSync(parent.file, 'utf8'), 'normal\n');
@@ -233,8 +237,8 @@ test('portable project hook does not require the plugin environment', t => {
   const { mode, cwd, env, project } = fixture(t);
   fs.writeFileSync(mode, 'auto');
   const hooks = json(run(preferences, ['project-hook']));
-  const command = hooks.hooks.UserPromptSubmit[0].hooks[0].command;
-  const p = spawnSync('/bin/sh', ['-c', command], { cwd, env: { PATH: env.PATH }, input: JSON.stringify({ hook_event_name: 'UserPromptSubmit', cwd: project }), encoding: 'utf8' });
+  const command = hooks.hooks.UserPromptSubmit[0].hooks[0];
+  const p = runHookCommand(command, { cwd, env: { ...env }, input: JSON.stringify({ hook_event_name: 'UserPromptSubmit', cwd: project }), encoding: 'utf8' });
   assert.ok(json(p).hookSpecificOutput.additionalContext.includes(JSON.stringify(path.join(plugin, 'skills/codex-polish/WORKFLOW.md'))));
 });
 
@@ -258,14 +262,19 @@ test('unsafe mode settings disable rewriting and reject writes', t => {
     assert.match(JSON.parse(hook()).systemMessage, /codex-polish.mode/);
     assert.notEqual(call(['set-mode', 'auto']).status, 0);
   };
-  fs.symlinkSync(path.join(cwd, 'missing-directory'), dir);
+  fs.symlinkSync(path.join(cwd, 'missing-directory'), dir, 'junction');
   rejectsMode();
   fs.unlinkSync(dir);
-  fs.symlinkSync(path.dirname(mode), dir);
+  fs.symlinkSync(path.dirname(mode), dir, 'junction');
   rejectsMode();
-  fs.unlinkSync(dir); fs.mkdirSync(dir); fs.symlinkSync(mode, marker);
+  fs.unlinkSync(dir); fs.mkdirSync(dir);
+  if (supportsFileSymlink()) {
+    fs.symlinkSync(mode, marker);
   rejectsMode(); assert.ok(fs.lstatSync(marker).isSymbolicLink());
-  fs.unlinkSync(marker); mkfifo(marker);
+    fs.unlinkSync(marker);
+  }
+  if (windows) return;
+  mkfifo(marker);
   rejectsMode(); assert.ok(fs.lstatSync(marker).isFIFO()); assert.equal(fs.readFileSync(mode, 'utf8'), 'auto\n');
 });
 
@@ -277,13 +286,13 @@ test('a linked repository settings directory uses defaults for absent plugin set
   fs.mkdirSync(shared);
   fs.writeFileSync(path.join(shared, 'config.toml'), '');
   fs.rmdirSync(settings);
-  fs.symlinkSync(shared, settings);
+  fs.symlinkSync(shared, settings, 'junction');
   assert.deepEqual(check(), defaults);
   fs.writeFileSync(path.join(shared, 'codex-polish.decisions'), 'auto');
   assert.deepEqual(check().blockers, ['decisions_mode_invalid', ...defaults.blockers]);
 });
 
-test('an unreadable mode file disables rewriting', { skip: process.getuid() === 0 }, t => {
+test('an unreadable mode file disables rewriting', { skip: windows || process.getuid() === 0 }, t => {
   const { mode, getMode, hook } = fixture(t);
   fs.writeFileSync(mode, 'auto', { mode: 0o000 });
   assert.equal(getMode(), '');
@@ -297,7 +306,7 @@ test('history count has independent default, inheritance and override', t => {
   assert.equal(count(), 2); assert.equal(fs.existsSync(path.join(cwd, '.codex')), false); assert.equal(fs.existsSync(setting), false);
   const saved = json(call(['set-history-turns', '10'], { where: project }));
   assert.equal(saved.history_turns, 10); assert.equal(saved.file, setting);
-  assert.equal(fs.readFileSync(setting, 'utf8'), '10\n'); assert.equal(fs.statSync(setting).mode & 0o777, 0o600);
+  assert.equal(fs.readFileSync(setting, 'utf8'), '10\n'); if (!windows) assert.equal(fs.statSync(setting).mode & 0o777, 0o600);
   json(call(['set-mode', 'auto'])); assert.equal(count(), 10);
   json(call(['set-history-turns', '0'])); assert.equal(count(), 0);
   assert.equal(getMode(), 'auto'); assert.equal(count({ where: project }), 0);
@@ -324,10 +333,14 @@ test('invalid history input preserves saved value and malformed settings report 
     assert.ok(!json(call(['check','--no-history'])).blockers.includes('history_turns_invalid'));
   }
   assert.equal(getMode(), 'auto');
-  fs.unlinkSync(file); mkfifo(file);
+  fs.unlinkSync(file);
   const invalid = () => { assert.equal(check().history_turns, null); assert.notEqual(call(['set-history-turns', '1']).status, 0); };
-  invalid(); fs.unlinkSync(file); fs.symlinkSync(path.join(path.dirname(mode),path.basename(file)), file);
-  invalid(); assert.equal(check(parent).history_turns, 6); fs.unlinkSync(file); fs.rmdirSync(dir); fs.symlinkSync(path.dirname(mode), dir);
+  if (!windows) { mkfifo(file); invalid(); fs.unlinkSync(file); }
+  if (supportsFileSymlink()) {
+    fs.symlinkSync(path.join(path.dirname(mode),path.basename(file)), file);
+    invalid(); assert.equal(check(parent).history_turns, 6); fs.unlinkSync(file);
+  }
+  fs.rmdirSync(dir); fs.symlinkSync(path.dirname(mode), dir, 'junction');
   invalid();
 });
 
@@ -339,7 +352,7 @@ test('concurrent changes never leave partial or unrelated files', async t => {
 
 test('check never launches agy or returns credentials', t => {
   const { project, cwd, call, env } = fixture(t);
-  fs.writeFileSync(path.join(project, 'agy'), '#!/bin/sh\n: > invocations\n', { mode: 0o700 });
+  fs.writeFileSync(path.join(project, agyName), '#!/bin/sh\n: > invocations\n', { mode: 0o700 });
   const result = call(['check'], { cwd, env: { ...env, PATH: project, OPENAI_API_KEY: 'private-openai', GEMINI_API_KEY: 'private-gemini', CODEX_POLISH_AGY_AUTH: 'private-unknown' } });
   const s = json(result);
   for (const secret of ['private-openai', 'private-gemini', 'private-unknown']) assert.ok(!(result.stdout + result.stderr).includes(secret));
@@ -350,13 +363,13 @@ test('check never launches agy or returns credentials', t => {
 
 test('locates official agy install when GUI has an older PATH', t => {
   const { project, cwd, check, env } = fixture(t);
-  const home = path.join(project, 'temporary home'), dir = path.join(project, 'custom bin'), bin = path.join(home, '.local/bin/agy');
+  const home = path.join(project, 'temporary home'), dir = path.join(project, 'custom bin'), bin = windows ? path.join(homeEnv(home).LOCALAPPDATA, 'agy/bin', agyName) : path.join(home, '.local/bin/agy');
   fs.mkdirSync(path.dirname(bin), { recursive: true }); fs.mkdirSync(dir);
   fs.writeFileSync(bin, '#!/bin/sh\n: > unexpected-launch\n', { mode: 0o600 });
-  const opts = { cwd, env: { ...env, HOME: home, PATH: dir } };
-  assert.ok(check(opts).blockers.includes('agy_missing')); fs.chmodSync(bin, 0o700);
+  const opts = { cwd, env: { ...env, ...homeEnv(home), PATH: dir } };
+  if (!windows) { assert.ok(check(opts).blockers.includes('agy_missing')); fs.chmodSync(bin, 0o700); }
   const s = check(opts); assert.ok(s.agy_available && !s.blockers.includes('agy_missing')); assert.equal(s.agy_path, bin);
-  const selected = path.join(dir, 'agy'); fs.copyFileSync(bin, selected); fs.chmodSync(selected, 0o700);
+  const selected = path.join(dir, agyName); fs.copyFileSync(bin, selected); fs.chmodSync(selected, 0o700);
   assert.equal(check(opts).agy_path, selected); assert.ok(!fs.existsSync(path.join(cwd, 'unexpected-launch')));
 });
 

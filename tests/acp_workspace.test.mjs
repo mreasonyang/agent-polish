@@ -5,12 +5,15 @@ import fs from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
-import { test } from 'node:test';
+import { test as nodeTest } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { prepareWorkspace } from '../plugins/codex-polish/skills/codex-polish/scripts/acp_workspace.mjs';
 import { editorRole } from '../plugins/codex-polish/skills/codex-polish/scripts/editor_role.mjs';
 import { formatReply } from '../plugins/codex-polish/skills/codex-polish/scripts/reply_display.mjs';
 
+// These tests inspect Unix FIFOs, inode ownership, and shell job control.
+// acp_native.test.mjs drives the public workspace lifecycle on every platform.
+const test = process.platform === 'win32' ? nodeTest.skip : nodeTest;
 const scripts = fileURLToPath(new URL('../plugins/codex-polish/skills/codex-polish/scripts/', import.meta.url));
 const stock = fs.readFileSync(join(scripts, '../references/codex-polish-editor.md'), 'utf8');
 const base = { auth: 'existing-session', model: 'gemini-4-hydrogen', trigger: 'explicit', route: 'acp', rewriteMode: 'turbo', display: 'zh' };

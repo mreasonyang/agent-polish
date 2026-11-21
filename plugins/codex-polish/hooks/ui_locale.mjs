@@ -37,6 +37,7 @@ export function systemLanguage(env = process.env) {
     const value = env[name]?.trim();
     if (value) return languageTag(value) || 'en';
   }
+  if (process.platform === 'win32') return languageTag(Intl.DateTimeFormat().resolvedOptions().locale) || 'en';
   return process.platform === 'darwin' ? macLanguage() : 'en';
 }
 

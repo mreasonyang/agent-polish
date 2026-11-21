@@ -69,9 +69,15 @@ jobs:
           path: ${{ runner.temp }}/kyun.si-codex-polish-*.tgz
           if-no-files-found: error
 
+  platform-tests:
+    needs: qualify
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ needs.qualify.outputs.source_sha }}
+
   publish:
     runs-on: ubuntu-latest
-    needs: qualify
+    needs: [qualify, platform-tests]
     permissions:
       contents: write
       id-token: write

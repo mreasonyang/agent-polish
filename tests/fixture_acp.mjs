@@ -9,7 +9,7 @@ export const SESSION = 'fixture-session';
 export const PERMISSION_ID = 'fixture-permission';
 export const REPLY = ['我改了判断会话过期的逻辑。', '已有的会话还能不能用，我还没验证。'];
 const SCENARIOS = ['ok','permission','permission-then-text','truncated','signed-out','auth-denied','no-hydrogen',
-  'model-drift','stalled','cancelled','refused','provider-error','interleaved','wrong-end-id','nontext'];
+  'model-drift','stalled','cancelled','refused','provider-error','interleaved','wrong-end-id','nontext','unchanged'];
 
 export function selectOption(id, category, name, currentValue, choices) {
   return {id, category, name, type:'select', currentValue, options:choices.map(([value, name]) => ({value, name}))};
@@ -68,6 +68,11 @@ export class Fixture {
       return this.error(id, 'Expected at least one text prompt block.');
     if (this.pending !== null) return this.error(id, 'A turn is already running.');
     this.pending = id;
+    if (this.scenario === 'unchanged') {
+      const { draft } = JSON.parse(params.prompt[0].text);
+      this.update(SESSION, 'agent_message_chunk', {content:{type:'text', text:draft}});
+      return this.stop('end_turn');
+    }
     if (this.scenario === 'permission' || this.scenario === 'permission-then-text') {
       if (this.scenario === 'permission-then-text')
         this.update(SESSION, 'agent_message_chunk', {content:{type:'text', text:REPLY[0]}});
@@ -148,19 +153,21 @@ export class Fixture {
   }
 }
 
+export async function serveFixture(fixture, onFrame) {
+  for await (const line of createInterface({input:process.stdin, crlfDelay:Infinity})) {
+    let message;
+    try { message = JSON.parse(line); }
+    catch { fixture.error(null, 'Invalid JSON.', -32700); continue; }
+    onFrame?.(message);
+    if (!record(message) || message.jsonrpc !== '2.0') fixture.error(null, 'Invalid JSON-RPC envelope.', -32600);
+    else fixture.handle(message);
+    if (fixture.ended) { process.stdin.destroy(); break; }
+  }
+}
+
 if (isMain(import.meta.url)) {
   const { values } = parseArgs({options:{scenario:{type:'string', default:'ok'}, help:{type:'boolean', short:'h'}}});
   if (values.help) console.log('Usage: fixture_acp.mjs [--scenario ' + SCENARIOS.join('|') + ']');
   else if (!SCENARIOS.includes(values.scenario)) process.exitCode = 2;
-  else {
-    const fixture = new Fixture(values.scenario);
-    for await (const line of createInterface({input:process.stdin, crlfDelay:Infinity})) {
-      let message;
-      try { message = JSON.parse(line); }
-      catch { fixture.error(null, 'Invalid JSON.', -32700); continue; }
-      if (!record(message) || message.jsonrpc !== '2.0') fixture.error(null, 'Invalid JSON-RPC envelope.', -32600);
-      else fixture.handle(message);
-      if (fixture.ended) { process.stdin.destroy(); break; }
-    }
-  }
+  else await serveFixture(new Fixture(values.scenario));
 }

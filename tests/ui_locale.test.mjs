@@ -38,6 +38,15 @@ test('desktop fallback selects the first supported Apple language and caches the
   assert.equal(systemLanguage({}), 'en');
 });
 
+test('Windows defaults to the system locale when the host provides no language override', t => {
+  const descriptor = Object.getOwnPropertyDescriptor(process, 'platform');
+  Object.defineProperty(process, 'platform', { ...descriptor, value: 'win32' });
+  t.after(() => Object.defineProperty(process, 'platform', descriptor));
+  t.mock.method(Intl, 'DateTimeFormat', () => ({ resolvedOptions: () => ({ locale: 'zh-Hans-CN' }) }));
+  assert.equal(systemLanguage({}), 'zh');
+  assert.equal(systemLanguage({ LANG: 'en_US' }), 'en');
+});
+
 test('project language persists and auto uses environment without changing rewrite behavior', t => {
   const { check, cwd, call, env, project } = makeProject(t);
   const before = check();
@@ -45,7 +54,7 @@ test('project language persists and auto uses environment without changing rewri
   assert.equal(fs.existsSync(path.join(cwd, '.codex')), false);
   const { file } = json(call(['set-language', 'zh'], { where: project }));
   assert.equal(fs.readFileSync(file, 'utf8'), 'zh\n');
-  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  if (process.platform !== 'win32') assert.equal(fs.statSync(file).mode & 0o777, 0o600);
   assert.deepEqual(check(), { ...before, language_mode: 'zh', ui_language: 'zh' });
   assert.match(call(['set-history-turns', '11']).stderr, /0 到 10 之间的整数/);
   const invalid = call(['set-language', 'jp']);

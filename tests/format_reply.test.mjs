@@ -20,6 +20,12 @@ test('render prints exactly the final Markdown, including list spacing and trail
   assert.equal(cli([formatScript, '--render'], JSON.stringify({ draft, candidate })).stdout, candidate);
 });
 
+test('host input passes a large Unicode reply without shell interpolation', () => {
+  const candidate = ('汉字 🐕 \r\n `$value`  ').repeat(3000);
+  const input = JSON.stringify({ draft: 'old', candidate }) + '\n';
+  assert.equal(cli([formatScript, '--host-input', '--render'], input).stdout, 'input_ready\n' + candidate);
+});
+
 test('a complete rewrite can be formatted without the original question', () => {
   const draft = '关于本次改动，有一个变动要同步。中位数从 80 ms 降到 45 ms。\n请用 `npm test` 检查 src/export.mjs，详见 [记录](https://example.org/a_(b))。';
   const candidate = '中位数现在是 45 ms，之前是 80 ms。\n请用 `npm test` 检查 src/export.mjs，详见 [记录](https://example.org/a_(b))。';

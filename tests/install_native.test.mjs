@@ -2,20 +2,33 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { join, dirname } from 'node:path';
+import { join, dirname, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
+import { executable } from '../plugins/codex-polish/hooks/platform.mjs';
+import { windows, homeEnv } from './hook_fixture.mjs';
 import { ROOT, INDEX, PRODUCT, GUIDE, NAME, MARKET, PLUGIN_ID, nativeConfig } from '../scripts/install.mjs';
 
-const canRun = ['codex', 'npm', 'npx', 'tar'].every(
-  (name) => !spawnSync(name, ['--version'], { stdio: 'ignore' }).error
-);
+function tool(command) {
+  if (command === 'codex') return executable(command);
+  if (windows && ['npm', 'npx'].includes(command)) {
+    const cli = process.env.npm_execpath || join(dirname(process.execPath), 'node_modules/npm/bin/npm-cli.js');
+    const script = join(dirname(cli), command + '-cli.js');
+    return fs.existsSync(script) ? { command: process.execPath, args: [script] } : null;
+  }
+  return { command, args: [] };
+}
+const canRun = ['codex', 'npm', 'npx', ...(windows ? [] : ['tar'])].every(name => {
+  const bin = tool(name);
+  return bin && spawnSync(bin.command, [...bin.args, '--version'], { stdio: 'ignore' }).status === 0;
+});
+if (process.env.CI && !canRun) throw new Error('The native installer tests require Codex CLI, npm, npx and tar.');
 const nativeTest = (name, fn) => test(name, { skip: !canRun && 'requires native Codex CLI, npm, npx and tar' }, fn);
 const exampleEn = 'Explain what DNS does in one sentence, then polish your reply.';
 const exampleZh = '用一句话解释 DNS，再把你的回复润色一下。';
 
 function isolated(t) {
-  const base = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), 'codex-polish-native-')));
+  const base = fs.realpathSync.native(fs.mkdtempSync(join(tmpdir(), 'codex-polish-native-')));
   t.after(() => fs.rmSync(base, { recursive: true, force: true }));
   const home = join(base, 'Home'),
     profile = join(base, 'Test Profile');
@@ -23,7 +36,7 @@ function isolated(t) {
   fs.mkdirSync(home);
   const env = {
     PATH: process.env.PATH,
-    HOME: home,
+    ...homeEnv(home),
     CODEX_HOME: profile,
     XDG_CACHE_HOME: join(base, 'cache'),
     LC_ALL: 'en_US.UTF-8',
@@ -33,7 +46,8 @@ function isolated(t) {
     npm_config_fund: 'false'
   };
   function invoke(cmd, args, { cwd = base, expect = 0 } = {}) {
-    const result = spawnSync(cmd, args, {
+    const bin = tool(cmd);
+    const result = spawnSync(bin.command, [...bin.args, ...args], {
       cwd,
       env,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -46,7 +60,7 @@ function isolated(t) {
   const cli = (...args) => JSON.parse(invoke('codex', ['plugin', ...args, '--json']));
   const rows = () => cli('list', '--marketplace', MARKET).installed;
   const marketplace = () =>
-    cli('marketplace', 'list').marketplaces.find((row) => row.name === MARKET)?.marketplaceSource.source;
+    cli('marketplace', 'list').marketplaces.find((row) => row.name === MARKET)?.root;
   const snapshot = () => {
     const market = marketplace();
     if (!market) return;
@@ -63,12 +77,18 @@ nativeTest(
     const [pack] = JSON.parse(
       invoke('npm', ['pack', '--ignore-scripts', '--json', '--pack-destination', base], { cwd: ROOT })
     );
-    invoke('tar', ['-xzf', pack.filename]);
-    const download = join(base, '下载的插件');
-    fs.renameSync(join(base, 'package'), download);
+    const extraction = join(base, '下载的插件');
+    let download = extraction;
+    if (windows) {
+      invoke('npm', ['install', '--no-save', '--ignore-scripts', '--prefix', extraction, join(base, pack.filename)]);
+      download = join(extraction, 'node_modules', pack.name);
+    } else {
+      invoke('tar', ['-xzf', pack.filename]);
+      fs.renameSync(join(base, 'package'), download);
+    }
     const script = join(download, 'scripts/install.mjs');
     env.LC_ALL = 'zh_CN.UTF-8';
-    const chinese = invoke(join(download, '安装回复润色.command'), []);
+    const chinese = windows ? invoke(process.execPath, [script, 'setup']) : invoke(join(download, '安装回复润色.command'), []);
     assert.ok(chinese.includes('用一句话解释 DNS。'));
     assert.match(chinese, /未设置模式的项目默认自动润色/);
     assert.match(chinese, /主动要求.*Turbo.*跳过 OpenAI/);
@@ -81,7 +101,8 @@ nativeTest(
     assert.doesNotMatch(chinese, /GEMINI_API_KEY|aistudio.google.com/);
     invoke(process.execPath, [script, 'uninstall']);
     env.LC_ALL = 'en_US.UTF-8';
-    const english = invoke(join(download, 'Install Codex Polish.command'), []);
+    const englishSetup = () => windows ? invoke(process.execPath, [script, 'setup']) : invoke(join(download, 'Install Codex Polish.command'), []);
+    const english = englishSetup();
     assert.ok(english.includes('Explain what DNS does in one sentence.'));
     assert.match(english, /without a saved mode default to automatic polishing/);
     assert.match(english, /polish or rewrite.*Turbo.*skips OpenAI/i);
@@ -90,7 +111,7 @@ nativeTest(
     assert.match(english, /keys or tokens in the text are sent as written/);
     assert.match(english, /trust.*UserPromptSubmit.*\/hooks.*new chat/);
     const first = snapshot();
-    assert.ok(first.startsWith(join(profile,'codex-polish','sources') + '/'));
+    assert.ok(first.startsWith(join(profile,'codex-polish','sources') + sep));
     assert.ok(english.includes(join(first, GUIDE.replace('credentials.md', 'credentials.en.md'))));
     assert.equal(rows()[0].enabled, true);
     const rpc = (method, params) => nativeConfig(method, params, { env, cwd: base, experimental: true });
@@ -113,7 +134,7 @@ nativeTest(
     assert.match(fs.readFileSync(join(polishing, 'SKILL.md'), 'utf8'), /\]\((?:\.\/)?WORKFLOW\.md\)/);
     fs.writeFileSync(join(cache, 'user-note'), 'edited cache');
     fs.appendFileSync(join(download, GUIDE), '\n<!-- replacement build -->');
-    assert.match(invoke(join(download, 'Install Codex Polish.command'), []), /disabled/);
+    assert.match(englishSetup(), /disabled/);
     const changed = snapshot();
     assert.notEqual(first, changed);
     assert.equal(rows()[0].enabled, false);
@@ -182,7 +203,7 @@ nativeTest('native hook trust survives identical content and reports package, ed
     if (change) fs.appendFileSync(path, change);
     else {
       const manifest = JSON.parse(fs.readFileSync(path));
-      manifest.hooks.UserPromptSubmit[0].hooks[0].command += ' ';
+      manifest.hooks.UserPromptSubmit[0].hooks[0][windows ? 'commandWindows' : 'command'] += ' ';
       fs.writeFileSync(path, JSON.stringify(manifest));
     }
     assert.match(install('update'), /trust UserPromptSubmit again/, relative);
@@ -200,6 +221,19 @@ nativeTest('native hook trust survives identical content and reports package, ed
     initial = changed;
   }
 });
+nativeTest('a separately registered local marketplace with the same name survives setup and uninstall', t => {
+  const { base, cli, invoke, marketplace } = isolated(t);
+  const foreign = join(base, 'another marketplace');
+  fs.mkdirSync(dirname(join(foreign, INDEX)), { recursive: true });
+  fs.copyFileSync(join(ROOT, INDEX), join(foreign, INDEX));
+  fs.cpSync(join(ROOT, PRODUCT), join(foreign, PRODUCT), { recursive: true });
+  cli('marketplace', 'add', foreign);
+  for (const action of ['setup', 'uninstall']) {
+    assert.match(invoke(process.execPath, [join(ROOT, 'scripts/install.mjs'), action], { expect: 1 }), /different source/);
+    assert.equal(fs.realpathSync.native(marketplace()), fs.realpathSync.native(foreign));
+  }
+});
+
 nativeTest('explicit uninstall clears the current plugin after its marketplace was removed', (t) => {
   const { profile, local, cli, invoke } = isolated(t);
   local('setup');

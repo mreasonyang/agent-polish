@@ -2,7 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { makeProject, run, preferences, plugin, json } from './hook_fixture.mjs';
+import { execFileSync } from 'node:child_process';
+import { windowsSystemTool } from '../plugins/codex-polish/hooks/platform.mjs';
+import { makeProject, run, preferences, plugin, json, windows } from './hook_fixture.mjs';
 
 const SESSION = '877b05ee-93ac-4a48-abaa-493236a9a2d2', OTHER = '4c7e8db6-5efb-417b-9193-57e8bc405314';
 const prefURL = new URL('../plugins/codex-polish/hooks/preferences.mjs', import.meta.url).href;
@@ -44,7 +46,7 @@ test('manual and auto store only metadata and the hook never prints it', t => {
   assert.ok(!reminder.includes('transcript') && !reminder.includes(SESSION));
   assert.equal(source().turn_id, 'turn-2');
   const db = database();
-  assert.equal(fs.statSync(db).mode & 0o077, 0);
+  if (!windows) assert.equal(fs.statSync(db).mode & 0o077, 0);
   const data = fs.readFileSync(db);
   assert.ok(!data.includes('a private user message') && !data.includes('synthetic private conversation'));
 });
@@ -116,10 +118,12 @@ test('uses private cache only and prunes stale pointers', t => {
   const { hook, source, database, sql } = fixture(t);
   hook();
   const file = database();
-  fs.chmodSync(file, 0o644);
+  if (windows) execFileSync(windowsSystemTool('icacls.exe'), [file, '/grant', '*S-1-1-0:(R)']);
+  else fs.chmodSync(file, 0o644);
   assert.equal(source(), null);
   assert.match(hook(), /additionalContext/);
-  fs.chmodSync(file, 0o600);
+  if (windows) execFileSync(windowsSystemTool('icacls.exe'), [file, '/remove:g', '*S-1-1-0']);
+  else fs.chmodSync(file, 0o600);
   sql('UPDATE history_source SET updated=0');
   assert.equal(source(), null);
   hook({ session_id: OTHER });

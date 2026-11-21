@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import { PROMPT_FILE, readProjectSetting } from './project_setting.mjs';
+import { isPromptReference } from './prompt_link.mjs';
 import { projectRewriteMode } from './rewrite_mode.mjs';
 import { readLimited, utf8 } from '../skills/codex-polish/scripts/cli_io.mjs';
 
@@ -49,5 +50,6 @@ export function readEditorPrompt(cwd, mode = projectRewriteMode(cwd), { selectio
 export async function readPromptInput(input) {
   const bytes = await readLimited(input);
   customText(bytes);
+  if (isPromptReference(bytes)) throw new Error('invalid_editor_prompt');
   return bytes;
 }

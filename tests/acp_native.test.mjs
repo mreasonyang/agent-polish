@@ -148,7 +148,7 @@ function openTurn(t, scenario, { catalog = false } = {}) {
 
 // Exercise the emitted submit command through a real terminal. A redirected pipe
 // cannot detect console echo, canonical input truncation, or ConPTY Unicode loss.
-async function submit(t, exec, env, material) {
+async function submit(exec, env, material) {
   if (!windows) return submitWithCodex(exec, env, material);
   const line = JSON.stringify(material) + '\n';
   assert.ok(exec.tty);
@@ -159,7 +159,6 @@ async function submit(t, exec, env, material) {
   let output = '';
   let sent = false;
   let code;
-  t.after(() => { if (code === undefined) terminal.kill(); });
   terminal.onData(data => {
     output += data;
     if (!sent && output.includes('input_ready')) {
@@ -167,8 +166,13 @@ async function submit(t, exec, env, material) {
       terminal.write(line);
     }
   });
-  code = await byDeadline(closed, () => 'ConPTY submit timed out ' +
-    (sent ? 'after writing the complete JSON record' : 'before input_ready'));
+  try {
+    code = await byDeadline(closed, () => 'ConPTY submit timed out ' +
+      (sent ? 'after writing the complete JSON record' : 'before input_ready'));
+  } finally {
+    // node-pty releases its Windows output worker on explicit disposal, even after shell exit.
+    terminal.kill();
+  }
   assert.equal(code, 0, output);
   assert.ok(sent, 'the terminal must announce input_ready');
   assert.doesNotMatch(output, /私有原稿|fixture-question|rewrite_request|draft"/);
@@ -183,7 +187,7 @@ for (const scenario of ['interleaved', 'unchanged']) {
     const draft = scenario === 'unchanged' ? '  私有原稿。\r\n' :
       ('  私有原稿 「雪🐕🏽」 e\u0301 \\ " \t\r\n').repeat(1200) + '末行  ';
     const material = { question: 'fixture-question: $() \u{1f3d4}\ufe0f', draft, rewrite_request: 'Keep the quotes and line endings.' };
-    await submit(t, step.exec, ctx.env, material);
+    await submit(step.exec, ctx.env, material);
 
     const result = await ctx.event();
     const frames = ctx.requests();
@@ -223,7 +227,7 @@ for (const [scenario, reason] of [
     let result = await ctx.handshake();
     if (scenario !== 'no-hydrogen') {
       assert.equal(result.event, 'submit');
-      await submit(t, result.exec, ctx.env, { question: 'fixture-question', draft });
+      await submit(result.exec, ctx.env, { question: 'fixture-question', draft });
       result = await ctx.event();
     }
     assert.deepEqual(result, { event: 'error', stage: scenario === 'no-hydrogen' ? 'session/new' : 'session/prompt', reason });
@@ -241,7 +245,7 @@ test('interrupting the host reaps the stalled native provider and its workspace'
   const ctx = openTurn(t, 'stalled');
   const step = await ctx.handshake();
   assert.equal(step.event, 'submit');
-  await submit(t, step.exec, ctx.env, { question: 'fixture-question', draft: '私有原稿' });
+  await submit(step.exec, ctx.env, { question: 'fixture-question', draft: '私有原稿' });
   await waitFor(() => ctx.requests().some(f => f.method === 'session/prompt'), 'the turn must be in progress');
   assert.ok(ctx.host.kill('SIGTERM'));
   await ctx.finished();
@@ -251,7 +255,7 @@ test('interrupting the host reaps the stalled native provider and its workspace'
 test('a Windows cancellation descriptor stops only the active ACP session', { skip: !windows, timeout: 75_000 }, async t => {
   const ctx = openTurn(t, 'stalled');
   const step = await ctx.handshake();
-  await submit(t, step.exec, ctx.env, { question: 'fixture-question', draft: '私有原稿' });
+  await submit(step.exec, ctx.env, { question: 'fixture-question', draft: '私有原稿' });
   ctx.exec(step.cancel);
   assert.deepEqual(await ctx.event(), { event: 'error', stage: 'session/prompt', reason: 'acp_incomplete' });
   assert.deepEqual(ctx.requests().at(-1), { jsonrpc: '2.0', method: 'session/cancel', params: { sessionId: SESSION } });

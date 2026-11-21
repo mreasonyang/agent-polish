@@ -118,8 +118,13 @@ export function savePromptLink(project, link, source) {
     }
     withCache('create', db => {
       db.exec('BEGIN IMMEDIATE; CREATE TABLE IF NOT EXISTS prompt_link (scope TEXT PRIMARY KEY, binding TEXT NOT NULL)');
-      db.prepare('INSERT OR REPLACE INTO prompt_link VALUES (?,?)').run(cacheScope(project), binding(temporary, target));
+      const save = db.prepare('INSERT OR REPLACE INTO prompt_link VALUES (?,?)');
+      const scope = cacheScope(project);
       fs.renameSync(temporary, link);
+      // NTFS can preserve the previous destination's creation time on rename.
+      // Record the identity readers will see at the published name. The write
+      // transaction serializes concurrent choices for this project.
+      save.run(scope, binding(link, target));
       db.exec('COMMIT');
     });
   } finally { fs.rmSync(temporary, { force: true }); }

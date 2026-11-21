@@ -72,3 +72,28 @@ export function openRegular(file) {
     throw error;
   }
 }
+
+// MoveFileExW can briefly reject replacement while another process has the
+// destination open without delete sharing. Keep the completed source intact and
+// recheck the destination on every attempt. Never unlink the old setting first.
+export function replaceSettingFile(source, target, allowLink = false) {
+  const staged = windows ? fs.lstatSync(source, { bigint: true }) : null;
+  for (let delay = 5; ; delay *= 2) {
+    try {
+      const current = fs.lstatSync(target, { throwIfNoEntry: false });
+      if (current && !current.isFile() && !(allowLink && current.isSymbolicLink()))
+        throw Object.assign(new Error('invalid setting'), { code: 'EINVAL' });
+      fs.renameSync(source, target);
+      return;
+    } catch (error) {
+      const inspectingTarget = error.syscall === 'lstat' && error.path === target;
+      const replacingTarget = error.syscall === 'rename' && error.path === source && error.dest === target;
+      const retryable = ['EBUSY', 'EPERM', 'EACCES'].includes(error.code) ||
+        (replacingTarget && error.code === 'ENOENT');
+      if (!windows || delay > 320 || !(inspectingTarget || replacingTarget) || !retryable) throw error;
+      const current = fs.lstatSync(source, { bigint: true, throwIfNoEntry: false });
+      if (!current?.isFile() || !sameEntry(current, staged)) throw error;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delay);
+    }
+  }
+}

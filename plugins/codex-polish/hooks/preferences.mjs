@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { executable } from './platform.mjs';
+import { executable, windows } from './platform.mjs';
 import { parseArgs } from 'node:util';
 import { projectRoot, readProjectSetting, accessProjectSetting } from './project_setting.mjs';
 import { PROMPT_FILE, readEditorPrompt, readPromptInput } from './editor_prompt.mjs';
@@ -458,9 +458,15 @@ async function main(args) {
       console.error(t('请选择包含非空 UTF-8 文本的普通文件。', 'Choose a regular file containing nonempty UTF-8 text.'));
       return 1;
     }
+    if (windows && error.syscall === 'rename' && ['EBUSY', 'EPERM', 'EACCES'].includes(error.code)) {
+      console.error(t('无法替换项目设置文件。请关闭正在使用它的程序并检查写入权限。',
+        'Could not replace the project setting. Close programs using the file and check write access.') + ` (rename ${error.code})`);
+      return 1;
+    }
     console.error(error instanceof RangeError ? t('无法保存设置。', "Couldn't save the setting. ") + error.message :
       t('无法保存设置。请确认项目目录存在，而且能在 .codex 目录里写入普通文件。',
-        "Couldn't save the setting. Check that the project exists and you can write to its .codex folder."));
+        "Couldn't save the setting. Check that the project exists and you can write to its .codex folder.") +
+      (error.syscall && error.code ? ` (${error.syscall} ${error.code})` : ''));
     return 1;
   }
   console.log(JSON.stringify(result));

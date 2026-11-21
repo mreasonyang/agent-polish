@@ -21,7 +21,7 @@ node -e "require('node:fs').mkdirSync('dist', { recursive: true })"
 npm pack --ignore-scripts --pack-destination dist
 ```
 
-`npm pack` 会把 `@kyun.si/codex-polish` 的 `0.0.1-beta.7` 版打包为 `dist/kyun.si-codex-polish-0.0.1-beta.7.tgz`。默认测试无需 API 密钥，原生安装测试会使用临时 Codex 配置。Decisions 测试使用模拟响应验证风格判定。
+`npm pack` 会把 `@kyun.si/codex-polish` 的 `0.0.1-beta.8` 版打包为 `dist/kyun.si-codex-polish-0.0.1-beta.8.tgz`。默认测试无需 API 密钥，原生安装测试会使用临时 Codex 配置。Decisions 测试使用模拟响应验证风格判定。
 
 ## 反馈问题
 
@@ -35,11 +35,11 @@ npm pack --ignore-scripts --pack-destination dist
 
 ## 发布 beta
 
-将 `package.json` 和插件清单中的版本一同改为 `X.Y.Z-beta.N`，提交后推送同名 Git 标签。例如发布 `0.0.1-beta.7` 时运行：
+将 `package.json` 和插件清单中的版本一同改为 `X.Y.Z-beta.N`，提交后推送同名 Git 标签。例如发布 `0.0.1-beta.8` 时运行：
 
 ```sh
-git tag v0.0.1-beta.7
-git push origin v0.0.1-beta.7
+git tag v0.0.1-beta.8
+git push origin v0.0.1-beta.8
 ```
 
 GitHub Actions 会测试这个标签的代码，将安装包发布到 npm 的 `beta` 标签，并创建 GitHub 预发布版。如果某一步失败，可以在 Actions 中选择发布工作流，用已有标签重试。

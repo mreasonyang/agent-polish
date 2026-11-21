@@ -2,7 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { windowsSystemTool } from '../plugins/codex-polish/hooks/platform.mjs';
 import { promisify } from 'node:util';
 import { makeProject, json, mkfifo, agyName, windows, homeEnv, runHookCommand, supportsFileSymlink, preferences, plugin, run } from './hook_fixture.mjs';
 import { accessProjectSetting } from '../plugins/codex-polish/hooks/project_setting.mjs';
@@ -346,8 +348,67 @@ test('invalid history input preserves saved value and malformed settings report 
 
 test('concurrent changes never leave partial or unrelated files', async t => {
   const { project, cwd, check, env } = fixture(t);
-  await Promise.all(Array.from({ length: 8 }, (_, i) => exec(process.execPath, [preferences, 'set-history-turns', String(i), '--cwd', cwd], { env })));
-  assert.deepEqual(fs.readdirSync(path.join(project, '.codex')), ['codex-polish.history-turns']); assert.ok(check().history_turns < 8);
+  const dir = path.join(project, '.codex');
+  const file = path.join(dir, 'codex-polish.history-turns');
+  for (let round = 0; round < (windows ? 8 : 2); round++) {
+    const results = await Promise.allSettled(Array.from({ length: 8 }, (_, i) =>
+      exec(process.execPath, [preferences, 'set-history-turns', String(i), '--cwd', cwd], { env })));
+    for (const [i, result] of results.entries()) {
+      assert.equal(result.status, 'fulfilled', result.reason?.message);
+      assert.equal(JSON.parse(result.value.stdout).history_turns, i);
+    }
+    assert.deepEqual(fs.readdirSync(dir), ['codex-polish.history-turns']);
+    const text = fs.readFileSync(file, 'utf8');
+    assert.match(text, /^[0-7]\n$/);
+    assert.equal(check().history_turns, Number(text));
+  }
+});
+
+test('Windows keeps a locked setting intact and completes atomic replacement once the holder releases it', { skip: !windows }, async t => {
+  let holder, closed;
+  t.after(async () => { if (holder?.exitCode === null) holder.kill(); await closed; });
+  const { home, project, call, env } = makeProject(t);
+  const setting = json(call(['set-history-turns', '7'])).file;
+  const dir = path.dirname(setting);
+  const release = path.join(home, 'release-handle');
+  const powershell = windowsSystemTool('WindowsPowerShell/v1.0/powershell.exe');
+  const script = `
+    $ErrorActionPreference='Stop'
+    $stream=[IO.File]::Open($env:SETTING,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::ReadWrite)
+    try {
+      [Console]::WriteLine('locked')
+      [Console]::Out.Flush()
+      while (![IO.File]::Exists($env:RELEASE)) { [Threading.Thread]::Sleep(5) }
+    } finally { $stream.Dispose() }`;
+  holder = spawn(powershell, ['-NoProfile', '-NonInteractive', '-Command', script], {
+    env: { ...env, SETTING: setting, RELEASE: release }, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true
+  });
+  closed = once(holder, 'close');
+  const ready = await Promise.race([once(holder.stdout, 'data'), closed.then(([code]) => {
+    throw new Error('File handle holder exited before locking the setting: ' + code);
+  })]);
+  assert.match(ready[0].toString(), /locked/);
+  const blocked = call(['set-history-turns', '4']);
+  assert.equal(blocked.status, 1);
+  assert.match(blocked.stderr, /rename (?:EPERM|EBUSY|EACCES)/);
+  assert.equal(fs.readFileSync(setting, 'utf8'), '7\n');
+  assert.deepEqual(fs.readdirSync(dir), [path.basename(setting)]);
+  let sawConflict = false;
+  const rename = fs.renameSync;
+  t.mock.method(fs, 'renameSync', (from, to) => {
+    try { return rename(from, to); }
+    catch (error) {
+      assert.equal(to, path.basename(setting));
+      assert.ok(['EPERM', 'EBUSY', 'EACCES'].includes(error.code));
+      sawConflict = true;
+      fs.writeFileSync(release, '');
+      throw error;
+    }
+  });
+  accessProjectSetting(dir, 'write', path.basename(setting), '4');
+  assert.equal(sawConflict, true);
+  assert.equal(fs.readFileSync(setting, 'utf8'), '4\n');
+  assert.deepEqual(fs.readdirSync(path.join(project, '.codex')), [path.basename(setting)]);
 });
 
 test('check never launches agy or returns credentials', t => {

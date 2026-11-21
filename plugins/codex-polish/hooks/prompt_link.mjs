@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { windows, sameEntry } from './platform.mjs';
+import { windows, sameEntry, replaceSettingFile } from './platform.mjs';
 import { createHash, randomBytes } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { cacheScope, withCache } from './recovery.mjs';
@@ -111,21 +111,24 @@ export function savePromptLink(project, link, source) {
   } else {
     fs.symlinkSync(relative, temporary);
   }
+  let published = false;
   try {
     if (tracked) {
-      fs.renameSync(temporary, link);
+      replaceSettingFile(temporary, link, true);
+      published = true;
       return;
     }
     withCache('create', db => {
       db.exec('BEGIN IMMEDIATE; CREATE TABLE IF NOT EXISTS prompt_link (scope TEXT PRIMARY KEY, binding TEXT NOT NULL)');
       const save = db.prepare('INSERT OR REPLACE INTO prompt_link VALUES (?,?)');
       const scope = cacheScope(project);
-      fs.renameSync(temporary, link);
+      replaceSettingFile(temporary, link, true);
+      published = true;
       // NTFS can preserve the previous destination's creation time on rename.
       // Record the identity readers will see at the published name. The write
       // transaction serializes concurrent choices for this project.
       save.run(scope, binding(link, target));
       db.exec('COMMIT');
     });
-  } finally { fs.rmSync(temporary, { force: true }); }
+  } finally { if (!published) fs.rmSync(temporary, { force: true }); }
 }

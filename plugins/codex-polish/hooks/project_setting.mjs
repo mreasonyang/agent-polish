@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { windows, openRegular, sameEntry } from './platform.mjs';
+import { windows, openRegular, sameEntry, replaceSettingFile } from './platform.mjs';
 import { readPromptLink, savePromptLink, resolvePromptBytes } from './prompt_link.mjs';
 
 export const PROMPT_FILE = 'codex-polish.prompt.md';
@@ -36,19 +36,20 @@ function accessSetting(project, operation, filename, value) {
     }
   }
   if (!['write', 'remove', 'link'].includes(operation)) throw new Error('invalid operation');
-  const current = fs.lstatSync(target, { throwIfNoEntry: false });
-  if (current && !current.isFile() && !(filename === PROMPT_FILE && current.isSymbolicLink()))
-    throw Object.assign(new Error('invalid setting'), { code: 'EINVAL' });
   if (operation === 'link') {
     if (filename !== PROMPT_FILE) throw new Error('invalid setting');
     return savePromptLink(project, target, value);
   }
   if (operation === 'remove') {
+    const current = fs.lstatSync(target, { throwIfNoEntry: false });
+    if (current && !current.isFile() && !(filename === PROMPT_FILE && current.isSymbolicLink()))
+      throw Object.assign(new Error('invalid setting'), { code: 'EINVAL' });
     if (current) fs.unlinkSync(target);
     return null;
   }
   const temporary = '.' + filename + '-' + randomBytes(12).toString('hex');
   const fd = fs.openSync(temporary, 'wx', 0o600);
+  let published = false;
   try {
     try {
       if (Buffer.isBuffer(value)) fs.writeFileSync(fd, value);
@@ -56,9 +57,10 @@ function accessSetting(project, operation, filename, value) {
     } finally {
       fs.closeSync(fd);
     }
-    fs.renameSync(temporary, target);
+    replaceSettingFile(temporary, target, filename === PROMPT_FILE);
+    published = true;
   } finally {
-    fs.rmSync(temporary, { force: true });
+    if (!published) fs.rmSync(temporary, { force: true });
   }
   return null;
 }

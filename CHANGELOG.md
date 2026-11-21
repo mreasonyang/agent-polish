@@ -2,10 +2,13 @@
 
 [中文使用说明](docs/README.zh-CN.md) · [English README](README.md)
 
-## 0.0.1-beta.7
+## 0.0.1-beta.8
 
 - Windows 用户可以从 PowerShell 安装、更新和卸载插件。Codex 通过本机的 `agy.exe acp` 改写回复，可以使用自动钩子、选择模型和取回长回复。
 - Windows users can install, update, or uninstall from PowerShell. Codex uses the native `agy.exe acp` for rewrites, including automatic polishing, model selection, and paged delivery for long replies.
+
+- 修复多个 Windows 会话同时保存同一项目设置时偶发的写入失败。
+- Fixed an intermittent Windows error when multiple sessions saved the same project setting at once.
 
 ## 0.0.1-beta.6
 

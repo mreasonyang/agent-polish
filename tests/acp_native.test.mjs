@@ -22,7 +22,7 @@ const model = 'gemini-4-hydrogen';
 function shellArgs(exec) {
   if (!windows) return ['-c', exec.cmd];
   assert.match(basename(exec.shell), /^powershell(?:\.exe)?$/i);
-  return ['-NoLogo', '-NoProfile', '-Command', exec.cmd];
+  return ['-NoProfile', '-Command', exec.cmd];
 }
 
 function run(exe, args, options) {
@@ -335,7 +335,7 @@ async function submitWithCodex(exec, fixtureEnv, material) {
         server.stdin.write('{"method":"initialized"}\n');
         waiting = 'input_ready on the ACP submit terminal';
         if (windows) {
-          const cmd = '[IO.File]::WriteAllText(' + psArg(marker) + ', "PowerShell started")\n' +
+          const cmd = '[IO.File]::WriteAllText(' + psArg(marker) + ", 'PowerShell started')\n" +
             "Write-Output 'ps-ready'\n& " + psArg(process.execPath) + ' ' + psArg(probePath);
           rpc(4, 'command/exec', { command: [exec.shell, ...shellArgs({ ...exec, cmd })], cwd: exec.workdir, env,
             processId: 'stdio-probe', tty: true, timeoutMs: 10_000, sandboxPolicy: { type: 'dangerFullAccess' } });

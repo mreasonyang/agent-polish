@@ -17,10 +17,12 @@ export function psArg(value) {
   return "([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('" + Buffer.from(value).toString('base64') + "')))";
 }
 
-export function windowsCommand(args, directory) {
+export function windowsCommand(args, directory, { materialInput = false } = {}) {
+  // The material reader emits only an ASCII ready marker. Start it directly on
+  // the current console; the page reader can also emit arbitrary UTF-8 Markdown.
+  const encoding = materialInput ? '' : '[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); ';
   return { shell: powershell, login: false, workdir: directory,
-    cmd: '[Console]::OutputEncoding = New-Object Text.UTF8Encoding($false)\n& ' +
-      args.map(psArg).join(' ') + '\nexit $LASTEXITCODE' };
+    cmd: encoding + '& ' + args.map(psArg).join(' ') + '; exit $LASTEXITCODE' };
 }
 
 function checkAcl(entries, restrict = false) {

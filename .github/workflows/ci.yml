@@ -19,6 +19,7 @@ jobs:
           - { os: ubuntu-latest, name: Linux }
           - { os: macos-latest, name: macOS }
           - { os: windows-latest, name: Windows ACP, pattern: '^acp' }
+          - { os: windows-latest, name: Windows Codex host, pattern: '^acp_native' }
           - { os: windows-latest, name: Windows installer, pattern: '^install' }
           - { os: windows-latest, name: Windows core, pattern: '^(?!acp|install)' }
     name: ${{ matrix.name }}
@@ -51,7 +52,11 @@ jobs:
         run: |
           $files = @(Get-ChildItem tests -Filter '*.test.mjs' | Where-Object { $_.Name -match $env:TEST_PATTERN })
           if (!$files.Count) { throw 'No tests matched' }
-          node --test $files.FullName
+          $options = switch ('${{ matrix.name }}') {
+            'Windows Codex host' { '--test-name-pattern=^Codex app-server writes' }
+            'Windows ACP' { '--test-skip-pattern=^Codex app-server writes' }
+          }
+          node --test @options $files.FullName
       - run: npm pack --ignore-scripts --dry-run
   windows-package:
     runs-on: windows-latest

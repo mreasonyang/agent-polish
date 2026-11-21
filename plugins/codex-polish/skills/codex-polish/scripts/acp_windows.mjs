@@ -75,12 +75,12 @@ async function relay(settings, parent) {
   setInterval(() => { if (!hostAlive()) void parentLost(); }, 250).unref();
   process.stderr.on('error', () => void parentLost());
   process.stdout.on('error', () => { if (!hostAlive()) void parentLost(); else stop(); });
-  const command = args => windowsCommand([process.execPath, ...args], dirname(directory));
+  const command = (args, options) => windowsCommand([process.execPath, ...args], dirname(directory), options);
   const transport = { material, submitted: () => submitted,
     write: frame => command([self, '--frame', channel.endpoint, encode(frame)]),
     submit(args, sessionId) {
       selectedSession = sessionId;
-      return { ...command([payload, '--windows-submit', channel.endpoint, encode(args)]), tty: true, yield_time_ms: 250 };
+      return { ...command([payload, '--windows-submit', channel.endpoint, encode(args)], { materialInput: true }), tty: true, yield_time_ms: 250 };
     },
   };
   const emit = event => {

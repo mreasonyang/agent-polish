@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { closeSync, constants, mkdirSync, openSync, readFileSync, readSync, rmSync, writeFileSync, unlinkSync } from 'node:fs';
 import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { json, run, temporary } from './hook_fixture.mjs';
+import { agyName, homeEnv, json, run, temporary } from './hook_fixture.mjs';
 import { prepareWorkspace } from '../plugins/codex-polish/skills/codex-polish/scripts/acp_workspace.mjs';
 
 const plugin = fileURLToPath(new URL('../plugins/codex-polish/', import.meta.url));
@@ -83,12 +83,10 @@ function setup(t) {
   mkdirSync(project);
   const bin = join(root, 'bin');
   mkdirSync(bin);
-  const agy = process.platform === 'win32' ? 'agy.exe' : 'agy';
   // The payload policy checks availability but never starts the provider.
-  writeFileSync(join(bin, agy), '', { mode: 0o700 });
-  const env = {PATH:[bin,dirname(process.execPath)].join(delimiter),HOME:root,USERPROFILE:root,
+  writeFileSync(join(bin, agyName), '', { mode: 0o700 });
+  const env = {...homeEnv(root), PATH:[bin,dirname(process.execPath)].join(delimiter),
     CODEX_HOME:join(root,'codex'),CODEX_THREAD_ID:session,XDG_CACHE_HOME:join(root,'cache')};
-  if (process.platform === 'win32') env.SystemRoot = process.env.SystemRoot;
   const transcript = join(env.CODEX_HOME, 'sessions/2026/11/19', 'rollout-2026-11-19T11-30-00-'+session+'.jsonl');
   function cli(script, args, data) {
     return run(script, args, {env,input:JSON.stringify(data)});

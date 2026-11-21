@@ -1,7 +1,6 @@
 import { closeSync, fstatSync, readSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import { parseArgs } from 'node:util';
-import { openRegular } from '../../../hooks/platform.mjs';
 import { readBundledEditorRole, readEditorPrompt } from '../../../hooks/editor_prompt.mjs';
 import { effectiveRewriteMode, REWRITE_TRIGGERS } from '../../../hooks/rewrite_mode.mjs';
 import { openRegular } from '../../../hooks/platform.mjs';

@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { windows, openRegular } from './platform.mjs';
+import { windows, openRegular, sameEntry } from './platform.mjs';
 import { secureDirectory, checkPrivatePath, checkPrivatePaths } from '../skills/codex-polish/scripts/acp_windows_io.mjs';
 import { createHash, randomBytes } from 'node:crypto';
 
@@ -152,7 +152,7 @@ export function removeProfileCache() {
     // After close, Windows rejects deletion if another connection opened it.
     if (windows && !retained) {
       const current = fs.lstatSync(file, { bigint: true });
-      if (!current.isFile() || expected.ino !== current.ino || expected.dev !== current.dev) return file;
+      if (!current.isFile() || !sameEntry(current, expected)) return file;
       fs.unlinkSync(file);
     }
     return retained;

@@ -63,6 +63,7 @@ function openTurn(t, scenario, { catalog = false } = {}) {
     '--route', 'acp', '--rewrite-mode', 'turbo', '--display', 'zh', '--no-history'];
   const { workspace, editor_role_file, start } = JSON.parse(run(process.execPath,
     [workspaceTool, '--agy-path', agy, '--auth', 'existing-session', ...options], { env }));
+  const providerCwd = fs.realpathSync.native(workspace);
   assert.equal(start.workdir, windows ? dirname(workspace) : workspace);
   assert.equal(start.tty, !windows);
   assert.match(fs.readFileSync(editor_role_file, 'utf8'), /codex-polish-editor/);
@@ -78,7 +79,7 @@ function openTurn(t, scenario, { catalog = false } = {}) {
       child.unref();
     }
     fs.writeFileSync(${JSON.stringify(pidFile)}, JSON.stringify({pid:process.pid, descendant:child?.pid, argv:process.argv.slice(2),
-      key:process.env.OPENAI_API_KEY ?? null, cwd:process.cwd()}));
+      key:process.env.OPENAI_API_KEY ?? null, cwd:fs.realpathSync.native(process.cwd())}));
     import(${JSON.stringify(fixtureURL)}).then(({ Fixture, serveFixture }) =>
       serveFixture(new Fixture(${JSON.stringify(scenario)}), frame =>
         fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify(frame) + '\\n')));`);
@@ -114,7 +115,7 @@ function openTurn(t, scenario, { catalog = false } = {}) {
     const info = JSON.parse(fs.readFileSync(pidFile, 'utf8'));
     assert.deepEqual(info.argv, ['--agent', 'codex-polish-editor', '--sandbox']);
     assert.equal(info.key, null);
-    assert.equal(info.cwd, workspace);
+    assert.equal(info.cwd, providerCwd);
     if (windows && scenario === 'stalled') assert.ok(info.descendant > 0);
     await waitFor(() => gone(info.pid) && (!info.descendant || gone(info.descendant)) && !fs.existsSync(workspace),
       'provider, descendant and workspace must be reclaimed');

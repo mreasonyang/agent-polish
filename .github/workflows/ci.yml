@@ -38,8 +38,19 @@ jobs:
           "NODE_PATH=$(Join-Path $prefix 'node_modules')" >> $env:GITHUB_ENV
       - run: npm test
       - run: npm pack --ignore-scripts --dry-run
+  windows-package:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - run: npm install --global @openai/codex@0.170.0
       - name: Install the packed plugin and Google's Windows CLI
-        if: ${{ !cancelled() && runner.os == 'Windows' }}
         shell: pwsh
         run: |
           $env:CODEX_HOME = Join-Path $env:RUNNER_TEMP 'Polish smoke profile'

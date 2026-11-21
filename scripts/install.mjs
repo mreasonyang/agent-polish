@@ -13,7 +13,7 @@ import { createInterface as createPrompt } from 'node:readline/promises';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { isDeepStrictEqual } from 'node:util';
 import { fileURLToPath } from 'node:url';
-import { executable, windows, agyDirectory, windowsSystemTool, openRegular } from '../plugins/codex-polish/hooks/platform.mjs';
+import { executable, windows, agyDirectory, windowsSystemTool, openRegular, sameEntry } from '../plugins/codex-polish/hooks/platform.mjs';
 import { language, tr } from '../plugins/codex-polish/hooks/ui_locale.mjs';
 import { DEFAULT_GEMINI_MODEL, findAgy } from '../plugins/codex-polish/hooks/preferences.mjs';
 import { removeProfileCache, sqliteModule } from '../plugins/codex-polish/hooks/recovery.mjs';
@@ -692,16 +692,16 @@ async function setup(root, store, run, setEnabled, action) {
 function removeVerifiedEntries(entry, paths) {
   function enter(path, expected) {
     process.chdir(path);
-    const current = fs.statSync('.');
-    if (current.dev !== expected.dev || current.ino !== expected.ino)
+    const current = fs.statSync('.', { bigint: true });
+    if (!sameEntry(current, expected))
       throw new Error('Directory changed during cleanup');
   }
   function removeChildren(relative) {
-    const parent = fs.statSync('.');
+    const parent = fs.statSync('.', { bigint: true });
     for (const name of fs.readdirSync('.')) {
       const child = join(relative, name);
       if (!paths.has(child)) continue;
-      const info = fs.lstatSync(name);
+      const info = fs.lstatSync(name, { bigint: true });
       if (info.isDirectory()) {
         enter(name, info);
         removeChildren(child);
@@ -713,8 +713,8 @@ function removeVerifiedEntries(entry, paths) {
   const cwd = process.cwd();
   try {
     process.chdir(dirname(entry));
-    const store = fs.statSync('.');
-    const info = fs.lstatSync(basename(entry));
+    const store = fs.statSync('.', { bigint: true });
+    const info = fs.lstatSync(basename(entry), { bigint: true });
     if (!info.isDirectory()) throw new Error('Snapshot changed during cleanup');
     enter(basename(entry), info);
     removeChildren('');

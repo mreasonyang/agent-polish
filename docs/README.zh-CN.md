@@ -78,11 +78,11 @@ npx @kyun.si/codex-polish setup
 | 操作 | 命令 |
 | --- | --- |
 | 检查配置 | `npx @kyun.si/codex-polish doctor` |
-| 更新 | `npx @kyun.si/codex-polish update` |
-| 卸载 | `npx @kyun.si/codex-polish uninstall` |
+| 更新 | `npx @kyun.si/codex-polish@latest update` |
+| 卸载 | `npx @kyun.si/codex-polish@latest uninstall` |
 
 在 Windows PowerShell 中，使用 `npx.cmd` 调用 `doctor`、`update` 和 `uninstall`。`doctor` 检查本机依赖、已保存的设置和 hook 信任状态。要确认 Antigravity 登录是否可用，可以说 **“选择改写模型”**，查看账号当前能用的模型。插件更新后，Codex 可能提示你重新信任 hook。
 
-卸载会删除当前 Codex 配置保存的插件设置、自定义提示词和 OpenAI API 密钥。[卸载范围](technical.md#安装更新和卸载)
+卸载会删除当前 Codex 配置保存的插件设置、自定义提示词和 OpenAI API 密钥。旧版留下的空锁文件和空插件目录也会一并清除，你自己放进去的无关文件和共用的 `agy` 会保留。[卸载范围](technical.md#安装更新和卸载)
 
 [凭据与配置指南](../plugins/codex-polish/skills/codex-polish-setup/references/credentials.md) · [技术参考](technical.md) · [离线评测](../evaluation/README.md) · [参与贡献](../CONTRIBUTING.md) · [安全说明](../SECURITY.md) · [更新记录](../CHANGELOG.md) · [Apache-2.0 许可证](../LICENSE)

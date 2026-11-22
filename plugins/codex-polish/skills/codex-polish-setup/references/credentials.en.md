@@ -16,7 +16,7 @@ Say **“Only polish when I ask”** for manual mode, **“Turn off polishing”
 
 Say **“Check Codex Polish setup”** to inspect the local configuration and **“Test the ACP connection”** to check the live connection. **“Choose a rewrite model”** shows your account’s models and the thinking levels available for the model you pick. Neither live check sends a draft.
 
-If `agy` works in your terminal but the chat reports a failure at `session/new`, try **“Choose a rewrite model”** in that same chat. If the host reports blocked network access or a denied write to the Antigravity sign-in file, check the permissions for that session. Trusting the hook enables the automatic trigger.
+If `agy` works in your terminal but the chat reports a failure at `session/new`, try **“Choose a rewrite model”** in that same chat. If the host reports blocked network access or a denied write to the Antigravity sign-in file, check the permissions for that session. In automatic mode, the trusted `UserPromptSubmit` hook triggers polishing on ordinary questions. It also records the session location so rewrites can include earlier exchanges according to your settings. Antigravity sign-in and network access have their own permissions.
 
 ## Optional OpenAI Decisions API
 

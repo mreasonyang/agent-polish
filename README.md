@@ -78,11 +78,11 @@ Codex Polish sends the selected text as written, including any keys or tokens it
 | Action | Command |
 | --- | --- |
 | Check setup | `npx @kyun.si/codex-polish doctor` |
-| Update | `npx @kyun.si/codex-polish update` |
-| Uninstall | `npx @kyun.si/codex-polish uninstall` |
+| Update | `npx @kyun.si/codex-polish@latest update` |
+| Uninstall | `npx @kyun.si/codex-polish@latest uninstall` |
 
 In Windows PowerShell, use `npx.cmd` to run `doctor`, `update`, and `uninstall`. `doctor` checks local dependencies, your saved settings and hook trust. Ask **“Choose a rewrite model”** to check your Antigravity sign-in and see the available models. After an update, Codex may ask you to trust the hook again.
 
-Uninstall deletes the plugin settings, custom prompt and OpenAI API key saved in this Codex profile. [Uninstall details](docs/technical.en.md#installation-updates-and-uninstall)
+Uninstall deletes the plugin settings, custom prompt and OpenAI API key saved in this Codex profile. It also removes empty lock files and empty plugin directories left by older versions, while keeping any unrelated files you placed there and the shared `agy` installation. [Uninstall details](docs/technical.en.md#installation-updates-and-uninstall)
 
 [Credentials Guide](plugins/codex-polish/skills/codex-polish-setup/references/credentials.en.md) · [Technical Reference](docs/technical.en.md) · [Evaluation](evaluation/README.en.md) · [Contributing](CONTRIBUTING.en.md) · [Security](SECURITY.en.md) · [Changelog](CHANGELOG.md) · [Apache-2.0 License](LICENSE)

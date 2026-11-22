@@ -99,12 +99,12 @@ Codex agent 用宿主进程工具直接启动官方 `agy acp` 并逐条发送请
 | Google 认证方式不支持、缺少 agy 或宿主工具不可用 | 保留原稿。插件依次在 PATH 和 Google 的默认安装目录查找 agy。 |
 | Decisions 不可用、密钥无效、响应无效或材料超过接口限额 | 使用原稿继续调用 Gemini。每一轮独立判断。 |
 | ACP 握手失败、未登录、所选模型或思考等级不可用，或中途发生变更 | 当前 agent 结束本次 ACP 请求，回收进程并交付原稿。 |
-| 生成耗时较长或中断 | 进程仍在运行时继续等待。宿主或服务端明确超时、取消、断流或返回不完整时丢弃候选，同一请求最多发送一次。 |
+| 生成耗时较长或中断 | 进程仍在运行时继续等待。如果终端截掉了一页输出，就从原位置重读。若确认坏帧、进程退出且仍缺少预期响应，或遇到明确超时、取消、断流，则丢弃未完成输出并保留原稿。说明原因时会区分发送前、已提交或送达未知，同一草稿最多提交一次。 |
 | 本轮中途停用、修改要求或取消 | 外发前重新核对当前触发模式。收到新要求时丢弃旧候选，按新要求作答。用户取消则结束本轮。若只有服务端取消，用户仍在等待，就交付原稿。 |
 
 ## 安装、更新和卸载
 
-在任意目录运行 `npx @kyun.si/codex-polish setup` 即可从 npm 安装 Codex Polish。将最后一个参数换成 `update`、`doctor` 或 `uninstall` 即可更新、检查插件设置和本地环境或卸载。Windows PowerShell 中使用 `npx.cmd`。从 GitHub 源码安装时，在仓库根目录运行 `node scripts/install.mjs setup`，其余子命令相同。[安装步骤](README.zh-CN.md#快速开始)
+在任意目录运行 `npx @kyun.si/codex-polish setup` 即可从 npm 安装 Codex Polish。检查插件设置和本地环境可运行 `npx @kyun.si/codex-polish doctor`，更新和卸载可运行 `npx @kyun.si/codex-polish@latest update` 和 `npx @kyun.si/codex-polish@latest uninstall`。Windows PowerShell 中使用 `npx.cmd`。从 GitHub 源码安装时，在仓库根目录运行 `node scripts/install.mjs setup`，其余子命令相同。[安装步骤](README.zh-CN.md#快速开始)
 
 macOS 用户也可以解压安装包，在 Finder 中双击安装脚本。每次交互运行 `setup`，第一屏都可用方向键为当前 Codex 配置选择 **Normal**（自动按需）、**Turbo**（自动每次）、**仅手动**（只在我要求时润色）或**关闭润色**。选择前三种模式且 `agy` 可用时，还可以继续选择 Gemini 模型和思考等级；思考等级固定的模型会跳过等级选择。选择**关闭润色**会保存全局 `off` 并直接结束，不再引导配置模型、依赖、密钥或 hook 信任，已保存的模型、思考等级、自定义提示词和密钥保持不变。再次运行 `setup` 会预选当前项，按**回车**即可保留，也可从同一菜单选择 Normal、Turbo 或仅手动重新开启。[Finder 安装脚本](../安装回复润色.command)
 
@@ -114,6 +114,6 @@ macOS 用户也可以解压安装包，在 Finder 中双击安装脚本。每次
 
 首次交互安装并选用普通模式时，安装器会询问是否启用 OpenAI Decisions API 检查，默认跳过。之后可在运行插件的机器上使用同一份 Codex 配置，运行 `npx @kyun.si/codex-polish openai` 管理密钥。Windows PowerShell 中使用 `npx.cmd`。终端隐藏输入，密钥保存在 `$CODEX_HOME/codex-polish/credentials/openai.key`。插件会忽略 `OPENAI_API_KEY`。[密钥设置与 API 计费](../plugins/codex-polish/skills/codex-polish-setup/references/credentials.md#选配-openai-decisions-api)
 
-卸载会移除插件和专用市场，清除会话指针，并删除当前 Codex 配置保存的所有润色设置、自定义提示词和 OpenAI 密钥。旧版曾在个别目录登记的设置文件若仍在原位，卸载时也会删除，包括 Git 跟踪的文件和后来被就地修改的文件。其他应用仍可使用共用的 `agy`。
+卸载会移除插件和专用市场，清除会话指针，删除当前 Codex 配置保存的所有润色设置、自定义提示词和 OpenAI 密钥，并清除旧版留下的空锁文件和空插件目录。旧版曾在个别目录登记的设置文件若仍在原位，卸载时也会删除，包括 Git 跟踪的文件和后来被就地修改的文件。你自己放进去的无关文件和共用的 `agy` 会保留。
 
-安装文件如有手动改动，卸载时会显示备份位置。使用本地打包的版本时，可将 npm 包名换成实际压缩包路径，例如 `npx --yes file:./kyun.si-codex-polish-VERSION.tgz uninstall`。
+卸载时，手动改过的安装来源快照可能留在原处，改过的插件缓存可能移到备份目录。卸载器会显示相应路径。如果 0.0.1 的安装命令仍在运行，请等它结束后再运行新版命令。使用本地打包的版本时，可将 npm 包名换成实际压缩包路径，例如 `npx --yes file:./kyun.si-codex-polish-VERSION.tgz uninstall`。

@@ -2,6 +2,11 @@
 
 [中文使用说明](docs/README.zh-CN.md) · [English README](README.md)
 
+## 0.0.3
+
+- 安装时从账号可用的 Gemini 模型中选择，再查询该模型的思考等级。支持固定思考等级的模型，查询时可按 Esc 取消。
+- Setup lets you choose from the Gemini models available to your account, then looks up the selected model’s thinking levels. It supports models with a fixed thinking level. Press Esc to cancel a lookup.
+
 ## 0.0.3-beta.1
 
 - 安装时先读取账号可用的 Gemini 模型，再查询所选模型的思考等级。查询期间可按 Esc 取消，支持固定思考等级的模型。

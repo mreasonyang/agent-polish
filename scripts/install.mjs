@@ -22,7 +22,7 @@ import { accessSettingFile, readProfileSetting, writeProfileSetting } from '../p
 import { readOpenAIKey, saveOpenAIKey, clearOpenAIKey } from '../plugins/codex-polish/hooks/openai_credentials.mjs';
 import { cleanupProjectSettings } from '../plugins/codex-polish/hooks/owned_settings.mjs';
 import { removeProfileCache, sqliteModule } from '../plugins/codex-polish/hooks/recovery.mjs';
-import { MAX_CONFIG_FRAME_BYTES, sessionCatalog } from '../plugins/codex-polish/skills/codex-polish/scripts/acp_models.mjs';
+import { openSetupCatalog } from './setup_catalog.mjs';
 import { preserve } from './native_cache.mjs';
 
 export const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -1209,15 +1209,15 @@ function openPage(url) {
       .status === 0
   );
 }
-async function* terminalKeys(input, output, show) {
-  if (input.destroyed || input.readableEnded) return;
+async function* terminalKeys(input, output, show, signal) {
+  if (input.destroyed || input.readableEnded || signal?.aborted) return;
   const wasRaw = !!input.isRaw;
   const wasFlowing = input.readableFlowing;
   function restoreInput() {
     if (!wasRaw && input.isRaw && !input.destroyed) input.setRawMode(false);
   }
   emitKeypressEvents(input);
-  const keys = on(input, 'keypress', { close: ['end', 'close'] });
+  const keys = on(input, 'keypress', { close: ['end', 'close'], signal });
   // A stream may destroy its terminal handle immediately after emitting end.
   input.once('end', restoreInput);
   try {
@@ -1225,6 +1225,8 @@ async function* terminalKeys(input, output, show) {
     input.resume();
     show();
     yield* keys;
+  } catch (error) {
+    if (!signal?.aborted || error.name !== 'AbortError') throw error;
   } finally {
     await keys.return();
     input.off('end', restoreInput);
@@ -1233,7 +1235,7 @@ async function* terminalKeys(input, output, show) {
     output.write('\n');
   }
 }
-async function chooseOption(title, options, lang, input = process.stdin, output = process.stdout, initialChoice) {
+async function chooseOption(title, options, lang, input = process.stdin, output = process.stdout, initialChoice, signal) {
   let selected = Math.max(0, options.findIndex(option => option.id === initialChoice));
   function draw() {
     for (const [index, option] of options.entries()) {
@@ -1248,7 +1250,7 @@ async function chooseOption(title, options, lang, input = process.stdin, output 
     output.write(title + '\n' + tr('用 ↑ ↓ 方向键移动，按回车确认。\n', 'Use ↑ ↓ to move and Enter to confirm.\n', lang));
     draw();
   };
-  for await (const [, key] of terminalKeys(input, output, show)) {
+  for await (const [, key] of terminalKeys(input, output, show, signal)) {
     if (key.name === 'return' || key.name === 'enter') return options[selected].id;
     if (key.name === 'escape' || (key.ctrl && ['c', 'd'].includes(key.name))) return null;
     if (key.name !== 'up' && key.name !== 'down') continue;
@@ -1350,49 +1352,21 @@ export function chooseSetupMode(lang, current, input, output) {
   ], lang, input, output, current);
 }
 
-export async function discoverSetupModels(checks, model) {
-  const workspace = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), 'codex-polish-models-')));
+// Keep Esc, Ctrl-C and EOF responsive while the Codex agent reads account metadata.
+async function waitForCatalog(operation, message, input, output, signal) {
+  const controller = new AbortController();
+  const cancelled = (async () => {
+    const show = () => output.write(message);
+    for await (const [, key] of terminalKeys(input, output, show, AbortSignal.any([signal, controller.signal]))) {
+      if (key.name === 'escape' || (key.ctrl && ['c', 'd'].includes(key.name))) break;
+    }
+    return null;
+  })();
   try {
-    if (windows) {
-      const { secureDirectory } = await import('../plugins/codex-polish/skills/codex-polish/scripts/acp_windows_io.mjs');
-      secureDirectory(workspace);
-    }
-    const reference = join(ROOT, PRODUCT, 'skills/codex-polish/references/acp.md');
-    const lastMessage = join(workspace, 'catalog.json');
-    const task = [
-      'Look up the Gemini models available to this account. Read the direct ACP catalog instructions in ' + JSON.stringify(reference) + '.',
-      'The official agy executable is ' + JSON.stringify(checks.agy_path) + ' and the authentication mode is ' + JSON.stringify(checks.google_auth_method) + '.',
-      'Use exec_command to open the official agy acp process yourself. Send each JSON-RPC line directly to its own terminal with write_stdin and read replies from the same handle. No scripts, pipes or relays may operate the connection.',
-      'Use request ID 3 for session/new. Only read configuration metadata. Do not submit a prompt to Gemini.',
-      model ? 'Select ' + JSON.stringify(model) + ' with session/set_config_option (request ID 4) if it is not already the current model. Read the configOptions for that model.' : 'Use the model list in the session/new reply.',
-      'Close the session and process. Return the single successful JSON-RPC response containing the requested configOptions as JSON in your final answer. Preserve the provider’s option IDs, labels, current values and options. No Markdown. If the lookup failed or the complete response is unavailable, return null.'
-    ].join('\n');
-    const cli = codexCommand();
-    const child = spawn(cli.command, [...cli.args, 'exec', '--ephemeral', '--skip-git-repo-check', '-C', workspace,
-      '-c', 'plugins."codex-polish@codex-polish-local".enabled=false', '--output-last-message', lastMessage, task], { cwd: workspace, stdio: 'ignore' });
-    const interrupt = () => child.kill('SIGINT');
-    const terminate = () => child.kill('SIGTERM');
-    process.once('SIGINT', interrupt);
-    process.once('SIGTERM', terminate);
-    let code;
-    try {
-      code = await new Promise((done, reject) => child.once('error', reject).once('close', done));
-    } finally {
-      process.off('SIGINT', interrupt);
-      process.off('SIGTERM', terminate);
-    }
-    if (code !== 0) return null;
-    try {
-      const line = readPlain(lastMessage, MAX_CONFIG_FRAME_BYTES).toString('utf8').trim();
-      const id = JSON.parse(line)?.id;
-      if (id !== 3 && !(model && id === 4)) return null;
-      const result = sessionCatalog(line, BigInt(id));
-      return !model || result.current_model === model ? result : null;
-    } catch {
-      return null;
-    }
+    return await Promise.race([cancelled, operation()]);
   } finally {
-    fs.rmSync(workspace, { force: true, recursive: true });
+    controller.abort();
+    await cancelled;
   }
 }
 
@@ -1401,13 +1375,10 @@ const thinkingLabels = {
   fixed: ['由模型固定', 'Fixed by the model']
 };
 
-export async function chooseSetupModel(checks, lang, input = process.stdin, output = process.stdout, discover = discoverSetupModels) {
-  const choose = (title, rows, initial) => chooseOption(title, rows, lang, input, output, initial);
+export async function chooseSetupModel(checks, lang, input = process.stdin, output = process.stdout, openCatalog = openSetupCatalog) {
+  const controller = new AbortController();
+  const choose = (title, rows, initial) => chooseOption(title, rows, lang, input, output, initial, controller.signal);
   const t = (zh, en) => tr(zh, en, lang);
-  const lookup = async (model) => {
-    output.write(t('正在查询 Antigravity…', 'Checking Antigravity…') + '\n');
-    try { return await discover(checks, model); } catch { return null; }
-  };
   const savedModel = checks.gemini_model_configured ? checks.gemini_model : null;
   const savedLevel = checks.gemini_thinking_level;
   const choices = [
@@ -1421,44 +1392,57 @@ export async function chooseSetupModel(checks, lang, input = process.stdin, outp
   const choice = await choose(t('选择改写用的 Gemini 模型', 'Choose the Gemini model for rewrites'), choices);
   if (!choice) return null;
   if (choice === 'keep') return { model: savedModel, thinkingLevel: savedLevel };
-  let model = DEFAULT_GEMINI_MODEL;
-  let levels = ['low', 'medium', 'high', 'xhigh'].map(id => ({ id }));
-  let current;
-  if (choice === 'lookup') {
-    const account = await lookup();
-    if (!account?.models?.length) {
-      output.write(t('没能读取模型。稍后在 Codex 里说「选择改写模型」可重试。',
-        'Couldn’t read the model list. Say “Choose a rewrite model” in Codex to retry.') + '\n');
-      return null;
+  async function chooseLevel(model, levels, current) {
+    if (!levels.length) {
+      output.write(t('这个模型的思考等级固定。', 'This model has a fixed thinking level.') + '\n');
+      return { model, thinkingLevel: 'fixed' };
     }
+    const rows = levels.map(({ id, name }) => {
+      const label = Object.hasOwn(thinkingLabels, id) ? t(...thinkingLabels[id]) : name;
+      return { id, name: id === DEFAULT_THINKING_LEVEL ? label + t('（默认）', ' (default)') : label };
+    });
+    const defaultLevel = rows.some(row => row.id === DEFAULT_THINKING_LEVEL) ? DEFAULT_THINKING_LEVEL : current;
+    const initial = model === savedModel && rows.some(row => row.id === savedLevel) ? savedLevel : defaultLevel;
+    const thinkingLevel = await choose(t('思考等级', 'Thinking level'), rows, initial);
+    return thinkingLevel ? { model, thinkingLevel } : null;
+  }
+  if (choice === 'default') {
+    const levels = savedModel === DEFAULT_GEMINI_MODEL && savedLevel === 'fixed' ? ['fixed'] : ['low', 'medium', 'high', 'xhigh'];
+    return chooseLevel(DEFAULT_GEMINI_MODEL, levels.map(id => ({ id })));
+  }
+
+  let session, model;
+  const interrupt = () => controller.abort();
+  process.once('SIGINT', interrupt);
+  process.once('SIGTERM', interrupt);
+  try {
+    session = await openCatalog(checks);
+    const account = await waitForCatalog(() => session.list(),
+      t('正在读取账号可用模型…（Esc 取消）', 'Looking up your models… (Esc to cancel)'), input, output, controller.signal);
+    if (!account) return null;
     const rows = account.models.map(({ id, name }) => ({
       id, name: account.models.some(other => other.id !== id && other.name === name) ? name + ' (' + id + ')' : name
     }));
     model = await choose(t('用哪个模型改写？', 'Which model should rewrite your replies?'), rows, savedModel);
     if (!model) return null;
-    const selected = account.current_model === model ? account : await lookup(model);
-    if (selected?.current_model !== model || !Array.isArray(selected.thinking_levels)) {
-      output.write(t('没能读取这个模型的思考等级。稍后在 Codex 里说「选择改写模型」可重试。',
-        'Couldn’t read this model’s thinking levels. Say “Choose a rewrite model” in Codex to retry.') + '\n');
-      return null;
-    }
-    levels = selected.thinking_levels;
-    current = selected.current_thinking_level;
-    if (!levels.length) {
-      output.write(t('这个模型的思考等级固定。', 'This model has a fixed thinking level.') + '\n');
-      return { model, thinkingLevel: 'fixed' };
-    }
-  } else if (model === savedModel && savedLevel === 'fixed') {
-    levels = [{ id: 'fixed' }];
+    const selected = account.current_model === model ? await session.select(model) :
+      await waitForCatalog(() => session.select(model),
+        t('正在读取思考等级…（Esc 取消）', 'Reading thinking levels… (Esc to cancel)'), input, output, controller.signal);
+    if (!selected) return null;
+    return await chooseLevel(model, selected.thinking_levels, selected.current_thinking_level);
+  } catch {
+    if (controller.signal.aborted) return null;
+    output.write((model
+      ? t('没能读取这个模型的思考等级。稍后在 Codex 里说「选择改写模型」可重试。',
+        'Couldn’t read this model’s thinking levels. Say “Choose a rewrite model” in Codex to retry.')
+      : t('没能读取模型。稍后在 Codex 里说「选择改写模型」可重试。',
+        'Couldn’t read the model list. Say “Choose a rewrite model” in Codex to retry.')) + '\n');
+    return null;
+  } finally {
+    process.off('SIGTERM', interrupt);
+    process.off('SIGINT', interrupt);
+    await session?.close();
   }
-  const rows = levels.map(({ id, name }) => {
-    const label = Object.hasOwn(thinkingLabels, id) ? t(...thinkingLabels[id]) : name;
-    return { id, name: id === DEFAULT_THINKING_LEVEL ? label + t('（默认）', ' (default)') : label };
-  });
-  const defaultLevel = rows.some(row => row.id === DEFAULT_THINKING_LEVEL) ? DEFAULT_THINKING_LEVEL : current;
-  const initial = model === savedModel && rows.some(row => row.id === savedLevel) ? savedLevel : defaultLevel;
-  const thinkingLevel = await choose(t('思考等级', 'Thinking level'), rows, initial);
-  return thinkingLevel ? { model, thinkingLevel } : null;
 }
 
 export async function showSetupGuidance({

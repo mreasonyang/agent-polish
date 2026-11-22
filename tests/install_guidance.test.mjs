@@ -1,13 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
-import { delimiter, dirname, join, parse } from 'node:path';
+import { join, parse } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { tmpdir } from 'node:os';
 import { PassThrough } from 'node:stream';
 import { setImmediate } from 'node:timers/promises';
-import { chooseSetupModel, chooseSetupMode, discoverSetupModels, manageOpenAI, setupIssues, showSetupGuidance, doctor } from '../scripts/install.mjs';
+import { chooseSetupModel, chooseSetupMode, manageOpenAI, setupIssues, showSetupGuidance, doctor } from '../scripts/install.mjs';
 import { readOpenAIKey } from '../plugins/codex-polish/hooks/openai_credentials.mjs';
 import { decisionsMode, triggerMode } from '../plugins/codex-polish/hooks/preferences.mjs';
 import { writeProfileSetting } from '../plugins/codex-polish/hooks/profile_setting.mjs';
@@ -291,51 +291,83 @@ test('a damaged setup receipt cannot block removing a saved key', async t => {
   assert.match(removal.display, /could not remember/);
 });
 
-test('installer reads a catalog from the Codex agent’s final message and verifies the requested model', async t => {
-  const bin = fs.mkdtempSync(join(tmpdir(), 'polish catalog test '));
-  const oldPath = process.env.PATH;
-  t.after(() => { process.env.PATH = oldPath; fs.rmSync(bin, { recursive: true, force: true }); });
-  const executable = windows ? join(bin, 'node_modules', '@openai', 'codex', 'bin', 'codex.js') : join(bin, 'codex');
-  const reply = join(bin, 'reply.json'), observed = join(bin, 'invocation.json');
-  fs.mkdirSync(dirname(executable), { recursive: true });
-  fs.writeFileSync(executable, [
-    '#!/usr/bin/env node',
-    'const fs = require("node:fs"), args = process.argv.slice(2);',
-    'const out = args.indexOf("--output-last-message");',
-    'if (args[0] !== "exec" || out === -1) process.exit(1);',
-    'fs.writeFileSync(' + JSON.stringify(observed) + ', JSON.stringify({cwd: process.cwd(), args}));',
-    'fs.copyFileSync(' + JSON.stringify(reply) + ', args[out + 1]);'
-  ].join('\n'), { mode: 0o700 });
-  if (windows) fs.writeFileSync(join(bin, 'codex.cmd'), '');
-  process.env.PATH = bin + delimiter + oldPath;
-  const target = 'gemini-4-hydrogen', other = 'gemini-4-neon';
-  const options = [
-    {id: 'model', type: 'select', category: 'model', currentValue: target,
-      options: [{value: target, name: 'Hydrogen'}, {value: other, name: 'Neon'}, {value: 'invalid id'}]},
-    {id: 'thought_level', type: 'select', category: 'thought_level', currentValue: 'high',
-      options: [{value: 'medium', name: 'Medium'}, {value: 'high', name: 'High'}, {value: 'invalid'}]}
-  ];
-  const status = { ...checks, agy_path: join(bin, windows ? 'agy.exe' : 'agy') };
-  function response(id) { return {jsonrpc: '2.0', id, result: {sessionId: 'fixture-session', configOptions: options}}; }
-  async function discover(frame, model) {
-    fs.writeFileSync(reply, JSON.stringify(frame));
-    const value = await discoverSetupModels(status, model);
-    const {cwd, args} = JSON.parse(fs.readFileSync(observed));
-    assert.equal(fs.existsSync(cwd), false, 'cleanup removes the temporary Codex workspace');
-    assert.ok(args.includes('--ephemeral'));
-    return value;
+function catalogSession(account, details) {
+  const calls = [];
+  const open = () => {
+    calls.push('open');
+    return {
+      list() {
+        calls.push('list');
+        if (!account) throw Error('catalog unavailable');
+        return account;
+      },
+      select(model) {
+        calls.push(model);
+        if (model === account.current_model) return account;
+        if (details?.current_model !== model) throw Error('model unavailable');
+        return details;
+      },
+      close() { calls.push('close'); }
+    };
+  };
+  return { open, calls };
+}
+
+test('cancelling an in-flight account lookup releases the session without changing the selection', async () => {
+  for (const stage of ['list', 'select']) {
+    const input = new PassThrough(), output = new PassThrough();
+    input.setRawMode = enabled => { input.isRaw = enabled; };
+    const started = Promise.withResolvers(), pending = Promise.withResolvers();
+    let closed = 0, display = '';
+    output.on('data', bytes => { display += bytes; });
+    const wait = () => { started.resolve(); return pending.promise; };
+    const account = {
+      current_model: 'gemini-a',
+      models: [{ id: 'gemini-a', name: 'A' }, { id: 'gemini-b', name: 'B' }]
+    };
+    const open = () => ({
+      list: stage === 'list' ? wait : () => account,
+      select: wait,
+      close() { closed++; pending.reject(Error('cancelled')); }
+    });
+    const picked = chooseSetupModel({ ...checks, gemini_model_configured: false }, 'en', input, output, open);
+    const selectSecond = ['\x1b[B', '\r'];
+    for (const key of stage === 'list' ? selectSecond : [...selectSecond, ...selectSecond]) {
+      await setImmediate();
+      input.write(key);
+    }
+    await started.promise;
+    if (stage === 'list') input.end();
+    else input.write('\x03');
+    assert.equal(await picked, null);
+    assert.equal(closed, 1);
+    assert.equal(input.isRaw, false);
+    assert.doesNotMatch(display, /Couldn’t read/);
+    input.destroy();
+    output.destroy();
   }
-  const account = await discover(response(3));
-  assert.deepEqual(account.models.map(item => item.id), [target, other]);
-  const chosen = await discover(response(4), target);
-  assert.deepEqual(chosen.thinking_levels.map(item => item.id), ['medium', 'high']);
-  assert.equal(await discover(response(4), other), null);
-  assert.equal(await discover(response(4)), null);
-  assert.equal(await discover({jsonrpc: '2.0', id: 3, error: {code: 1}}), null);
-  assert.equal(await discover(null), null);
 });
 
-test('model picker selects model and thinking level together, using account metadata for the selected model', async t => {
+test('terminating setup at the account model menu restores the terminal and closes the session', { timeout: 3000 }, async () => {
+  const input = new PassThrough(), output = new PassThrough();
+  input.setRawMode = enabled => { input.isRaw = enabled; };
+  const session = catalogSession({ models: [{ id: 'gemini-a', name: 'A' }], current_model: 'gemini-a' });
+  output.on('data', bytes => {
+    if (bytes.toString().includes('Which model should rewrite')) queueMicrotask(() => process.emit('SIGTERM'));
+  });
+  const picked = chooseSetupModel({ ...checks, gemini_model_configured: false }, 'en', input, output, session.open);
+  for (const key of ['\x1b[B', '\r']) {
+    await setImmediate();
+    input.write(key);
+  }
+  assert.equal(await picked, null);
+  assert.equal(input.isRaw, false);
+  assert.deepEqual(session.calls, ['open', 'list', 'close']);
+  input.destroy();
+  output.destroy();
+});
+
+test('model picker selects model and thinking level together, using account metadata for the selected model', async () => {
   const enter = '\r', down = '\x1b[B', up = '\x1b[A', cancel = '\x03';
   const hydrogen = 'gemini-4-hydrogen', argon = 'gemini-4-argon', neon = 'gemini-4-neon';
   const account = {
@@ -348,20 +380,20 @@ test('model picker selects model and thinking level together, using account meta
     [[enter, up, enter], 'zh', null, null, { model: hydrogen, thinkingLevel: 'low' }, []],
     [[enter, down, down, enter], 'en', null, null, { model: hydrogen, thinkingLevel: 'xhigh' }, []],
     [[enter, cancel], 'zh', null, null, null, []],
-    [[down, enter, enter, enter], 'en', account, null, { model: neon, thinkingLevel: 'medium' }, [undefined]],
-    [[...argonSteps, enter], 'zh', account, { current_model: argon, current_thinking_level: 'high', thinking_levels: [{ id: 'low' }, { id: 'high' }] }, { model: argon, thinkingLevel: 'high' }, [undefined, argon]],
-    [argonSteps, 'en', account, { current_model: argon, thinking_levels: [] }, { model: argon, thinkingLevel: 'fixed' }, [undefined, argon]],
-    [argonSteps, 'en', account, null, null, [undefined, argon]],
-    [argonSteps, 'en', account, account, null, [undefined, argon]],
-    [[down, enter, cancel], 'en', account, null, null, [undefined]],
-    [[down, enter], 'en', null, null, null, [undefined]]
+    [[down, enter, enter, enter], 'en', account, null, { model: neon, thinkingLevel: 'medium' }, ['open', 'list', neon, 'close']],
+    [[...argonSteps, enter], 'zh', account, { current_model: argon, current_thinking_level: 'high', thinking_levels: [{ id: 'low' }, { id: 'high' }] }, { model: argon, thinkingLevel: 'high' }, ['open', 'list', argon, 'close']],
+    [argonSteps, 'en', account, { current_model: argon, thinking_levels: [] }, { model: argon, thinkingLevel: 'fixed' }, ['open', 'list', argon, 'close']],
+    [argonSteps, 'en', account, null, null, ['open', 'list', argon, 'close']],
+    [argonSteps, 'en', account, account, null, ['open', 'list', argon, 'close']],
+    [[down, enter, cancel], 'en', account, null, null, ['open', 'list', 'close']],
+    [[down, enter], 'en', null, null, null, ['open', 'list', 'close']]
   ]) {
     const input = new PassThrough(), output = new PassThrough();
     input.setRawMode = enabled => { input.isRaw = enabled; };
-    const discover = t.mock.fn((_, model) => model ? targetResult : accountResult);
+    const session = catalogSession(accountResult, targetResult);
     let display = '';
     output.on('data', bytes => { display += bytes.toString(); });
-    const selection = chooseSetupModel({ ...checks, gemini_model_configured: false }, lang, input, output, discover);
+    const selection = chooseSetupModel({ ...checks, gemini_model_configured: false }, lang, input, output, session.open);
     for (const key of keys) { await setImmediate(); input.write(key); }
     assert.deepEqual(await selection, expected);
     if (expected?.model === argon) {
@@ -371,7 +403,7 @@ test('model picker selects model and thinking level together, using account meta
     if (expected?.thinkingLevel === 'medium') assert.match(display, /❯ ● Medium \(default\)/);
     if (expected?.thinkingLevel === 'fixed') assert.match(display, /fixed thinking level/);
     if (expected?.thinkingLevel === 'high') assert.doesNotMatch(display, /极高|中（默认）/);
-    assert.deepEqual(discover.mock.calls.map(call => call.arguments[1]), calls);
+    assert.deepEqual(session.calls, calls);
     assert.match(display, /Gemini 4 Hydrogen/);
     assert.equal(!!input.isRaw, false);
     input.destroy(); output.destroy();
@@ -391,17 +423,17 @@ test('model picker reopens the saved model and thinking level and looks up the c
     details = argonDetails, calls = [], expected = { model, thinkingLevel: level } }) {
     const input = new PassThrough(), output = new PassThrough();
     input.setRawMode = enabled => { input.isRaw = enabled; };
-    const discover = t.mock.fn((_, id) => id ? details : account);
+    const session = catalogSession(account, details);
     let display = '';
     output.on('data', chunk => { display += chunk; });
     try {
       const status = { ...checks, gemini_model: model, gemini_thinking_level: level };
-      const result = chooseSetupModel(status, lang, input, output, discover);
+      const result = chooseSetupModel(status, lang, input, output, session.open);
       for (const key of keys) { await setImmediate(); input.write(key); }
       await setImmediate();
       input.end();
       assert.deepEqual(await result, expected);
-      assert.deepEqual(discover.mock.calls.map(call => call.arguments[1]), calls);
+      assert.deepEqual(session.calls, calls);
       return display;
     } finally { input.destroy(); output.destroy(); }
   }
@@ -414,16 +446,16 @@ test('model picker reopens the saved model and thinking level and looks up the c
   assert.match(await pick({}), /❯ ● Keep gemini-4-argon · High/);
   assert.match(await pick({ level: 'fixed', lang: 'zh' }), /❯ ● 保留 gemini-4-argon · 由模型固定/);
   await pick({ keys: [down, enter, enter], expected: { model: hydrogen, thinkingLevel: 'medium' } });
-  const savedCatalog = await pick({ keys: [...lookup, enter, enter], calls: [undefined, argon] });
+  const savedCatalog = await pick({ keys: [...lookup, enter, enter], calls: ['open', 'list', argon, 'close'] });
   assert.match(savedCatalog, /❯ ● Argon/);
   assert.match(savedCatalog, /❯ ● High/);
-  await pick({ keys: [...lookup, up, enter, enter], calls: [undefined], expected: { model: neon, thinkingLevel: 'medium' } });
-  await pick({ keys: [...lookup, enter, enter], level: 'xhigh', calls: [undefined, argon],
+  await pick({ keys: [...lookup, up, enter, enter], calls: ['open', 'list', neon, 'close'], expected: { model: neon, thinkingLevel: 'medium' } });
+  await pick({ keys: [...lookup, enter, enter], level: 'xhigh', calls: ['open', 'list', argon, 'close'],
     expected: { model: argon, thinkingLevel: 'medium' } });
   await pick({ keys: [...lookup, enter], details: { current_model: argon, thinking_levels: [] },
-    calls: [undefined, argon], expected: { model: argon, thinkingLevel: 'fixed' } });
-  await pick({ keys: [...lookup, cancel], calls: [undefined], expected: null });
-  await pick({ keys: lookup, account: null, calls: [undefined], expected: null });
+    calls: ['open', 'list', argon, 'close'], expected: { model: argon, thinkingLevel: 'fixed' } });
+  await pick({ keys: [...lookup, cancel], calls: ['open', 'list', 'close'], expected: null });
+  await pick({ keys: lookup, account: null, calls: ['open', 'list', 'close'], expected: null });
 });
 
 test('account picker shows both IDs when provider labels differ only in surrounding whitespace', async () => {
@@ -432,8 +464,9 @@ test('account picker shows both IDs when provider labels differ only in surround
   let display = '';
   output.on('data', bytes => { display += bytes.toString(); });
   const choices = [{ value: 'gemini-first', name: 'Gemini Pro' }, { value: 'gemini-second', name: 'Gemini Pro ' }];
-  const discover = (_, model) => catalog([{ category: 'model', type: 'select', id: 'model', currentValue: model || 'gemini-first', options: choices }]);
-  const selection = chooseSetupModel(checks, 'en', input, output, discover);
+  const metadata = model => catalog([{ category: 'model', type: 'select', id: 'model', currentValue: model, options: choices }]);
+  const session = catalogSession(metadata('gemini-first'), metadata('gemini-second'));
+  const selection = chooseSetupModel(checks, 'en', input, output, session.open);
   for (const key of ['\x1b[B', '\r', '\x1b[B', '\r']) { await setImmediate(); input.write(key); }
   assert.deepEqual(await selection, { model: 'gemini-second', thinkingLevel: 'fixed' });
   assert.ok(display.includes('Gemini Pro (gemini-first)'));

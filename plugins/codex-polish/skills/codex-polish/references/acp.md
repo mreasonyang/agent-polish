@@ -31,7 +31,7 @@ stty -icanon -echo -ixon -icrnl -onlcr isig intr '^C' min 1 time 0 && exec '/abs
 
 例如第一帧是 `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{}}}`。服务端通知可与响应同时到达；协议请求的 id 由请求方指定。遇到 `session/request_permission`，用原请求 id 直接返回 `{"outcome":{"outcome":"cancelled"}}` 作为 `result`；其他不支持的服务端请求返回 JSON-RPC 错误 `-32601`。不执行 Gemini 请求的本地工具。
 
-**查询模型**只需第 3 步的模型列表；查询指定模型的档位，可以执行第 4 步，读取选定模型的 `configOptions` 后即结束。无需更改档位或发送草稿。安装时按安装器的请求返回真实响应。模型或档位不在对应选项中时，说明原因。
+**查询模型**时，终端安装器从临时输出文件读到第 3 步的响应后就显示模型列表。等待用户选择时保持会话打开。如果用户选中当前模型，直接使用已有的档位。如果选中其他模型，在同一会话执行第 4 步，从响应中的 `configOptions` 读取档位。查询结束或用户取消时关闭会话。整个过程只读取配置，无需更改档位或发送草稿。模型或档位不可用时，说明原因。
 
 ## 改写与交付
 

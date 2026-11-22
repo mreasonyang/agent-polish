@@ -2,6 +2,11 @@
 
 [中文使用说明](docs/README.zh-CN.md) · [English README](README.md)
 
+## 0.0.3-beta.1
+
+- 安装时先读取账号可用的 Gemini 模型，再查询所选模型的思考等级。查询期间可按 Esc 取消，支持固定思考等级的模型。
+- Setup loads the Gemini models available to your account, then looks up the thinking levels for the selected model. Press Esc to cancel a lookup. Models with a fixed thinking level are supported.
+
 ## 0.0.2
 
 - 终端工具截断 ACP 输出时，可以从原字节位置重读。确认 Gemini 模型和思考等级后，原稿只发送一次。

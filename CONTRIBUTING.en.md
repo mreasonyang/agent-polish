@@ -8,6 +8,7 @@ For installation, see the [project README](README.md). For details on when the p
 
 - `scripts/install.mjs` and the `.command` launchers handle installation, updates, status checks, uninstallation, and local marketplace registration.
 - `plugins/codex-polish/` contains the plugin manifest, the `UserPromptSubmit` hook, and two skills. `codex-polish` sends the selected draft through `agy acp`, and formats Gemini’s complete reply for display. Explicit requests use Turbo. The optional OpenAI Decisions check applies only when the hook runs in Normal mode. `codex-polish-setup` manages the current Codex profile’s polishing settings, runtime model discovery, diagnostics, and the [credential guide](plugins/codex-polish/skills/codex-polish-setup/references/credentials.en.md).
+- `plugins/agy-polish/` is the standalone Antigravity plugin. Its MCP tool calls the local `codex exec` to edit a draft. Antigravity chat setup and the terminal installer share the same preferences.
 - The full source tree includes the regression suite in `tests/` and the evaluation script and synthetic samples in `evaluation/`. See the [evaluation guide](evaluation/README.en.md).
 - When updating user-facing prompts or documentation, update both English and Chinese.
 
@@ -36,7 +37,7 @@ Open a GitHub pull request with the reason for the change, steps to reproduce or
 
 ## Publishing a release
 
-Set the same version in `package.json` and the plugin manifest. In `package.json`, set `publishConfig.tag` to the npm tag for that version.
+Set the same version in `package.json` and both host plugin manifests. In `package.json`, set `publishConfig.tag` to the npm tag for that version.
 
 | Version | Git tag | npm tag | GitHub release |
 | --- | --- | --- | --- |

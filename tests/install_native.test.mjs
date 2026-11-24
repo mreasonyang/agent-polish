@@ -293,7 +293,7 @@ nativeTest('native hook trust survives identical content and reports package, ed
   const root = join(base, 'release');
   fs.mkdirSync(dirname(join(root, INDEX)), { recursive: true });
   fs.copyFileSync(join(ROOT, INDEX), join(root, INDEX));
-  fs.cpSync(join(ROOT, PRODUCT), join(root, PRODUCT), { recursive: true });
+  fs.cpSync(join(ROOT, 'plugins'), join(root, 'plugins'), { recursive: true });
   fs.cpSync(join(ROOT, 'scripts'), join(root, 'scripts'), { recursive: true });
   const install = (action) => invoke(process.execPath, [join(root, 'scripts/install.mjs'), action]);
   const rpc = (method, params) => nativeConfig(method, params, { env, cwd: base, experimental: true });

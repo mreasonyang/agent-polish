@@ -8,7 +8,13 @@ Please [report vulnerabilities privately on GitHub](https://github.com/mreasonya
 
 Include the plugin version, steps to reproduce the issue, what you expected, and what happened. Add relevant details such as your operating system, the versions of Node.js, Codex CLI, and `agy`, or the status of a plugin setting or hook. Use a fictional exchange and made-up values in your example. Remove keys, tokens, authorization headers, and private conversation text.
 
-## Control what the plugin sends
+## Using Codex inside Antigravity
+
+In Normal and Turbo modes, Antigravity’s `polish_reply` tool sends the current question, draft and editing directions to the model provider configured in your local Codex CLI. A selection sends the selected passage and applicable editing directions. The plugin does not attach other turns. Antigravity’s own conversation records may include the tool input and result. Choose **Only when asked** in Antigravity, or choose **Off** to stop both automatic and requested edits for this direction.
+
+Each edit uses a temporary Codex profile to isolate your global instructions, skills, plugins and MCP servers. The local Codex CLI reads the saved sign-in. When the editor needs to use the system credential store, the plugin passes the credentials for the request in process memory. It cleans up the temporary directory after the edit.
+
+## Control what Gemini editing in Codex sends
 
 The plugin sends the selected content as written, including any keys or tokens in the submitted question, draft, history, or editing instructions.
 

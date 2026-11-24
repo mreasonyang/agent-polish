@@ -1,0 +1,13 @@
+{
+  "name": "agy-polish",
+  "displayName": "Codex Polish · 回复润色",
+  "version": "0.0.4-beta.1",
+  "description": "Polish Antigravity replies with your local Codex CLI. 用本机 Codex CLI 润色 Antigravity 的回复。",
+  "author": { "name": "mreasonyang" },
+  "repository": "https://github.com/mreasonyang/codex-polish",
+  "suggestedPrompts": [
+    "配置回复润色",
+    "Configure reply polishing",
+    "/polish 用一句话解释 DNS。"
+  ]
+}

@@ -8,6 +8,7 @@
 
 - `scripts/install.mjs` 和两个 `.command` 启动脚本负责安装、更新、环境检查和卸载。
 - `plugins/codex-polish/` 里有插件清单、钩子和两个技能。`codex-polish` 经 ACP 把选定的草稿交给 Gemini，并排版显示完整回复。主动要求润色时使用 Turbo，仅在 hook 以普通模式自动触发时才使用可选的 OpenAI 风格检查。`codex-polish-setup` 负责管理当前 Codex 配置的润色设置、选择模型和检查环境，详见[首次配置与登录指南](plugins/codex-polish/skills/codex-polish-setup/references/credentials.md)。改动用户提示或文档时，请同步更新中英文。
+- `plugins/agy-polish/` 是供 Antigravity 加载的独立插件。它的 MCP 工具调用本机 `codex exec` 润色草稿，聊天和终端设置共用同一份反向配置。
 - 完整源码的 `tests/` 放回归测试，`evaluation/` 放评测脚本和合成样本。[评测说明](evaluation/README.md)
 
 ## 本地测试与打包
@@ -35,7 +36,7 @@ npm pack --ignore-scripts --pack-destination dist
 
 ## 发布版本
 
-在 `package.json` 和插件清单中填写同一个版本号，并在 `package.json` 的 `publishConfig.tag` 中填写对应的 npm 标签。
+在 `package.json` 和两个宿主的插件清单中填写同一个版本号，并在 `package.json` 的 `publishConfig.tag` 中填写对应的 npm 标签。
 
 | 版本号 | Git 标签 | npm 标签 | GitHub 发布类型 |
 | --- | --- | --- | --- |

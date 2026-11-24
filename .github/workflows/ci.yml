@@ -76,11 +76,23 @@ jobs:
           $agyHelp = & $agy --help 2>&1 | Out-String
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if ($agyHelp -notmatch '(?m)^\s*acp\s') { throw 'Installed agy does not list ACP' }
-          npx.cmd --yes $archive update
+          $env:CODEX_POLISH_AGY_SETTINGS_DIR = Join-Path $project 'agy-polish-settings'
+          npx.cmd --yes $archive setup --host agy
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          npx.cmd --yes $archive doctor
+          $entries = & $agy plugin list --json | ConvertFrom-Json
+          $reverse = $entries | Where-Object { $_.name -eq 'agy-polish' }
+          if (-not $reverse.enabled) { throw 'Antigravity did not enable agy-polish' }
+          node (Join-Path $reverse.path 'scripts/settings.mjs') set --mode off
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          npx.cmd --yes $archive uninstall
+          npx.cmd --yes $archive update --host both
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npx.cmd --yes $archive doctor --host both
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npx.cmd --yes $archive uninstall --host both
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $entries = & $agy plugin list --json | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($entries | Where-Object { $_.name -eq 'agy-polish' }) { throw 'Antigravity still lists agy-polish' }
       - name: Show isolated plugin registration on failure
         if: failure()
         shell: pwsh

@@ -54,9 +54,11 @@ jobs:
           import assert from 'node:assert/strict';
           import pkg from './package.json' with { type: 'json' };
           import plugin from './plugins/codex-polish/.codex-plugin/plugin.json' with { type: 'json' };
+          import agyPlugin from './plugins/agy-polish/plugin.json' with { type: 'json' };
           assert.equal(pkg.name, '@kyun.si/codex-polish');
           assert.equal('v' + pkg.version, process.env.RELEASE_TAG);
           assert.equal(plugin.version, pkg.version);
+          assert.equal(agyPlugin.version, pkg.version);
           assert.equal(pkg.publishConfig.tag, pkg.version.includes('-beta.') ? 'beta' : 'latest');
           assert.equal(pkg.publishConfig.access, 'public');
           assert.equal(pkg.publishConfig.registry, 'https://registry.npmjs.org/');

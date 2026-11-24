@@ -1,6 +1,6 @@
 {
   "name": "codex-polish",
-  "version": "0.0.3",
+  "version": "0.0.4-beta.1",
   "description": "Rewrites Codex drafts with Gemini for cleaner replies. 用 Gemini 改写 Codex 草稿，让回复更清晰。",
   "skills": "./skills/",
   "hooks": "./hooks/hooks.json",

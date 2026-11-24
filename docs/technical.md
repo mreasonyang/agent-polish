@@ -2,7 +2,15 @@
 
 [English](technical.en.md) · [项目首页](README.zh-CN.md)
 
-Codex Polish 支持 Windows、macOS 和 Linux。本地脚本使用 Node.js 22.16 或更高版本的内置模块。自动 hook 让 Codex 在原稿写完后直接执行[润色流程](../plugins/codex-polish/skills/codex-polish/WORKFLOW.md)，只在最终回复中展示结果。用户点名润色时，[改写技能](../plugins/codex-polish/skills/codex-polish/SKILL.md) 执行同一份流程。[设置技能](../plugins/codex-polish/skills/codex-polish-setup/SKILL.md) 检查运行环境并保存当前 Codex 配置的润色设置。
+Codex Polish 支持 Windows、macOS 和 Linux。本地脚本使用 Node.js 22.16 或更高版本的内置模块。在 Codex 中，自动 hook 让 Codex 在原稿写完后直接执行[润色流程](../plugins/codex-polish/skills/codex-polish/WORKFLOW.md)，只在最终回复中展示结果。用户点名润色时，[改写技能](../plugins/codex-polish/skills/codex-polish/SKILL.md) 执行同一份流程。[设置技能](../plugins/codex-polish/skills/codex-polish-setup/SKILL.md) 检查运行环境并保存当前 Codex 配置的润色设置。
+
+## 在 Antigravity 中调用 Codex
+
+终端和 Finder 的交互式安装先选择在哪个宿主显示回复。运行 `node scripts/install.mjs setup --host agy` 可从源码单独配置 Antigravity。插件提供 `/polish`、聊天设置入口及本地 MCP 工具 `polish_reply`。Gemini 在交付最终消息前将拟好的草稿作为工具参数。工具通过标准输入向本机 Codex CLI 提交编辑材料，成功后将完整正文交回同一轮聊天。编辑通常使用 `codex exec`，需要在内存中衔接 ChatGPT 登录时则使用临时的 Codex app-server 会话。
+
+Antigravity 的模式、Codex 模型和推理强度保存在 `~/.gemini/config/agy-polish/settings.json`。安装器和聊天设置共用这些值。可通过 `CODEX_POLISH_AGY_SETTINGS_DIR` 指定独立的设置目录，相对路径从用户主目录解析。Normal 让 Codex 按需保留清楚的原稿，Turbo 请求改写，关闭时保留模型设置。
+
+编辑器使用本机 Codex 配置的模型提供商。如果自定义提供商没有模型目录，向导只列出其配置中指定的模型，也可以直接沿用 Codex 默认设置。编辑进程在本轮临时目录中运行，并关闭其插件和 hooks，以免再次触发正向润色。Antigravity 管理本机对话记录。其余章节描述在 Codex 中调用 Gemini 的流程。
 
 ## 润色设置
 
@@ -104,15 +112,15 @@ Codex agent 用宿主进程工具直接启动官方 `agy acp` 并逐条发送请
 
 ## 安装、更新和卸载
 
-在任意目录运行 `npx @kyun.si/codex-polish setup` 即可从 npm 安装 Codex Polish。检查插件设置和本地环境可运行 `npx @kyun.si/codex-polish doctor`，更新和卸载可运行 `npx @kyun.si/codex-polish@latest update` 和 `npx @kyun.si/codex-polish@latest uninstall`。Windows PowerShell 中使用 `npx.cmd`。从 GitHub 源码安装时，在仓库根目录运行 `node scripts/install.mjs setup`，其余子命令相同。[安装步骤](README.zh-CN.md#快速开始)
+在任意目录运行 `npx @kyun.si/codex-polish@beta setup` 即可从 npm 安装 Codex Polish。检查插件设置和本地环境可运行 `npx @kyun.si/codex-polish@beta doctor`，更新和卸载可运行 `npx @kyun.si/codex-polish@beta update` 和 `npx @kyun.si/codex-polish@beta uninstall`。Windows PowerShell 中使用 `npx.cmd`。从 GitHub 源码安装时，在仓库根目录运行 `node scripts/install.mjs setup`，其余子命令相同。[安装步骤](README.zh-CN.md#快速开始)
 
-macOS 用户也可以解压安装包，在 Finder 中双击安装脚本。每次交互运行 `setup`，第一屏都可用方向键为当前 Codex 配置选择 **Normal**（自动按需）、**Turbo**（自动每次）、**仅手动**（只在我要求时润色）或**关闭润色**。选择前三种模式且 `agy` 可用时，还可以继续选择 Gemini 模型和思考等级；思考等级固定的模型会跳过等级选择。选择**关闭润色**会保存全局 `off` 并直接结束，不再引导配置模型、依赖、密钥或 hook 信任，已保存的模型、思考等级、自定义提示词和密钥保持不变。再次运行 `setup` 会预选当前项，按**回车**即可保留，也可从同一菜单选择 Normal、Turbo 或仅手动重新开启。[Finder 安装脚本](../安装回复润色.command)
+macOS 用户也可以解压安装包，在 Finder 中双击安装脚本。在交互式 `setup` 的第一屏选定 Codex 后，可用方向键为当前 Codex 配置选择 **Normal**（自动按需）、**Turbo**（自动每次）、**仅手动**（只在我要求时润色）或**关闭润色**。选择前三种模式且 `agy` 可用时，还可以继续选择 Gemini 模型和思考等级；思考等级固定的模型会跳过等级选择。选择**关闭润色**会保存全局 `off` 并直接结束，不再引导配置模型、依赖、密钥或 hook 信任，已保存的模型、思考等级、自定义提示词和密钥保持不变。再次运行 `setup` 会预选当前项，按**回车**即可保留，也可从同一菜单选择 Normal、Turbo 或仅手动重新开启。[Finder 安装脚本](../安装回复润色.command)
 
 `setup` 和 `update` 支持 `--install-agy`，在缺少 Antigravity CLI 时可自动安装。更新会跳过设置菜单，保留已保存的润色设置与插件启用状态。同一版本号的新构建也能用 `update` 覆盖或重试中断的更新。
 
 安装器为每份 Codex 配置注册一个本地市场。更新时先准备并校验新快照，然后原子替换市场清单，再请 Codex 刷新插件缓存。刷新失败时会恢复原快照和启用状态。Codex 判断 hook 信任时会核对已安装插件的内容，所以即使命令没变，内置提示词或配置指南的改动也可能触发重新确认。安装器和 `doctor` 都从 `hooks/list` 读取实际状态。
 
-首次交互安装并选用普通模式时，安装器会询问是否启用 OpenAI Decisions API 检查，默认跳过。之后可在运行插件的机器上使用同一份 Codex 配置，运行 `npx @kyun.si/codex-polish openai` 管理密钥。Windows PowerShell 中使用 `npx.cmd`。终端隐藏输入，密钥保存在 `$CODEX_HOME/codex-polish/credentials/openai.key`。插件会忽略 `OPENAI_API_KEY`。[密钥设置与 API 计费](../plugins/codex-polish/skills/codex-polish-setup/references/credentials.md#选配-openai-decisions-api)
+首次交互安装并选用普通模式时，安装器会询问是否启用 OpenAI Decisions API 检查，默认跳过。之后可在运行插件的机器上使用同一份 Codex 配置，运行 `npx @kyun.si/codex-polish@beta openai` 管理密钥。Windows PowerShell 中使用 `npx.cmd`。终端隐藏输入，密钥保存在 `$CODEX_HOME/codex-polish/credentials/openai.key`。插件会忽略 `OPENAI_API_KEY`。[密钥设置与 API 计费](../plugins/codex-polish/skills/codex-polish-setup/references/credentials.md#选配-openai-decisions-api)
 
 卸载会移除插件和专用市场，清除会话指针，删除当前 Codex 配置保存的所有润色设置、自定义提示词和 OpenAI 密钥，并清除旧版留下的空锁文件和空插件目录。旧版曾在个别目录登记的设置文件若仍在原位，卸载时也会删除，包括 Git 跟踪的文件和后来被就地修改的文件。你自己放进去的无关文件和共用的 `agy` 会保留。
 

@@ -2,6 +2,13 @@
 
 [中文使用说明](docs/README.zh-CN.md) · [English README](README.md)
 
+## 0.0.4-beta.1
+
+- 在 Antigravity 中可让 Codex 润色 Gemini 的回复，改稿直接显示在原对话里。支持自动润色、点名改写和选段编辑，Codex 不可用时保留原稿。
+- 安装向导可选 Codex、Antigravity 或两者。`setup`、`doctor`、`update` 和 `uninstall` 支持 `--host codex|agy|both`，两个方向各自保存模式和模型。
+- Codex can now polish Gemini replies in Antigravity and return the edited text to the same chat. It supports automatic edits, explicit requests, and selected passages. If the editor is unavailable, the original draft is kept.
+- Setup lets you choose Codex, Antigravity, or both. The `setup`, `doctor`, `update`, and `uninstall` commands accept `--host codex|agy|both`. Each host keeps its own mode and model preferences.
+
 ## 0.0.3
 
 - 安装时从账号可用的 Gemini 模型中选择，再查询该模型的思考等级。支持固定思考等级的模型，查询时可按 Esc 取消。

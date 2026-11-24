@@ -1,0 +1,7 @@
+{
+  "agy-polish-mode": {
+    "PreInvocation": [
+      { "type": "command", "command": "node ./scripts/mode-hook.mjs", "timeout": 3 }
+    ]
+  }
+}

@@ -1,8 +1,8 @@
 {
   "name": "@kyun.si/codex-polish",
-  "version": "0.0.3",
+  "version": "0.0.4-beta.1",
   "license": "Apache-2.0",
-  "description": "Codex plugin that rewrites replies with Gemini via Antigravity ACP · 通过 Antigravity ACP 调用 Gemini 改写 Codex 回复的插件",
+  "description": "Polish Codex replies with Gemini or Antigravity replies with Codex · 在 Codex 中用 Gemini 润色，或在 Antigravity 中用 Codex 润色",
   "os": [
     "darwin",
     "linux",
@@ -14,6 +14,8 @@
   "files": [
     ".agents/plugins/marketplace.json",
     "plugins/codex-polish",
+    "plugins/agy-polish",
+    "scripts/agy_install.mjs",
     "scripts/install.mjs",
     "scripts/native_cache.mjs",
     "scripts/setup_catalog.mjs",
@@ -49,6 +51,6 @@
   "publishConfig": {
     "access": "public",
     "registry": "https://registry.npmjs.org/",
-    "tag": "latest"
+    "tag": "beta"
   }
 }

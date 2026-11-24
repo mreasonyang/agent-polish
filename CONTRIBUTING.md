@@ -44,7 +44,7 @@ npm pack --workspace @kyun.si/agy-polish --pack-destination dist
 | `X.Y.Z` | `codex-vX.Y.Z` | `agy-vX.Y.Z` | `latest` | 正式版 |
 | `X.Y.Z-beta.N` | `codex-vX.Y.Z-beta.N` | `agy-vX.Y.Z-beta.N` | `beta` | 预发布版 |
 
-将改动提交到 `main`，等 CI 通过后分别推送对应的宿主标签。两个宿主可以独立发布相同版本。比如 `codex-v0.0.4-beta.2` 只发布 `@kyun.si/codex-polish`，`agy-v0.0.4-beta.2` 只发布 `@kyun.si/agy-polish`。每个标签都在 Linux、macOS 和 Windows 上测试，验证过的归档上传到对应的 npm 包和 GitHub 发布。仓库的 GitHub **Latest** 跟随 Codex 正式版，npm 的 `latest` 由两个包各自维护。
+目标提交通过 CI 后，在该提交上打对应的宿主标签并推送。Beta 可以从功能分支发布。两个宿主可以独立发布相同版本。比如 `codex-v0.0.4-beta.2` 只发布 `@kyun.si/codex-polish`，`agy-v0.0.4-beta.2` 只发布 `@kyun.si/agy-polish`。每个标签都在 Linux、macOS 和 Windows 上测试，验证过的归档上传到对应的 npm 包和 GitHub 发布。仓库的 GitHub **Latest** 跟随 Codex 正式版，npm 的 `latest` 由两个包各自维护。
 
 发布中断时，重新运行原标签触发的工作流，或运行 `gh workflow run publish.yml --ref <tag> -f tag=<tag>`。工作流会核对已存在的 npm 版本，并恢复可以安全补齐的发布附件或标签。恢复历史 `vX.Y.Z` 或 `vX.Y.Z-beta.N` 时，运行 `gh workflow run publish.yml --ref main -f tag=<tag>`，核验 npm 已发布的 Codex 版本并补齐 GitHub 归档。重试旧版不会把 npm 标签退回旧版本。
 
@@ -54,6 +54,7 @@ npm pack --workspace @kyun.si/agy-polish --pack-destination dist
 2. 如果 `@kyun.si/agy-polish` 还未创建，有权在 `@kyun.si` 下创建包的维护者须先建立 npm 包名。使用 npm 11.21+ 和已登录的本地 npm 账号，打包并暂存公开 beta 归档。npm 会创建公开占位版本 `0.0.0-stage`。用 2FA 拒绝这份暂存，释放候选版本给后续 OIDC 发布，再为新包添加相同的 GitHub Actions 连接。`<stage-id>` 使用 npm 返回的暂存 ID。[npm 暂存新包公告](https://github.blog/changelog/2026-10-02-npm-staged-publishing-now-supports-creating-new-packages/) · [npm 暂存发布文档](https://docs.npmjs.com/staged-publishing/)
 
    ```sh
+   node -e "require('node:fs').mkdirSync('dist', { recursive: true })"
    npm pack --workspace @kyun.si/agy-polish --pack-destination dist
    npm stage publish ./dist/kyun.si-agy-polish-0.0.4-beta.2.tgz --access public --tag beta --registry https://registry.npmjs.org/
    npm stage reject <stage-id> --registry https://registry.npmjs.org/

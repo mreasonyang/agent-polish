@@ -45,7 +45,7 @@ For each host you are releasing, set the version in `packages/<host>-polish/pack
 | `X.Y.Z` | `codex-vX.Y.Z` | `agy-vX.Y.Z` | `latest` | Release |
 | `X.Y.Z-beta.N` | `codex-vX.Y.Z-beta.N` | `agy-vX.Y.Z-beta.N` | `beta` | Prerelease |
 
-Commit the changes to `main` and push the matching host tags after CI passes. Both hosts can release the same version independently. For example, `codex-v0.0.4-beta.2` selects only `@kyun.si/codex-polish`, and `agy-v0.0.4-beta.2` selects only `@kyun.si/agy-polish`. For each tag, Actions tests on Linux, macOS and Windows and publishes the selected tarball to npm and its own GitHub release. The repository's GitHub **Latest** release follows Codex stable releases. npm's `latest` tag is independent for each package.
+After the target commit passes CI, push the matching host tag. Betas can originate on a feature branch. Both hosts can release the same version independently. For example, `codex-v0.0.4-beta.2` selects only `@kyun.si/codex-polish`, and `agy-v0.0.4-beta.2` selects only `@kyun.si/agy-polish`. For each tag, Actions tests on Linux, macOS and Windows and publishes the selected tarball to npm and its own GitHub release. The repository's GitHub **Latest** release follows Codex stable releases. npm's `latest` tag is independent for each package.
 
 To resume a host release, rerun the original tag run, or run `gh workflow run publish.yml --ref <tag> -f tag=<tag>`. The workflow verifies any existing npm version and recovers missing release assets or tags when safe. Recover a historical `vX.Y.Z` or `vX.Y.Z-beta.N` by running `gh workflow run publish.yml --ref main -f tag=<tag>`. This verifies the existing Codex npm version and can restore its GitHub asset. An older release cannot move a newer npm channel backward.
 
@@ -55,6 +55,7 @@ To resume a host release, rerun the original tag run, or run `gh workflow run pu
 2. If `@kyun.si/agy-polish` is new, a maintainer authorized to create packages in `@kyun.si` must establish the npm name first. With npm 11.21+ and a signed-in local npm account, pack the intended workspace and stage the archive as public. npm creates the public `0.0.0-stage` placeholder. Reject the staged beta with 2FA to free up that version for the OIDC run, then add the same GitHub Actions connection to the new package. Use the staged ID printed by npm. [npm package creation with staging](https://github.blog/changelog/2026-10-02-npm-staged-publishing-now-supports-creating-new-packages/) · [npm staged publishing](https://docs.npmjs.com/staged-publishing/)
 
    ```sh
+   node -e "require('node:fs').mkdirSync('dist', { recursive: true })"
    npm pack --workspace @kyun.si/agy-polish --pack-destination dist
    npm stage publish ./dist/kyun.si-agy-polish-0.0.4-beta.2.tgz --access public --tag beta --registry https://registry.npmjs.org/
    npm stage reject <stage-id> --registry https://registry.npmjs.org/

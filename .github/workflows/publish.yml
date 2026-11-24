@@ -1,11 +1,13 @@
 name: Publish to npm
 on:
   push:
-    tags: ['v[0-9]*.[0-9]*.[0-9]*']
+    tags:
+      - 'codex-v[0-9]*.[0-9]*.[0-9]*'
+      - 'agy-v[0-9]*.[0-9]*.[0-9]*'
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing stable or beta tag to publish or verify
+        description: Existing host release tag or legacy Codex tag to recover
         required: true
         type: string
 
@@ -13,7 +15,7 @@ permissions:
   contents: read
 
 concurrency:
-  # Keep both channels serialized with runs of the original beta workflow.
+  # Share the lock with the original Codex workflow and serialize GitHub releases.
   group: npm-beta
   queue: max
 
@@ -22,54 +24,66 @@ env:
 
 jobs:
   qualify:
-    if: (github.event_name == 'push' && !github.event.deleted) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    if: >-
+      (github.event_name == 'push' && !github.event.deleted) ||
+      (github.event_name == 'workflow_dispatch' &&
+       (github.ref == 'refs/heads/main' || github.ref == format('refs/tags/{0}', inputs.tag)))
     runs-on: ubuntu-latest
     outputs:
       source_sha: ${{ steps.source.outputs.sha }}
+      legacy: ${{ steps.tag.outputs.legacy }}
+      filename: ${{ steps.tag.outputs.filename }}
     steps:
-      - name: Check the release tag
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - id: tag
+        name: Identify the npm target
         shell: bash
         run: |
-          number='(0|[1-9][0-9]*)'
-          [[ "$RELEASE_TAG" =~ ^v${number}\.${number}\.${number}(-beta\.${number})?$ ]]
+          source .github/scripts/release-tag.sh
+          if "$legacy" && [[ "$GITHUB_REF" != refs/heads/main ]]; then
+            echo "Recover legacy tags by dispatching publish.yml from main." >&2
+            exit 1
+          fi
+          {
+            echo "legacy=$legacy"
+            echo "filename=$filename"
+          } >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
         with:
           ref: refs/tags/${{ env.RELEASE_TAG }}
+          path: source
           persist-credentials: false
       - id: source
         name: Record the tagged commit
+        working-directory: source
         run: |
           sha=$(git rev-parse HEAD)
-          if [[ "$GITHUB_EVENT_NAME" == push ]]; then
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             test "$sha" = "$(git rev-parse "$GITHUB_SHA^{commit}")"
           fi
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
-      - run: npm install --global npm@11.20.0 @openai/codex@0.170.0
-      - name: Verify package and plugin versions
+      - run: npm install --global npm@11.21.3
+      - name: Verify the tagged manifests and pack the selected package
+        shell: bash
         run: |
-          node --input-type=module <<'NODE'
-          import assert from 'node:assert/strict';
-          import pkg from './package.json' with { type: 'json' };
-          import plugin from './plugins/codex-polish/.codex-plugin/plugin.json' with { type: 'json' };
-          import agyPlugin from './plugins/agy-polish/plugin.json' with { type: 'json' };
-          assert.equal(pkg.name, '@kyun.si/codex-polish');
-          assert.equal('v' + pkg.version, process.env.RELEASE_TAG);
-          assert.equal(plugin.version, pkg.version);
-          assert.equal(agyPlugin.version, pkg.version);
-          assert.equal(pkg.publishConfig.tag, pkg.version.includes('-beta.') ? 'beta' : 'latest');
-          assert.equal(pkg.publishConfig.access, 'public');
-          assert.equal(pkg.publishConfig.registry, 'https://registry.npmjs.org/');
-          NODE
-      - run: npm test
-      - name: Pack the tagged source
-        run: npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP"
+          source .github/scripts/release-tag.sh
+          node .github/scripts/verify-release.mjs source "$host" "$version" "$channel" "$legacy"
+          cd source
+          if "$legacy"; then
+            npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP"
+          else
+            npm pack --workspace "$package" --pack-destination "$RUNNER_TEMP"
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: npm-release
-          path: ${{ runner.temp }}/kyun.si-codex-polish-*.tgz
+          path: ${{ runner.temp }}/${{ steps.tag.outputs.filename }}
           if-no-files-found: error
 
   platform-tests:
@@ -77,6 +91,7 @@ jobs:
     uses: ./.github/workflows/ci.yml
     with:
       ref: ${{ needs.qualify.outputs.source_sha }}
+      legacy: ${{ needs.qualify.outputs.legacy == 'true' }}
 
   publish:
     runs-on: ubuntu-latest
@@ -87,7 +102,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.sha }}
           persist-credentials: false
           sparse-checkout: .github/scripts
       - uses: actions/setup-node@v4

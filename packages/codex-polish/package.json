@@ -1,0 +1,46 @@
+{
+  "name": "@kyun.si/codex-polish",
+  "version": "0.0.4-beta.2",
+  "description": "Polish Codex replies with Gemini · 用 Gemini 润色 Codex 回复",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22.16.0"
+  },
+  "os": ["darwin", "linux", "win32"],
+  "bin": {
+    "codex-polish": "scripts/install.mjs"
+  },
+  "files": [
+    "Install Codex Polish.command",
+    "安装回复润色.command",
+    ".agents/plugins/marketplace.json",
+    "plugins/codex-polish",
+    "scripts/agy_bootstrap.mjs",
+    "scripts/install.mjs",
+    "scripts/installer_common.mjs",
+    "scripts/installer_locale.mjs",
+    "scripts/installer_lock.mjs",
+    "scripts/installer_terminal.mjs",
+    "scripts/native_cache.mjs",
+    "scripts/setup_catalog.mjs",
+    "scripts/setup_catalog_task.mjs"
+  ],
+  "scripts": {
+    "prepack": "node ../../scripts/pack-workspace.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mreasonyang/agent-polish.git",
+    "directory": "packages/codex-polish"
+  },
+  "homepage": "https://github.com/mreasonyang/agent-polish#readme",
+  "bugs": {
+    "url": "https://github.com/mreasonyang/agent-polish/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/",
+    "tag": "beta"
+  }
+}

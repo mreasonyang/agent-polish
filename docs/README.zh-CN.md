@@ -1,10 +1,33 @@
-# Codex Polish · 回复润色
+# Agent Polish · 回复润色
 
 [English](../README.md) | **简体中文**
 
-[Windows 安装](#windows-powershell) · [macOS 和 Linux 安装](#macos-和-linux)
+Agent Polish 提供两个插件。在 Codex 里聊天就装 **Codex Polish**，让 Gemini 润色回复。在 Antigravity（`agy`）里聊天就装 **Agy Polish**，让 Codex 润色回复。改稿直接显示在原对话里。[快速开始](#快速开始)
 
-在 Antigravity（`agy`）里，可以让 Codex 润色 Gemini 的回复。在 Codex 里，也可以让 Gemini 润色 Codex 的回复。安装时可以选择一个方向或同时配置两边，改稿会显示在提问的聊天里。
+## 快速开始
+
+在聊天的电脑上安装。两种插件都需要 **Node.js 22.16+**、[Codex CLI](https://developers.openai.com/codex/cli/) 和 [Antigravity CLI](https://antigravity.google/docs/cli)。根据你使用的聊天工具运行对应命令。Windows PowerShell 请将 `npx` 换成 `npx.cmd`。
+
+| 在哪里聊天 | 安装 beta 版 | 由谁润色 |
+| --- | --- | --- |
+| Codex | `npx @kyun.si/codex-polish@beta setup` | Gemini |
+| Antigravity | `npx @kyun.si/agy-polish@beta setup` | Codex |
+
+从源码试用时，在仓库根目录运行 `node scripts/install.mjs setup` 配置 Codex，或运行 `node scripts/agy-cli.mjs setup` 配置 Antigravity。想在终端选 Turbo、关闭润色或指定模型，可在 `setup` 后加 `--advanced`。两个聊天工具都用，就分别运行两次安装。两个插件独立保存设置，也会沿用旧版 `0.0.4-beta.1` 安装器保存的配置。
+
+### 在 Antigravity 里，让 Codex 润色
+
+首次设置选择**自动润色**或**仅在我要求时润色**。自动模式会把本轮问题和草稿交给 Codex，由它决定是否需要改写。编辑器沿用本机 Codex CLI 的提供商、模型和思考等级。使用 ChatGPT 账号时，若需登录可运行 `codex login`。`agy` 需要支持原生插件。
+
+新开一个 Antigravity 聊天。首次出现工具授权提示时，允许 `agy-polish` 的 `polish_reply`。可以试试 **“/polish 把上一条回复缩成两句话”**。编辑失败时保留原稿。之后说 **“配置回复润色”**，就能换模型、调思考等级、改用 Turbo 或关闭润色。
+
+### 在 Codex 里，让 Gemini 润色
+
+首次设置同样选择**自动润色**或**仅在我要求时润色**。新安装默认使用 **Gemini 4 Hydrogen · 中等思考等级**，复用 Antigravity 的登录。缺少 `agy` 时安装器可协助安装。这个方向需要支持插件的 Codex CLI 和 `agy` 1.2.1 或更高版本。在 T3 Code 中使用时选择 Codex 后端。
+
+要自动润色，在 Codex **设置 → Hooks**（CLI 输入 `/hooks`）中信任 `UserPromptSubmit`，再新开聊天。手动模式可以直接说 **“润色上一条回复”**。以后说 **“配置回复润色”**，可以更改当前 Codex 配置的模式、Gemini 模型、思考等级和历史轮数。
+
+### Codex 中的改写示例
 
 在 Codex 中使用支持折叠的客户端时，还可以点开原稿对照。下面是一次实际改写。
 
@@ -19,54 +42,9 @@
 
 自动润色时，如果 OpenAI Decisions 判断无需改写，或 Gemini 原样返回，你只会看到原稿。主动要求改写时，如果文字没变，还会看到一句确认。改写失败时，你会看到简短原因和原稿。
 
-## 快速开始
-
-双向润色功能可通过 npm 的 beta 渠道安装。
-
-在你聊天的电脑上安装，需要 **Node.js 22.16+**、[Codex CLI](https://developers.openai.com/codex/cli/) 和 [Antigravity CLI](https://antigravity.google/docs/cli)。在 Antigravity 中润色需要支持原生插件的 `agy`，并在本机 Codex CLI 中配好模型提供商。在 Codex 中润色需要支持插件的 Codex CLI，以及已经登录的 `agy` 1.2.1+。
-
-### Windows (PowerShell)
-
-打开 PowerShell，在任意目录执行下面的命令。
-
-```powershell
-npx.cmd @kyun.si/codex-polish@beta setup
-```
-
-### macOS 和 Linux
-
-打开终端，在任意目录执行下面的命令。
-
-```sh
-npx @kyun.si/codex-polish@beta setup
-```
-
-### 在 Antigravity 里，让 Codex 润色
-
-第一屏选择 **Antigravity**，也可以直接运行 `npx @kyun.si/codex-polish@beta setup --host agy`。从源码运行时用 `node scripts/install.mjs setup --host agy`。编辑器沿用本机 Codex CLI 的配置。如果使用 OpenAI 账号且尚未登录，运行 `codex login`。
-
-选择 **Normal** 时，Codex 读过草稿后可以保留已经清楚的表述。选择 **Turbo** 时，每次都请 Codex 改写。两者都会在 Antigravity 交付回复前把本轮问题和草稿发送给 Codex。**仅手动**只在点名时润色，**关闭**停止润色并保留已选模型。模型和推理强度可沿用 Codex 默认值，也可以从账号的可用模型中选择。
-
-新开一个 `agy` 会话。自动模式下照常提问，手动模式可以试试 **「/polish 把上一条回复缩成两句话」**。如果 Antigravity 请求权限，允许 `polish_reply` 工具即可。最终回复直接显示改稿，Codex 不可用时可以交付原稿。之后在 Antigravity 中说 **「配置回复润色」** 就能调整这一侧的设置。
-
-### 在 Codex 里，让 Gemini 润色
-
-第一屏选择 **Codex**，或使用 `setup --host codex`。选择**两边都配置**可分别设置两个方向。非交互运行且省略宿主参数时，默认使用 Codex。
-
-使用 T3 Code 时，选择 Codex 后端。
-
-用 **↑ / ↓** 选择 **Normal**（自动按需改写）、**Turbo**（自动每次改写）、**仅手动**（只在我要求时润色）或**关闭润色**；开启润色时继续选 Gemini 模型和思考等级，按**回车**确认。初始默认值是 **Normal、Gemini 4 Hydrogen、中等（Medium）**。缺少 `agy` 时，安装器会提示安装。若选**关闭润色**，安装器会为当前 Codex 配置保存全局关闭并直接结束，不再引导配置模型、依赖、密钥或 hook 信任。[其他安装方式](technical.md#安装更新和卸载)
-
-同一份 Codex 配置下的所有聊天和目录共用一套润色设置。在聊天或终端保存后，更改立即生效。再次运行 `setup` 可查看或更改模式、模型和思考等级；菜单会预选当前项，按**回车**保留，或从同一菜单改选 **Normal**、**Turbo**、**仅手动**重新开启。关闭润色会同时停用自动和点名改写，不向 Gemini 或 OpenAI Decisions 发送内容，并保留已保存的模型、思考等级、提示词和密钥。只想升级插件并保留设置时，运行 `update`。
-
-- **信任 hook 前手动试用：** 试试 **“为什么缓存命中了还要等？返回结果 polish。”** 主动要求润色就会用 Turbo。Gemini 会收到草稿，这次不附带以前的问答。
-- **自动模式（默认）：** 在 Codex **设置 → Hooks**（CLI 输入 `/hooks`）中信任 `UserPromptSubmit` 并**新开聊天**。之后照常提问就会触发润色流程，也可以附上最近几轮对话。
-
 ### 使用 Gemini 时可选的 OpenAI Decisions API
 
-首次交互安装并选用普通模式时，安装器会询问是否启用 OpenAI Decisions API，由它判断是否需要 Gemini 改写草稿。直接按**回车**即可跳过，只用 Gemini。启用后，OpenAI 会收到本轮问题、草稿和已设置的自定义润色提示词。在承担检查费用的 OpenAI 项目中创建 API 密钥，再粘贴到终端的隐藏输入框。密钥保存在当前 Codex 配置中。Turbo 始终直接使用 Gemini。[OpenAI API 密钥](https://platform.openai.com/api-keys)
-
-以后要添加、更换或移除密钥，运行 `npx @kyun.si/codex-polish@beta openai`。Windows PowerShell 中使用 `npx.cmd @kyun.si/codex-polish@beta openai`。插件会忽略 `OPENAI_API_KEY` 环境变量。[凭据指南](../plugins/codex-polish/skills/codex-polish-setup/references/credentials.md#选配-openai-decisions-api)
+普通模式默认直接使用 Gemini。若想让 OpenAI 判断草稿是否需要改写，运行 `npx @kyun.si/codex-polish@beta openai`，在终端隐藏提示中输入密钥。这项检查会将本轮问题、草稿和已保存的自定义润色提示词发给 OpenAI，API 用量计入密钥所属的项目。再次运行同一条命令可以更换或移除密钥。[凭据指南](../plugins/codex-polish/skills/codex-polish-setup/references/credentials.md#选配-openai-decisions-api)
 
 ## Codex 中的常用聊天指令
 
@@ -93,16 +71,18 @@ npx @kyun.si/codex-polish@beta setup
 
 ## 维护与排查
 
-给下面的命令加上 `--host agy` 可以检查、更新或卸载 Antigravity 插件，使用 `--host both` 可操作两边。卸载 Antigravity 插件会保留它的模式和模型设置，方便重装时沿用。
+用所安装的包检查、更新或卸载对应插件。
 
-| 操作 | 命令 |
-| --- | --- |
-| 检查配置 | `npx @kyun.si/codex-polish@beta doctor` |
-| 更新 | `npx @kyun.si/codex-polish@beta update` |
-| 卸载 | `npx @kyun.si/codex-polish@beta uninstall` |
+| 操作 | Codex | Antigravity |
+| --- | --- | --- |
+| 检查配置 | `npx @kyun.si/codex-polish@beta doctor` | `npx @kyun.si/agy-polish@beta doctor` |
+| 保留设置并更新 | `npx @kyun.si/codex-polish@beta update` | `npx @kyun.si/agy-polish@beta update` |
+| 卸载 | `npx @kyun.si/codex-polish@beta uninstall` | `npx @kyun.si/agy-polish@beta uninstall` |
+
+卸载 Agy Polish 会保留这一侧的模式和模型，重装时可以沿用。
 
 在 Windows PowerShell 中，使用 `npx.cmd` 调用 `doctor`、`update` 和 `uninstall`。`doctor` 检查本机依赖、已保存的设置和 hook 信任状态。要确认 Antigravity 登录是否可用，可以说 **“选择改写模型”**，查看账号当前能用的模型。插件更新后，Codex 可能提示你重新信任 hook。
 
-卸载会删除当前 Codex 配置保存的插件设置、自定义提示词和 OpenAI API 密钥。旧版留下的空锁文件和空插件目录也会一并清除，你自己放进去的无关文件和共用的 `agy` 会保留。[卸载范围](technical.md#安装更新和卸载)
+卸载 Codex Polish 会删除当前 Codex 配置保存的插件设置、自定义提示词和 OpenAI API 密钥。旧版留下的空锁文件和空插件目录也会一并清除，你自己放进去的无关文件和共用的 `agy` 会保留。[卸载范围](technical.md#安装更新和卸载)
 
 [凭据与配置指南](../plugins/codex-polish/skills/codex-polish-setup/references/credentials.md) · [技术参考](technical.md) · [离线评测](../evaluation/README.md) · [参与贡献](../CONTRIBUTING.md) · [安全说明](../SECURITY.md) · [更新记录](../CHANGELOG.md) · [Apache-2.0 许可证](../LICENSE)

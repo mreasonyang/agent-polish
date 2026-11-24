@@ -27,9 +27,9 @@ Opening **Setup** or saying “配置回复润色” / “Set up Codex Polish”
 
 For either menu, save a setting only when the user chooses to change it.
 
-Interactive terminal and Finder setup open the same choices as chat. Running `setup` again preselects the current option; pressing Enter keeps it, and choosing Normal, Turbo or Only when asked from the same menu turns polishing back on. Use `update` to upgrade with the existing settings.
+First-time terminal and Finder setup offer automatic or manual polishing with the existing model or its default. Chat setup offers the full mode and model menus. Use `update` to upgrade with the existing settings.
 
-- **A required step is missing.** Give the relevant next step from the [中文指南](references/credentials.md) or [English guide](references/credentials.en.md). For `agy_missing`, suggest `npx @kyun.si/codex-polish setup --install-agy` from any folder on the machine running Codex. A source checkout also supports `node scripts/install.mjs setup --install-agy` from its root. Open `agy` to sign in if Antigravity requests authentication.
+- **A required step is missing.** Give the relevant next step from the [中文指南](references/credentials.md) or [English guide](references/credentials.en.md). For `agy_missing`, suggest `npx @kyun.si/codex-polish@beta setup --install-agy` from any folder on the machine running Codex. A source checkout also supports `node scripts/install.mjs setup --install-agy` from its root. Open `agy` to sign in if Antigravity requests authentication.
 - **Ready for automatic polishing.** Before asking for hook trust, briefly tell the user what goes to each service. Google receives the question and draft as written, any edit instructions or custom prompt, and up to two earlier exchanges by default. Secrets in that text are sent too. Gemini runs alone by default. With a key explicitly saved for this profile, the optional OpenAI Decisions API check in Normal mode sends the current question, draft and any custom prompt to OpenAI and incurs API usage on the key’s project. Direct the user to **Settings → Hooks** (`/hooks` in the CLI) to trust `UserPromptSubmit` and start a new chat.
 - **Manual or off.** In manual mode, the user can ask “把这轮回复润色一下” / “Polish this reply”. Before hook trust, explicit requests omit earlier exchanges. When polishing is off, both automatic and explicit rewrites are skipped and nothing is sent to Gemini or OpenAI Decisions; the saved model, thinking level, custom prompt and OpenAI key stay intact. Explain that the user can reopen Setup (or rerun `setup`) and choose Normal, Turbo or Only when asked, or say “开启自动润色” / “Turn on automatic polishing” or “只在我要求时润色” / “Only polish when I ask”.
 
@@ -51,7 +51,7 @@ For a general check, report actual blockers or a ready-to-try status. When showi
 
 ## Optional OpenAI API key
 
-First interactive setup in Normal mode offers the OpenAI Decisions API check once and defaults to skipping it. To add, replace or remove a key later, run `npx @kyun.si/codex-polish openai` on the machine and Codex profile that run the plugin. In Windows PowerShell, use `npx.cmd`. From a source checkout, run `node scripts/install.mjs openai`. Enter keys only at the hidden terminal prompt. The plugin ignores `OPENAI_API_KEY`. Uninstall deletes the profile’s saved key. [Create an OpenAI API key](https://platform.openai.com/api-keys)
+Normal mode uses Gemini alone until the user enables the optional OpenAI Decisions API check. To add, replace or remove a key, run `npx @kyun.si/codex-polish@beta openai` on the machine and Codex profile that run the plugin. In Windows PowerShell, use `npx.cmd`. From a source checkout, run `node scripts/install.mjs openai`. Enter keys only at the hidden terminal prompt. The plugin ignores `OPENAI_API_KEY`. Uninstall deletes the profile’s saved key. [Create an OpenAI API key](https://platform.openai.com/api-keys)
 
 ## Profile polishing prompt
 

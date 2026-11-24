@@ -4,3 +4,7 @@ node_modules/
 .env
 .env.*
 *.tgz
+/packages/codex-polish/.agents/
+/packages/*/plugins/
+/packages/*/scripts/
+/packages/*/.npm-pack-*/

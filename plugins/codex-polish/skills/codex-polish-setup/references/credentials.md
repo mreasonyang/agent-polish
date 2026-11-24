@@ -2,13 +2,13 @@
 
 [English](credentials.en.md)
 
-在运行 Codex 的机器上，从任意目录交互运行 `setup`，或在 macOS 的 Finder 里双击安装脚本。第一屏用 **↑ / ↓** 选择 **Normal**（自动按需改写）、**Turbo**（自动每次改写）、**仅手动**（只在我要求时润色）或**关闭润色**，按 **回车** 确认。使用内置提示词时，**Normal** 可以保留清晰原稿，也支持可选的 OpenAI Decisions API；**Turbo** 跳过这项检查，请 Gemini 改写草稿。若选**关闭润色**，会为当前 Codex 配置保存全局关闭并直接结束，不再引导配置模型、依赖、密钥或 hook 信任，已保存的模型、思考等级、提示词和密钥都会保留。
+在运行 Codex 的机器上，从任意目录交互运行 `npx @kyun.si/codex-polish@beta setup`，或在 macOS 的 Finder 里双击 Codex 安装脚本。新安装可以选择自动按需润色或只在要求时润色，使用已有的 Gemini 模型和思考等级。
 
-开启润色（Normal、Turbo 或仅手动）且 `agy` 可用后，继续选择 Gemini 模型和思考等级。默认是 **Gemini 4 Hydrogen · 中等（Medium）**。也可以查看 Antigravity 账号的其他模型，选择该模型支持的等级。同一份 Codex 配置下的所有聊天和目录共用这套设置。可以在聊天里说“切换到 Turbo 模式”或“把 Gemini 的思考等级调到高”，保存后立即生效。再运行一次 `setup` 就能在终端查看当前选项，按**回车**保留，或从同一菜单改选 Normal、Turbo、仅手动重新开启。
+默认模型是 **Gemini 4 Hydrogen · 中等（Medium）**。在 Codex 聊天中说“配置回复润色”可以切换 Normal、Turbo、仅手动或关闭，也可以查看 Antigravity 账号的其他模型并选择思考等级。同一份 Codex 配置下的所有聊天和目录共用这些设置。
 
 ## 准备 Antigravity
 
-在实际运行 Codex 的机器上，用同一个系统账户安装插件。插件先在 Codex 的 PATH 里找 `agy`，再查 Google 默认目录（Windows 的 `%LOCALAPPDATA%\agy\bin` 或 macOS、Linux 的 `~/.local/bin`）。首次双击安装或在终端交互运行 `setup` 时，如果缺少 `agy`，你可以同意安装 Google 官方 CLI，也可以跳过。无人值守安装或之后想补装时，运行 `npx @kyun.si/codex-polish setup --install-agy`。用源码安装时，在仓库里运行 `node scripts/install.mjs setup --install-agy`。也可以按 Google 的指南单独安装。[官方 CLI 安装指南](https://antigravity.google/docs/getting-started/?tab=cli)
+在实际运行 Codex 的机器上，用同一个系统账户安装插件。插件先在 Codex 的 PATH 里找 `agy`，再查 Google 默认目录（Windows 的 `%LOCALAPPDATA%\agy\bin` 或 macOS、Linux 的 `~/.local/bin`）。首次双击安装或在终端交互运行 `setup` 时，如果缺少 `agy`，你可以同意安装 Google 官方 CLI，也可以跳过。无人值守安装或之后想补装时，运行 `npx @kyun.si/codex-polish@beta setup --install-agy`。用源码安装时，在仓库里运行 `node scripts/install.mjs setup --install-agy`。也可以按 Google 的指南单独安装。[官方 CLI 安装指南](https://antigravity.google/docs/getting-started/?tab=cli)
 
 只有 Antigravity 提示需要登录时，才需要在自己的终端运行 `agy` 登录。如果终端找不到命令，在 Windows PowerShell 中运行 `& "$env:LOCALAPPDATA\agy\bin\agy.exe"`，macOS 或 Linux 上运行 `~/.local/bin/agy`。登录后回 Codex 再试一次改写。[ACP 认证说明](https://antigravity.google/docs/ide/extensions/acp#authentication)
 
@@ -16,10 +16,10 @@
 
 ## 选配 OpenAI Decisions API
 
-首次交互安装并选用普通模式时，安装器会询问一次是否启用这项检查。直接按**回车**即可跳过，只用 Gemini。启用后，OpenAI 只收到本轮问题、草稿和已设置的自定义润色提示词，据此判断是否需要 Gemini 改写草稿。API 用量计入密钥所属的 OpenAI 项目。历史问答只发给 Gemini。Turbo 和点名润色始终跳过 OpenAI。
+普通模式默认直接使用 Gemini，需要时可用下方命令启用检查。启用后，OpenAI 只收到本轮问题、草稿和已设置的自定义润色提示词，据此判断是否需要 Gemini 改写草稿。API 用量计入密钥所属的 OpenAI 项目。历史问答只发给 Gemini。Turbo 和点名润色始终跳过 OpenAI。
 
 1. 在承担费用的 OpenAI 项目中创建 API 密钥。若使用受限密钥，请允许调用 `POST /v1/decisions`，并确认项目可以使用 `gpt-6-luna`。[OpenAI API 密钥](https://platform.openai.com/api-keys) · [API 账单](https://platform.openai.com/account/billing/overview)
-2. 在安装时选择配置 OpenAI Decisions API，或在运行插件的机器上使用同一份 Codex 配置，运行 `npx @kyun.si/codex-polish openai`。Windows PowerShell 中运行 `npx.cmd @kyun.si/codex-polish openai`。用源码安装时，在仓库根目录运行 `node scripts/install.mjs openai`。只在终端提示隐藏输入时粘贴密钥。插件将其保存在 `$CODEX_HOME/codex-polish/credentials/openai.key`。
+2. 在运行插件的机器上使用同一份 Codex 配置，运行 `npx @kyun.si/codex-polish@beta openai`。Windows PowerShell 中运行 `npx.cmd @kyun.si/codex-polish@beta openai`。用源码安装时，在仓库根目录运行 `node scripts/install.mjs openai`。只在终端提示隐藏输入时粘贴密钥。插件将其保存在 `$CODEX_HOME/codex-polish/credentials/openai.key`。
 3. 以后可在同一菜单里更换或移除密钥，卸载也会删除本地副本。要关闭这份 Codex 配置下的检查，可以说**“以后只用 Gemini 改写”**。
 
 插件会忽略 `OPENAI_API_KEY` 环境变量。

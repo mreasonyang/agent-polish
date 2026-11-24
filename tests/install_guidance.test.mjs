@@ -15,6 +15,9 @@ import { rewriteModeSettings } from '../plugins/codex-polish/hooks/rewrite_mode.
 import { catalog } from '../plugins/codex-polish/skills/codex-polish/scripts/acp_models.mjs';
 import { makeProject, windows, homeEnv, useTestProfile } from './hook_fixture.mjs';
 
+const { version } = JSON.parse(fs.readFileSync(new URL('../plugins/codex-polish/.codex-plugin/plugin.json', import.meta.url)));
+const npxCodexPolish = `${windows ? 'npx.cmd' : 'npx'} @kyun.si/codex-polish@${version.includes('-') ? 'beta' : 'latest'}`;
+
 const checks = {
   ui_language: 'en',
   blockers: [],
@@ -43,7 +46,7 @@ test('doctor explains modes, decisions, history, model and Google authentication
     assert.match(defaults, lang === 'en' ? /go straight to Gemini/ : /直接交给 Gemini/);
     assert.match(defaults, lang === 'en' ? /reuses your Antigravity account/ : /复用 Antigravity 里的登录/);
     assert.match(defaults, lang === 'en' ? /Gemini receives up to 2 earlier completed exchanges/ : /Gemini 改写时最多带上最近 2 轮完整问答/);
-    assert.ok(report({ openai_key_malformed: true }).includes(`${windows ? 'npx.cmd' : 'npx'} @kyun.si/codex-polish openai`));
+    assert.ok(report({ openai_key_malformed: true }).includes(npxCodexPolish + ' openai'));
     const withOpenAI = report({ decisions_enabled: true });
     assert.match(
       withOpenAI,
@@ -101,7 +104,7 @@ test('setup reports actionable blockers and offers the relevant official key pag
     }
   }
 });
-test('the first setup screen offers Normal, Turbo, manual and off and restores the terminal after selection', async (t) => {
+test('the advanced setup screen offers Normal, Turbo, manual and off and restores the terminal after selection', async (t) => {
   const down = '\x1b[B', up = '\x1b[A', enter = '\r';
   for (const [name, keys, expected, lang, initiallyRaw, current] of [
     ['Enter accepts the default', [enter], 'normal', 'en', false],
@@ -187,14 +190,14 @@ async function openAIFlow(lang, onboarding, keys) {
   } finally { input.destroy(); output.destroy(); }
 }
 
-test('Normal setup offers a single default skip after model selection and the manage command stays available', async t => {
+test('advanced Normal setup offers a single default skip after model selection and the manage command stays available', async t => {
   useTestProfile(t);
   const enter = '\r', down = '\x1b[B';
   const order = [];
   const session = { ...checks, rewrite_mode_configured: false, gemini_model_configured: false };
   const offers = [];
   const options = {
-    interactive: true, check: () => session,
+    interactive: true, advanced: true, check: () => session,
     chooseMode() { order.push('mode'); return 'normal'; },
     saveRewriteMode() { session.rewrite_mode_configured = true; },
     chooseModel() { order.push('model'); return { model: 'gemini-4-hydrogen', thinkingLevel: 'medium' }; },
@@ -515,7 +518,7 @@ test('interactive setup can change saved profile defaults from any launch direct
       const choices = [];
       const setup = launch === 'extracted' ? packaged.showSetupGuidance : showSetupGuidance;
       const options = {
-        interactive: true,
+        interactive: true, advanced: true,
         chooseMode(lang, current) { assert.equal(lang, 'en'); choices.push(['mode', current]); return current ? 'turbo' : 'normal'; },
         chooseModel() { choices.push('model'); return { model: 'gemini-4-argon', thinkingLevel: 'high' }; },
         offerOpenAI() {},
@@ -525,7 +528,8 @@ test('interactive setup can change saved profile defaults from any launch direct
       process.chdir(project);
       assert.equal(await setup(options), true);
       assert.deepEqual(choices, [['mode', undefined], 'model', ['mode', 'normal'], 'model']);
-      assert.equal(log.mock.callCount(), 0);
+      assert.equal(log.mock.callCount(), 2);
+      assert.ok(log.mock.calls.every(call => /If Antigravity asks you to sign in/.test(call.arguments[0])));
       const defaults = join(profile, 'codex-polish', 'settings');
       assert.equal(fs.readFileSync(join(defaults, 'codex-polish.rewrite-mode'), 'utf8'), 'turbo\n');
       assert.equal(fs.readFileSync(join(defaults, 'codex-polish.model'), 'utf8'), 'gemini-4-argon high\n');
@@ -544,14 +548,14 @@ test('interactive setup can change saved profile defaults from any launch direct
   }
 });
 
-test('interactive setup chooses an unsaved mode before offering to install agy', async (t) => {
+test('advanced setup chooses an unsaved mode before offering to install agy', async (t) => {
   for (const [lang, expected] of [['en', 'normal'], ['zh', 'turbo']]) {
     await t.test(lang, async (t) => {
       const questions = [];
       const log = t.mock.method(console, 'log', () => {});
       const saveRewriteMode = t.mock.fn();
       const ok = await showSetupGuidance({
-        interactive: true,
+        interactive: true, advanced: true,
         check: () => ({
           ...checks, ui_language: lang, rewrite_mode_configured: saveRewriteMode.mock.callCount() > 0,
           gemini_model_configured: false, blockers: ['agy_missing'], agy_available: false
@@ -616,7 +620,7 @@ test('setup can re-enable Normal, Turbo or manual from a disabled profile', asyn
     writeProfileSetting('codex-polish.rewrite-mode', initialRewrite);
     const steps = [];
     const ok = await showSetupGuidance({
-      interactive: true,
+      interactive: true, advanced: true,
       check: () => ({ ...checks, mode: triggerMode(), ...rewriteModeSettings() }),
       chooseMode(lang, current) { assert.equal(current, 'off'); return selection; },
       chooseModel(status) {
@@ -650,7 +654,7 @@ test('setup opens saved choices, never writes on Enter for unchanged settings, a
   ]) {
     const offered = [];
     const ok = await showSetupGuidance({
-      interactive: true, ...options, check: () => status,
+      interactive: true, advanced: true, ...options, check: () => status,
       chooseMode(lang, current) {
         if (status.mode === 'manual' || status.mode === 'off') assert.equal(current, status.mode);
         offered.push('mode');
@@ -720,8 +724,8 @@ test('interactive dependency prompts, opt-ins, browser consent, failure messagin
     return { ok, reads, installs, prompts, opens, text: output.join('\n') };
   }
   let result = await setup({ interactive: false });
-  assert.ok(result.text.includes(`${windows ? 'npx.cmd' : 'npx'} @kyun.si/codex-polish setup --install-agy`));
-  assert.match(result.text, /interactive terminal/);
+  assert.ok(result.text.includes(npxCodexPolish + ' setup --install-agy'));
+  assert.doesNotMatch(result.text, /interactive terminal/);
   assert.equal(result.prompts, 0);
   assert.equal(result.installs, 0);
   assert.equal(result.opens, 0);

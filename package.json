@@ -1,38 +1,14 @@
 {
-  "name": "@kyun.si/codex-polish",
-  "version": "0.0.4-beta.1",
+  "name": "agent-polish",
+  "version": "0.0.4-beta.2",
+  "private": true,
   "license": "Apache-2.0",
-  "description": "Polish Codex replies with Gemini or Antigravity replies with Codex · 在 Codex 中用 Gemini 润色，或在 Antigravity 中用 Codex 润色",
-  "os": [
-    "darwin",
-    "linux",
-    "win32"
+  "description": "Polish Codex replies with Gemini or Antigravity replies with Codex",
+  "workspaces": [
+    "packages/codex-polish",
+    "packages/agy-polish"
   ],
-  "bin": {
-    "codex-polish": "scripts/install.mjs"
-  },
-  "files": [
-    ".agents/plugins/marketplace.json",
-    "plugins/codex-polish",
-    "plugins/agy-polish",
-    "scripts/agy_install.mjs",
-    "scripts/install.mjs",
-    "scripts/native_cache.mjs",
-    "scripts/setup_catalog.mjs",
-    "scripts/setup_catalog_task.mjs",
-    "安装回复润色.command",
-    "Install Codex Polish.command",
-    "CONTRIBUTING.md",
-    "CONTRIBUTING.en.md",
-    "SECURITY.md",
-    "SECURITY.en.md",
-    "CHANGELOG.md",
-    "docs/README.zh-CN.md",
-    "docs/technical.md",
-    "docs/technical.en.md",
-    "evaluation/README.md",
-    "evaluation/README.en.md"
-  ],
+  "files": [],
   "type": "module",
   "engines": {
     "node": ">=22.16.0"
@@ -42,15 +18,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/mreasonyang/codex-polish.git"
+    "url": "git+https://github.com/mreasonyang/agent-polish.git"
   },
-  "homepage": "https://github.com/mreasonyang/codex-polish#readme",
+  "homepage": "https://github.com/mreasonyang/agent-polish#readme",
   "bugs": {
-    "url": "https://github.com/mreasonyang/codex-polish/issues"
-  },
-  "publishConfig": {
-    "access": "public",
-    "registry": "https://registry.npmjs.org/",
-    "tag": "beta"
+    "url": "https://github.com/mreasonyang/agent-polish/issues"
   }
 }

@@ -94,8 +94,17 @@ nativeTest(
   'npm tarball, both Finder launchers, npx from archive, native onboarding and hooks, disabled update, cache backups and uninstall',
   async (t) => {
     const { base, profile, env, invoke, rows, marketplace, snapshot } = isolated(t);
+    const source = join(base, 'release-source');
+    const launchers = ['安装回复润色.command', 'Install Codex Polish.command'];
+    const codexPackageFiles = ['package.json', 'README.md', 'LICENSE', ...launchers]
+      .map(file => join('packages', 'codex-polish', file));
+    for (const entry of ['.agents', 'scripts', PRODUCT, 'package.json',
+      'packages/agy-polish/package.json', ...codexPackageFiles]) {
+      fs.mkdirSync(dirname(join(source, entry)), { recursive: true });
+      fs.cpSync(join(ROOT, entry), join(source, entry), { recursive: true });
+    }
     const [pack] = JSON.parse(
-      invoke('npm', ['pack', '--ignore-scripts', '--json', '--pack-destination', base], { cwd: ROOT })
+      invoke('npm', ['pack', '--workspace', '@kyun.si/codex-polish', '--silent', '--json', '--pack-destination', base], { cwd: source })
     );
     const extraction = join(base, '下载的插件');
     let download = extraction;
@@ -106,6 +115,7 @@ nativeTest(
       invoke('tar', ['-xzf', pack.filename]);
       fs.renameSync(join(base, 'package'), download);
     }
+    for (const launcher of launchers) assert.ok(pack.files.some(file => file.path === launcher));
     const script = join(download, 'scripts/install.mjs');
     env.LC_ALL = 'zh_CN.UTF-8';
     const chinese = windows ? invoke(process.execPath, [script, 'setup']) : invoke(join(download, '安装回复润色.command'), []);

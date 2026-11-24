@@ -1,33 +1,28 @@
 #!/usr/bin/env node
-// Install Codex Polish through the selected host's native plugin manager.
+// Manage the native Codex installation of Codex Polish.
 import * as fs from 'node:fs';
 import { basename, dirname, isAbsolute, join, normalize, resolve } from 'node:path';
-import { homedir, tmpdir } from 'node:os';
+import { homedir } from 'node:os';
 import { createHash, randomUUID } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
-import { on } from 'node:events';
-import { Readable } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
-import { clearLine, createInterface, cursorTo, emitKeypressEvents, moveCursor } from 'node:readline';
-import { createInterface as createPrompt } from 'node:readline/promises';
+import { createInterface } from 'node:readline';
 import { isDeepStrictEqual, parseArgs } from 'node:util';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { executable, windows, agyDirectory, windowsSystemTool, openRegular, sameEntry } from '../plugins/codex-polish/hooks/platform.mjs';
 import { language, languageSettings, tr } from '../plugins/codex-polish/hooks/ui_locale.mjs';
-import { DEFAULT_GEMINI_MODEL, DEFAULT_THINKING_LEVEL, DECISIONS_FILE, MODE_FILE, PROFILE_PREFERENCE_FILES, findAgy, runtimeStatus, saveModelSelection, triggerMode } from '../plugins/codex-polish/hooks/preferences.mjs';
+import { DEFAULT_GEMINI_MODEL, DEFAULT_THINKING_LEVEL, DECISIONS_FILE, MODE_FILE, PROFILE_PREFERENCE_FILES, historyTurns, runtimeStatus, saveModelSelection, triggerMode } from '../plugins/codex-polish/hooks/preferences.mjs';
 import { REWRITE_MODE_FILE, REWRITE_MODES } from '../plugins/codex-polish/hooks/rewrite_mode.mjs';
 import { accessSettingFile, readProfileSetting, writeProfileSetting } from '../plugins/codex-polish/hooks/profile_setting.mjs';
 import { readOpenAIKey, saveOpenAIKey, clearOpenAIKey } from '../plugins/codex-polish/hooks/openai_credentials.mjs';
 import { cleanupProjectSettings } from '../plugins/codex-polish/hooks/owned_settings.mjs';
-import { removeProfileCache, sqliteModule } from '../plugins/codex-polish/hooks/recovery.mjs';
+import { removeProfileCache } from '../plugins/codex-polish/hooks/recovery.mjs';
 import { openSetupCatalog } from './setup_catalog.mjs';
 import { preserve } from './native_cache.mjs';
-import { withLock } from '../plugins/agy-polish/scripts/directory-lock.mjs';
+import { withExistingLock, withLock } from './installer_lock.mjs';
+import { AGY_INSTALL, installAgyBootstrap, supportedAgy } from './agy_bootstrap.mjs';
+import { ask, chooseOnboardingMode, chooseOption, terminalKeys, thinkingLabels, waitForCatalog } from './installer_terminal.mjs';
+import { available, canonical, compareVersions as compareInstallerVersions, interactiveTerminal, LEGACY_BOTH_SETUP, npmChannel, pathDirectories, VERSION } from './installer_common.mjs';
 export { withLock };
-import {
-  AgyInstallError, agyProfile, localAgyState, requireAgyCli, installedAgy,
-  validateAgyBundle, changeAgyPlugin, loadAgySettings, checkCodexProvider
-} from './agy_install.mjs';
 
 export const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 export const MARKET = 'codex-polish-local',
@@ -39,11 +34,11 @@ const CODEX_INSTALL = 'https://developers.openai.com/codex/cli/';
 const GEMINI_KEYS = 'https://aistudio.google.com/apikey';
 const OPENAI_KEYS = 'https://platform.openai.com/api-keys';
 const OPENAI_OFFER_FILE = 'codex-polish.openai-offer';
-const openAICommand = `${windows ? 'npx.cmd' : 'npx'} @kyun.si/codex-polish openai`;
-const installAgyCommand = `${windows ? 'npx.cmd' : 'npx'} @kyun.si/codex-polish setup --install-agy`;
-const AGY_INSTALL = 'https://antigravity.google/docs/getting-started/?tab=cli';
-const AGY_BOOTSTRAP = 'https://antigravity.google/cli/install.' + (windows ? 'ps1' : 'sh');
-const VERSION = '[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][a-zA-Z0-9.+-]+)?';
+const codexPackage = '@kyun.si/codex-polish';
+const channel = npmChannel(ROOT, codexPackage, PRODUCT + '/.codex-plugin/plugin.json');
+const codexCommandPrefix = `${windows ? 'npx.cmd' : 'npx'} ${codexPackage}@${channel}`;
+const openAICommand = codexCommandPrefix + ' openai';
+const installAgyCommand = codexCommandPrefix + ' setup --install-agy';
 const validVersion = new RegExp('^' + VERSION + '$');
 const snapshotName = new RegExp('^' + VERSION + '-[0-9a-f]{20}$');
 const localSource = { source: 'local', path: './' + PRODUCT };
@@ -65,12 +60,6 @@ function readPlain(path, maxBytes) {
   } finally {
     fs.closeSync(fd);
   }
-}
-// Keep each Codex profile separate, including profiles that have not been created yet.
-function canonical(path) {
-  path = resolve(path);
-  if (fs.existsSync(path)) return fs.realpathSync.native(path);
-  return join(canonical(dirname(path)), basename(path));
 }
 function registeredPath(path) {
   // Rust canonicalize() returns Win32 device paths; the marketplace list
@@ -154,26 +143,8 @@ export function bundleVersion(root) {
   return metadata.version;
 }
 export function compareVersions(a, b) {
-  function parts(version) {
-    if (typeof version !== 'string' || !validVersion.test(version))
-      throw fail('没法确定已安装插件的版本。', "Couldn't determine the installed plugin version.");
-    const [release, prerelease] = version.split('+')[0].split(/-(.*)/s);
-    return [release.split('.').map(BigInt), prerelease?.split('.')];
-  }
-  const [x, xp] = parts(a),
-    [y, yp] = parts(b);
-  const cmp = (a, b) => (a < b ? -1 : Number(a > b));
-  for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return cmp(x[i], y[i]);
-  if (!xp || !yp) return Number(!xp) - Number(!yp);
-  for (let i = 0; i < Math.min(xp.length, yp.length); i++) {
-    const l = xp[i],
-      r = yp[i],
-      ln = /^\d+$/.test(l),
-      rn = /^\d+$/.test(r);
-    const order = ln !== rn ? Number(rn) - Number(ln) : ln ? cmp(BigInt(l), BigInt(r)) : cmp(l, r);
-    if (order) return order;
-  }
-  return cmp(xp.length, yp.length);
+  return compareInstallerVersions(a, b, () =>
+    fail('没法确定已安装插件的版本。', "Couldn't determine the installed plugin version."));
 }
 function verifiedPaths(entry) {
   if (!fs.lstatSync(entry).isDirectory()) return null;
@@ -622,7 +593,7 @@ export function preserveNativeCache(store, previous, state, alternate) {
     );
   }
 }
-async function setup(root, store, run, setEnabled, action) {
+async function setup(root, store, run, setEnabled, action, savePreferences) {
   const market = await registeredMarket(run, store);
   const active = activeSnapshot(store);
   if (market && !active)
@@ -655,6 +626,8 @@ async function setup(root, store, run, setEnabled, action) {
   }
   const enabled = before?.enabled ?? true;
   const [target, version] = makeSnapshot(root, store, before ? [before.version] : [], previous);
+  // A new plugin can be loaded as soon as Codex registers it.
+  if (!before) await savePreferences?.();
   if (before)
     writeAtomicJson(join(store, '.pending-update.json'), { previous: basename(previous), target: basename(target), version: before.version, enabled });
   preserveNativeCache(store, previous, before);
@@ -681,7 +654,10 @@ async function setup(root, store, run, setEnabled, action) {
     if (before) finishPending(store);
     throw error;
   }
-  if (before) finishPending(store);
+  if (before) {
+    finishPending(store);
+    await savePreferences?.();
+  }
   if (!enabled)
     return [
       tr(
@@ -871,33 +847,6 @@ async function uninstall(store, run) {
   activateSnapshot(store, null);
   return cleanUninstallData(store);
 }
-// A previous installer may still hold its SQLite lock. Only a regular, empty,
-// single-link file with the original identity is eligible for removal.
-async function withExistingLock(file, action, remove) {
-  const entry = fs.lstatSync(file, { bigint: true, throwIfNoEntry: false });
-  if (!entry?.isFile() || entry.size !== 0n || entry.nlink !== 1n) return action();
-  const { DatabaseSync } = sqliteModule();
-  const url = pathToFileURL(file);
-  url.searchParams.set('mode', 'rw');
-  const db = new DatabaseSync(url.href);
-  let result;
-  try {
-    try { db.exec('BEGIN EXCLUSIVE'); }
-    catch (error) {
-      if (![5, 6].includes(error.errcode)) throw error;
-      throw fail('另一个安装程序正在运行，请等它结束后再试。', 'Another installer is running. Try again after it finishes.');
-    }
-    result = await action();
-  } finally {
-    db.close();
-  }
-  if (remove) {
-    const current = fs.lstatSync(file, { bigint: true, throwIfNoEntry: false });
-    if (current?.isFile() && current.size === 0n && current.nlink === 1n && sameEntry(entry, current)) fs.unlinkSync(file);
-  }
-  return result;
-}
-
 function removeEmptyDirectory(directory) {
   try { fs.rmdirSync(directory); }
   catch (error) {
@@ -905,7 +854,7 @@ function removeEmptyDirectory(directory) {
   }
 }
 
-export async function manage(action, root, store, run = codex, setEnabled = writeEnabled) {
+export async function manage(action, root, store, run = codex, setEnabled = writeEnabled, savePreferences) {
   const profileStore = store === snapshotStore();
   const anchor = profileStore ? codexProfile() : dirname(store);
   fs.mkdirSync(anchor, { recursive: true, mode: 0o700 });
@@ -921,11 +870,11 @@ export async function manage(action, root, store, run = codex, setEnabled = writ
     }
     const remove = action === 'uninstall';
     const status = await withExistingLock(join(store, '.installer.sqlite'), async () => {
-      if (!remove) return setup(root, store, run, setEnabled, action);
+      if (!remove) return setup(root, store, run, setEnabled, action, savePreferences);
       const message = await uninstall(store, run);
       finishPending(store);
       return [message, false];
-    }, remove);
+    }, remove, fail);
     if (remove) {
       removeEmptyDirectory(store);
       if (profileStore) removeEmptyDirectory(dirname(store));
@@ -935,7 +884,7 @@ export async function manage(action, root, store, run = codex, setEnabled = writ
   if (action === 'uninstall' && profileStore) {
     const target = agyDirectory();
     const file = join(target, '.codex-polish-agy.sqlite');
-    if (statMaybe(file)) await withLock(target, () => withExistingLock(file, () => {}, true));
+    if (statMaybe(file)) await withLock(target, () => withExistingLock(file, () => {}, true, fail));
   }
   return result;
 }
@@ -958,97 +907,8 @@ function saveSetupMode(file, value) {
       'Could not save your defaults. Check write access to your Codex profile.', language()));
   }
 }
-async function runBootstrap(script, target, options) {
-  const shell = windows ? windowsSystemTool('WindowsPowerShell/v1.0/powershell.exe') : '/bin/bash';
-  const args = windows ? ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File'] : [];
-  const proc = spawn(shell, [...args, script, '--dir', target], { ...options, stdio: 'ignore', detached: !windows, windowsHide: true });
-  function killGroup() {
-    if (proc.pid) {
-      try {
-        if (windows) {
-          spawnSync(windowsSystemTool('taskkill.exe'), ['/PID', String(proc.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
-          proc.kill('SIGKILL');
-        } else process.kill(-proc.pid, 'SIGKILL');
-      } catch (error) {
-        if (error.code !== 'ESRCH') throw error;
-      }
-    }
-  }
-  const timer = setTimeout(killGroup, 180_000);
-  process.once('SIGINT', killGroup);
-  process.once('SIGTERM', killGroup);
-  try {
-    const status = await new Promise((done, reject) => proc.once('error', reject).once('close', done));
-    if (status !== 0) throw fail('Google 的安装程序没有完成。', 'Google’s installer didn’t finish.');
-  } finally {
-    clearTimeout(timer);
-    process.off('SIGINT', killGroup);
-    process.off('SIGTERM', killGroup);
-  }
-}
-async function downloadBootstrap(file) {
-  const signal = AbortSignal.timeout(30_000);
-  let url = new URL(AGY_BOOTSTRAP);
-  for (let redirects = 0; redirects <= 5; redirects++) {
-    const response = await fetch(url, { signal, redirect: 'manual' });
-    if (response.ok && response.body) {
-      await pipeline(Readable.fromWeb(response.body), fs.createWriteStream(file, { flags: 'wx', mode: 0o600 }), {
-        signal
-      });
-      return;
-    }
-    await response.body?.cancel();
-    const location = response.headers.get('location');
-    if (![301, 302, 303, 307, 308].includes(response.status) || !location) break;
-    url = new URL(location, url);
-    if (url.protocol !== 'https:') break;
-  }
-  throw fail('从 Google 下载 agy 失败。', 'Could not download agy from Google.');
-}
-function agyEnvironment() {
-  const env = { ...process.env };
-  for (const key of Object.keys(env)) {
-    if (['OPENAI_API_KEY', 'GEMINI_API_KEY', 'BASH_ENV', 'ENV'].includes(key.toUpperCase())) delete env[key];
-  }
-  return env;
-}
-function supportedAgy(binary) {
-  const result = spawnSync(binary, ['--version'], {
-    env: agyEnvironment(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
-    timeout: 5000, maxBuffer: 16 * 1024, killSignal: 'SIGKILL'
-  });
-  const version = result.status === 0 && /(?:^|\s)v?(\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?(?:\+[a-zA-Z0-9.-]+)?)(?=\s|$)/.exec(result.stdout);
-  return Boolean(version && compareVersions(version[1], '1.2.1') >= 0);
-}
 export async function installAgy() {
-  const target = agyDirectory();
-  fs.mkdirSync(target, { recursive: true });
-  await withLock(target, () => withExistingLock(join(target, '.codex-polish-agy.sqlite'), async () => {
-    const existing = findAgy();
-    if (existing) {
-      if (supportedAgy(existing)) return;
-      throw fail('请将现有的 Antigravity CLI 更新到 1.2.1 或更高版本。', 'Update your existing Antigravity CLI to version 1.2.1 or later.');
-    }
-    const binary = join(target, windows ? 'agy.exe' : 'agy');
-    if (statMaybe(binary))
-      throw fail(`请先检查 ${binary}，这个路径已被占用。`, `Check ${binary}. That path is already in use.`);
-    const temp = fs.mkdtempSync(join(tmpdir(), 'codex-polish-agy-')),
-      script = join(temp, windows ? 'install.ps1' : 'install.sh');
-    const options = { cwd: temp, env: agyEnvironment() };
-    try {
-      await downloadBootstrap(script);
-      try {
-        await runBootstrap(script, target, options);
-        if (!supportedAgy(binary))
-          throw fail('需要 Antigravity CLI 1.2.1 或更新版。', 'Antigravity CLI 1.2.1 or later is required.');
-      } catch (error) {
-        if (statMaybe(binary) && !fs.lstatSync(binary).isDirectory()) fs.unlinkSync(binary);
-        throw error;
-      }
-    } finally {
-      fs.rmSync(temp, { recursive: true, force: true });
-    }
-  }, true));
+  return installAgyBootstrap(fail);
 }
 function decisionsSummary(checks, lang) {
   if (checks.mode === 'manual' || checks.mode === 'off') {
@@ -1151,21 +1011,6 @@ export function setupIssues(checks, lang = checks.ui_language || language()) {
     }
   return [lines, [...pages]];
 }
-async function ask(prompt) {
-  const io = createPrompt({ input: process.stdin, output: process.stdout });
-  const controller = new AbortController();
-  const cancel = () => controller.abort();
-  io.once('SIGINT', cancel);
-  io.once('close', cancel);
-  try {
-    return (await io.question(prompt, { signal: controller.signal })).trim();
-  } catch {
-    console.log();
-    return null;
-  } finally {
-    io.close();
-  }
-}
 function openPage(url) {
   if (windows)
     return spawnSync(windowsSystemTool('rundll32.exe'), ['url.dll,FileProtocolHandler', url], { stdio: 'ignore', timeout: 5000 }).status === 0;
@@ -1174,61 +1019,6 @@ function openPage(url) {
       .status === 0
   );
 }
-async function* terminalKeys(input, output, show, signal) {
-  if (input.destroyed || input.readableEnded || signal?.aborted) return;
-  const wasRaw = !!input.isRaw;
-  const wasFlowing = input.readableFlowing;
-  function restoreInput() {
-    if (!wasRaw && input.isRaw && !input.destroyed) input.setRawMode(false);
-  }
-  emitKeypressEvents(input);
-  const keys = on(input, 'keypress', { close: ['end', 'close'], signal });
-  // A stream may destroy its terminal handle immediately after emitting end.
-  input.once('end', restoreInput);
-  try {
-    if (!wasRaw) input.setRawMode(true);
-    input.resume();
-    show();
-    yield* keys;
-  } catch (error) {
-    if (!signal?.aborted || error.name !== 'AbortError') throw error;
-  } finally {
-    await keys.return();
-    input.off('end', restoreInput);
-    restoreInput();
-    if (!wasFlowing) input.pause();
-    output.write('\n');
-  }
-}
-async function chooseOption(title, options, lang, input = process.stdin, output = process.stdout, initialChoice, signal) {
-  let selected = Math.max(0, options.findIndex(option => option.id === initialChoice));
-  function draw() {
-    for (const [index, option] of options.entries()) {
-      clearLine(output, 0);
-      // A provider label is display text, including any literal terminal controls.
-      const label = option.name.replace(/\p{Cc}/gu, char => '\\u' + char.charCodeAt(0).toString(16).padStart(4, '0'));
-      output.write((selected === index ? '❯ ● ' : '  ○ ') + label);
-      if (index < options.length - 1) output.write('\r\n');
-    }
-  }
-  const show = () => {
-    output.write(title + '\n' + tr('用 ↑ ↓ 移动，按回车确认，按 Esc 取消。\n', 'Use ↑ ↓ to move, Enter to confirm, or Esc to cancel.\n', lang));
-    draw();
-  };
-  for await (const [, key] of terminalKeys(input, output, show, signal)) {
-    if (key.name === 'return' || key.name === 'enter') return options[selected].id;
-    if (key.name === 'escape' || (key.ctrl && ['c', 'd'].includes(key.name))) return null;
-    if (key.name !== 'up' && key.name !== 'down') continue;
-    const next = Math.max(0, Math.min(options.length - 1, selected + (key.name === 'up' ? -1 : 1)));
-    if (next === selected) continue;
-    selected = next;
-    moveCursor(output, 0, 1 - options.length);
-    cursorTo(output, 0);
-    draw();
-  }
-  return null;
-}
-
 async function readHiddenKey(lang, input, output) {
   const show = () => output.write(tr('在此粘贴 OpenAI API 密钥（输入隐藏，留空按回车可返回）：',
     'Paste your OpenAI API key here (input is hidden, press Enter with an empty field to go back): ', lang));
@@ -1317,29 +1107,6 @@ export function chooseSetupMode(lang, current, input, output) {
   ], lang, input, output, current);
 }
 
-// Keep Esc, Ctrl-C and EOF responsive while the Codex agent reads account metadata.
-async function waitForCatalog(operation, message, input, output, signal) {
-  const controller = new AbortController();
-  const cancelled = (async () => {
-    const show = () => output.write(message);
-    for await (const [, key] of terminalKeys(input, output, show, AbortSignal.any([signal, controller.signal]))) {
-      if (key.name === 'escape' || (key.ctrl && ['c', 'd'].includes(key.name))) break;
-    }
-    return null;
-  })();
-  try {
-    return await Promise.race([cancelled, operation()]);
-  } finally {
-    controller.abort();
-    await cancelled;
-  }
-}
-
-const thinkingLabels = {
-  low: ['低', 'Low'], medium: ['中', 'Medium'], high: ['高', 'High'], xhigh: ['极高', 'Extra High'],
-  fixed: ['由模型固定', 'Fixed by the model']
-};
-
 export async function chooseSetupModel(checks, lang, input = process.stdin, output = process.stdout, openCatalog = openSetupCatalog) {
   const controller = new AbortController();
   const choose = (title, rows, initial) => chooseOption(title, rows, lang, input, output, initial, controller.signal);
@@ -1414,11 +1181,13 @@ export async function showSetupGuidance({
   installDependency = false,
   dependencyOnly = false,
   interactive = process.stdin.isTTY && process.stdout.isTTY,
+  advanced = false,
+  configureMode = true,
   check = readChecks,
   saveRewriteMode = value => saveSetupMode(REWRITE_MODE_FILE, value),
   saveTriggerMode = value => saveSetupMode(MODE_FILE, value),
   saveModel = ({ model, thinkingLevel }, lang) => saveModelSelection(model, thinkingLevel, lang),
-  chooseMode = chooseSetupMode,
+  chooseMode = advanced ? chooseSetupMode : chooseCodexOnboarding,
   chooseModel = chooseSetupModel,
   offerOpenAI = lang => manageOpenAI(lang, { onboarding: true }),
   install = installAgy,
@@ -1438,23 +1207,19 @@ export async function showSetupGuidance({
     );
     return !installDependency;
   }
-  if (interactive && !dependencyOnly) {
-    const current = currentSetupMode(checks);
-    const selected = await chooseMode(lang, current);
+  if (interactive && !dependencyOnly && configureMode) {
+    const current = currentSetupMode(checks, advanced);
+    const selected = await chooseMode(lang, current, undefined, undefined, checks);
     if (!selected) return true;
     if (selected !== current) {
-      const useAutomatic = REWRITE_MODES.includes(selected);
-      const mode = useAutomatic ? 'auto' : selected;
-      if (useAutomatic && (!checks.rewrite_mode_configured || selected !== checks.rewrite_mode)) {
-        await saveRewriteMode(selected);
-      }
-      if (mode !== checks.mode) await saveTriggerMode(mode);
+      await applySetupMode(checks, selected, saveRewriteMode, saveTriggerMode);
       checks = check();
     }
   }
   if (checks.mode === 'off') {
-    console.log(tr('已关闭润色。要重新开启，可再次运行 setup。', 'Polishing is off. Run setup again to turn it back on.', lang));
-    if (!installDependency || (interactive && !dependencyOnly)) return true;
+    if (!dependencyOnly) console.log(tr('已关闭润色。要重新开启，可在 Codex 中说「开启自动润色」。',
+      'Polishing is off. To turn it back on, say “Enable automatic polishing” in Codex.', lang));
+    if (!installDependency) return true;
     dependencyOnly = true;
   }
   checkAgyVersion(checks);
@@ -1499,9 +1264,7 @@ export async function showSetupGuidance({
   } else if (installDependency)
     console.log(tr('已找到 agy，直接使用现有安装。', 'Found agy. Your existing installation will be used.', lang));
   if (dependencyOnly) return true;
-  if (!interactive)
-    console.log(tr('要选择默认模式和模型，请在交互式终端运行 setup。', 'Run setup in an interactive terminal to choose your default mode and model.', lang));
-  if (interactive && checks.agy_available && !checks.blockers.includes('agy_unsupported')) {
+  if (interactive && advanced && checks.agy_available && !checks.blockers.includes('agy_unsupported')) {
     const selected = await chooseModel(checks, lang);
     if (!selected) return true;
     if (!checks.gemini_model_configured || selected.model !== checks.gemini_model || selected.thinkingLevel !== checks.gemini_thinking_level) {
@@ -1511,7 +1274,7 @@ export async function showSetupGuidance({
   }
   const [lines, pages] = setupIssues(checks, lang);
   if (lines.length) console.log(lines.join('\n'));
-  if (interactive && checks.mode === 'auto' && checks.rewrite_mode === 'normal' && checks.rewrite_mode_configured && !checks.blockers.length)
+  if (interactive && advanced && checks.mode === 'auto' && checks.rewrite_mode === 'normal' && checks.rewrite_mode_configured && !checks.blockers.length)
     await offerOpenAI(lang);
   if (
     pages.length &&
@@ -1528,12 +1291,42 @@ export async function showSetupGuidance({
       if (!browse(page))
         console.log(tr(`浏览器没能打开页面，请手动访问 ${page}`, `Couldn't open the browser. Visit ${page}`, lang));
   }
+  if (checks.agy_available && checks.google_auth_method === 'existing-session') {
+    console.log(tr('如果 Antigravity 提示登录，请在终端运行 agy 并登录 Google。',
+      'If Antigravity asks you to sign in, run agy in your terminal and sign in with Google.', lang));
+  }
   return true;
 }
 
-function currentSetupMode(checks) {
-  if (checks.mode !== 'auto') return checks.mode;
-  return checks.rewrite_mode_configured ? checks.rewrite_mode : undefined;
+async function applySetupMode(checks, selected, saveRewriteMode, saveTriggerMode) {
+  const automatic = REWRITE_MODES.includes(selected);
+  const mode = automatic ? 'auto' : selected;
+  if (automatic && (!checks.rewrite_mode_configured || selected !== checks.rewrite_mode))
+    await saveRewriteMode(selected);
+  if (mode !== checks.mode) await saveTriggerMode(mode);
+}
+
+function currentSetupMode(checks, advanced) {
+  if (checks.mode !== 'auto') return checks.mode ?? 'invalid';
+  if (advanced && checks.rewrite_mode === 'normal' && !checks.rewrite_mode_configured) return undefined;
+  return checks.rewrite_mode ?? 'invalid';
+}
+
+function chooseCodexOnboarding(lang, current, input, output, checks) {
+  const notice = tr(
+    '选择自动润色后，插件会把本轮问题和 Codex 草稿通过 Antigravity CLI 发给 Google Gemini。',
+    'Automatic polishing sends the current question and Codex draft to Google Gemini through the Antigravity CLI.', lang);
+  const turns = checks.history_turns;
+  console.log(notice + tr(' 保存过的自定义润色提示词也会发给 Gemini。',
+    ' Any saved custom polishing prompt goes to Gemini as well.', lang));
+  if (turns > 0) console.log(tr(
+    `信任 UserPromptSubmit 后，整条回复的改写最多还会带上前 ${turns} 轮问答。`,
+    `With UserPromptSubmit trusted, whole-reply rewrites can also include up to ${turns} earlier exchanges.`, lang));
+  if (checks.decisions_mode === 'auto' && checks.openai_key_configured) console.log(tr(
+    '已开启的 OpenAI Decisions API 检查会在 Normal 自动润色时接收本轮问题、草稿和自定义润色提示词。',
+    'Your enabled OpenAI Decisions API check receives the question, draft, and any custom polishing prompt during Normal automatic polishing.', lang));
+  return chooseOnboardingMode(tr('在 Codex 中如何润色？', 'How should Codex replies be polished?', lang),
+    current, lang, input, output);
 }
 
 export function doctor(checks = checkAgyVersion(readChecks())) {
@@ -1605,279 +1398,112 @@ export function doctor(checks = checkAgyVersion(readChecks())) {
     );
   return lines.join('\n');
 }
-function localCodexState() {
-  // The native CLI creates scratch directories even for a plugin list.
-  // Read the plugin table written by the native installer for this menu only.
-  const config = join(codexProfile(), 'config.toml');
-  if (!statMaybe(config)) return activeSnapshot(snapshotStore()) ? { enabled: true } : null;
-  const lines = readPlain(config, 4 * 1024 * 1024).toString('utf8').split(/\r?\n/);
-  const table = /^\s*\[\s*plugins\s*\.\s*(?:"codex-polish@codex-polish-local"|'codex-polish@codex-polish-local')\s*\]\s*(?:#.*)?$/;
-  const start = lines.findIndex(line => table.test(line));
-  if (start === -1) return null;
-  for (const line of lines.slice(start + 1)) {
-    if (/^\s*\[/.test(line)) break;
-    if (/^\s*enabled\s*=\s*false\s*(?:#.*)?$/.test(line)) return { enabled: false };
-  }
-  return { enabled: true };
-}
-
-async function chooseHost(lang) {
-  const t = (zh, en) => tr(zh, en, lang);
-  const status = read => {
-    try {
-      const entry = read();
-      if (!entry) return [false, t('未安装', 'not installed')];
-      return [true, entry.enabled ? t('已安装', 'installed') : t('已停用', 'disabled')];
-    } catch {
-      return [false, t('无法读取状态', 'status unavailable')];
-    }
-  };
-  const [hasCodex, codexState] = status(localCodexState);
-  const [hasAgy, agyState] = status(localAgyState);
-  const choices = [
-    { id: 'codex', name: t('在 Codex 里，让 Gemini 润色', 'In Codex, polish with Gemini') + ' · ' + codexState },
-    { id: 'agy', name: t('在 Antigravity（agy）里，让 Codex 润色', 'In Antigravity (agy), polish with Codex') + ' · ' + agyState },
-    { id: 'both', name: t('两边都配置', 'Configure both') }
-  ];
-  const current = hasAgy ? (hasCodex ? 'both' : 'agy') : 'codex';
-  return chooseOption(t('要在 Codex 还是 Antigravity 里润色回复？', 'Set up reply polishing in Codex or Antigravity'),
-    choices, lang, process.stdin, process.stdout, current);
-}
-
-const agyModeLabels = {
-  normal: ['Normal · 按需改写', 'Normal · rewrite when useful'],
-  turbo: ['Turbo · 每次都请 Codex 改写', 'Turbo · ask Codex to rewrite every time'],
-  manual: ['仅手动 · 只在我要求时润色', 'Manual · polish only when asked'],
-  off: ['关闭润色', 'Off · turn off polishing']
-};
-const agyDataNotice = ['Normal 模式也会把本轮问题和草稿发送给 Codex，由 Codex 判断是否需要改写。',
-  'Normal mode sends the current question and draft to Codex so it can decide whether a rewrite would help.'];
-const agySetupCommand = `${windows ? 'npx.cmd' : 'npx'} @kyun.si/codex-polish@beta setup --host agy`;
-
-function agyEffortLabel(effort, lang) {
-  const labels = { ...thinkingLabels, minimal: ['最低', 'Minimal'], max: ['最高', 'Maximum'] };
-  return Object.hasOwn(labels, effort) ? tr(...labels[effort], lang) : effort;
-}
-
-async function chooseAgyModel(settings, { model, effort }, { signedIn }, lang) {
-  const t = (zh, en) => tr(zh, en, lang);
-  const defaultModel = t('Codex 默认', 'Codex default');
-  const saved = (model ?? defaultModel) + (effort ? ' · ' + agyEffortLabel(effort, lang) : '');
-  const choices = [
-    { id: 'default', name: defaultModel },
-    { id: 'keep', name: t('保留当前设置', 'Keep current settings') + ' · ' + saved },
-    { id: 'lookup', name: signedIn
-      ? t('选择账号可用模型和思考等级…', 'Choose a model and reasoning effort from my account…')
-      : t('从 Codex 模型列表选择模型和思考等级…', 'Choose a model and reasoning effort from the Codex model list…') }
-  ];
-  const unavailable = signedIn
-    ? t('没能读取账号模型。可使用 Codex 默认或保留当前设置。',
-      'Could not read the account model list. You can use the Codex default or keep your settings.')
-    : t('没能读取 Codex 模型列表。可使用 Codex 默认或保留当前设置。',
-      'Could not read the Codex model list. You can use the Codex default or keep your settings.');
-  while (true) {
-    const choice = await chooseOption(t('选择改写用的 Codex 模型', 'Choose the Codex model for rewrites'),
-      choices, lang, process.stdin, process.stdout, model || effort ? 'keep' : 'default');
-    if (!choice) return null;
-    if (choice === 'keep') return {};
-    if (choice === 'default') return { model: null, effort: null };
-    let models;
-    const controller = new AbortController();
-    try {
-      const loading = signedIn
-        ? t('正在读取 Codex 账号的可用模型…（Esc 取消）', 'Looking up models available to your Codex account… (Esc to cancel)')
-        : t('正在读取 Codex 模型列表…（Esc 取消）', 'Reading the Codex model list… (Esc to cancel)');
-      models = await waitForCatalog(() => settings.listModels({ signal: controller.signal }), loading,
-        process.stdin, process.stdout, controller.signal);
-      if (models === null) return null;
-    } catch {
-      console.log(unavailable);
-      continue;
-    } finally {
-      controller.abort();
-    }
-    if (!models.length) {
-      console.log(signedIn ? unavailable
-        : t('Codex 模型列表中没有可选模型。可使用 Codex 默认或保留当前设置。',
-          'The Codex model list has no models to choose from. You can use the Codex default or keep your settings.'));
-      continue;
-    }
-    const defaultLabel = signedIn ? t('（账号默认）', ' (account default)') : t('（Codex 默认）', ' (Codex default)');
-    const rows = models.map(item => ({
-      id: item.id,
-      name: (models.some(other => other.id !== item.id && other.name === item.name) ? item.name + ' (' + item.id + ')' : item.name) +
-        (item.isDefault ? defaultLabel : '')
-    }));
-    const id = await chooseOption(t('用哪个模型改写？', 'Which model should rewrite your replies?'), rows,
-      lang, process.stdin, process.stdout, model ?? models.find(item => item.isDefault)?.id);
-    if (!id) return null;
-    const selected = models.find(item => item.id === id);
-    if (!selected.efforts.length) return { model: id, effort: null };
-    const efforts = selected.efforts.map(id => ({
-      id,
-      name: agyEffortLabel(id, lang) + (id === selected.defaultEffort ? t('（模型默认）', ' (model default)') : '')
-    }));
-    const initial = id === model && selected.efforts.includes(effort) ? effort : selected.defaultEffort;
-    const level = await chooseOption(t('Codex 思考等级', 'Codex reasoning effort'), efforts,
-      lang, process.stdin, process.stdout, initial);
-    return level ? { model: id, effort: level } : null;
-  }
-}
-
-async function prepareAgySetup(interactive, lang) {
-  const { settings, current } = await loadAgySettings();
-  const t = (zh, en) => tr(zh, en, lang);
-  const patch = {};
-  let mode = current.mode;
-  if (interactive) {
-    console.log(t(...agyDataNotice));
-    const modes = Object.entries(agyModeLabels).map(([id, label]) => ({
-      id, name: t(...label) + (id === current.mode ? t('（当前）', ' (current)') : '')
-    }));
-    mode = await chooseOption(t('在 Antigravity 中如何润色？', 'How should Antigravity replies be polished?'),
-      modes, lang, process.stdin, process.stdout, current.mode);
-    if (!mode) return null;
-    if (mode !== current.mode) patch.mode = mode;
-  }
-  if (mode === 'off') return { settings, patch, mode };
-  if (!interactive) console.log(t(...agyDataNotice));
-  const provider = await checkCodexProvider(lang);
-  if (!provider.signedIn) console.log(provider.message);
-  if (interactive && (provider.ready || provider.canListModels)) {
-    const model = await chooseAgyModel(settings, current, provider, lang);
-    if (!model) return null;
-    if (Object.hasOwn(model, 'model') && (model.model !== current.model || model.effort !== current.effort)) {
-      Object.assign(patch, model);
-    }
-  }
-  return { settings, patch, mode, codexReady: provider.ready };
-}
-
-async function doctorAgy(lang) {
-  const t = (zh, en) => tr(zh, en, lang);
-  const { current: { mode, model, effort } } = await loadAgySettings();
-  console.log(t('Antigravity 润色模式：', 'Antigravity polishing mode: ') + t(...agyModeLabels[mode]));
-  const entry = installedAgy();
-  if (entry) {
-    console.log(t('agy-polish 已安装，版本 ', 'agy-polish is installed, version ') + entry.version +
-      (entry.enabled ? '' : t('（已停用）', ' (disabled)')));
-  } else {
-    console.log(t('agy-polish 未安装。运行 ', 'agy-polish is not installed. Run ') + agySetupCommand);
-  }
-  if (mode === 'off') return entry ? 0 : 1;
-  console.log(t('Codex 模型：', 'Codex model: ') + (model ?? t('Codex 默认', 'Codex default')) +
-    (effort ? ' · ' + agyEffortLabel(effort, lang) : ''));
-  const provider = await checkCodexProvider(lang);
-  console.log(provider.message);
-  return entry && provider.ready ? 0 : 1;
-}
-
-async function runAgyHost(action, plan, installDependency, lang) {
-  if (action === 'doctor') return doctorAgy(lang);
-  const t = (zh, en) => tr(zh, en, lang);
-  const off = t('Antigravity 回复润色已关闭。再次运行 setup 可重新开启。', 'Antigravity reply polishing is off. Run setup again to turn it back on.');
-  const save = async () => {
-    if (!plan || !Object.keys(plan.patch).length) return;
-    try { await plan.settings.writeSettings(plan.patch); }
-    catch { throw fail('无法保存 agy-polish 设置。请检查设置目录的写入权限。', 'Could not save agy-polish settings. Check write access to the settings directory.'); }
-  };
-
-  if (!findAgy() && plan?.mode === 'off') {
-    await save();
-    console.log(off);
-    return 0;
-  }
-  if (!findAgy() && installDependency) {
-    console.log(t('正在从 Google 下载并安装 agy…', 'Downloading and installing agy from Google…'));
-    await installAgy();
-  }
-  requireAgyCli();
-  const profile = canonical(agyProfile());
-  fs.mkdirSync(profile, { recursive: true, mode: 0o700 });
-  return withLock(profile, async () => {
-    const before = installedAgy();
-    if (action === 'uninstall') {
-      if (before) changeAgyPlugin('uninstall');
-      if (installedAgy()) throw fail('agy 仍显示插件已安装，请再试一次卸载。', 'agy still lists the plugin as installed. Run uninstall again.');
-      console.log(t('agy-polish 已卸载，模式和模型设置已保留。', 'agy-polish is uninstalled. Your mode and model settings were kept.'));
-      return 0;
-    }
-    if (action === 'update' && !before) {
-      console.log(t('agy-polish 未安装。要加装，运行 ', 'agy-polish is not installed. To add it, run ') + agySetupCommand);
-      return 0;
-    }
-    const { path, version } = validateAgyBundle();
-    if (before && compareVersions(version, before.version) < 0) {
-      throw fail('这个包比已安装的 agy-polish 旧。请使用更新的安装包。',
-        'This package is older than the installed agy-polish. Use a newer package.');
-    }
-    // Persist a fresh install's selected mode before agy can load the plugin.
-    if (!before) await save();
-    changeAgyPlugin('install', path);
-    let entry = installedAgy();
-    if (before?.enabled === false && entry?.enabled === true) {
-      changeAgyPlugin('disable');
-      entry = installedAgy();
-    }
-    if (!entry || entry.version !== version || (before && entry.enabled !== before.enabled)) {
-      throw fail('agy 没有确认插件版本和启用状态，请在 Antigravity 中检查。',
-        'agy did not confirm the plugin version and enabled state. Check the installation in Antigravity.');
-    }
-    if (before) await save();
-    console.log(action === 'update'
-      ? t('agy-polish 已更新到 ', 'Updated agy-polish to ') + version
-      : t('agy-polish 已安装，版本 ', 'agy-polish is installed, version ') + version);
-    if (!entry.enabled) console.log(t('插件目前仍是停用状态，可在 Antigravity 的插件设置中启用。',
-      'The plugin is still disabled. You can enable it in Antigravity plugin settings.'));
-    if (plan?.mode === 'off') console.log(off);
-    else if (plan && entry.enabled) {
-      const start = plan.codexReady
-        ? t('在 Antigravity 中新开对话。', 'Start a new chat in Antigravity.')
-        : t('处理上面的 Codex 问题后，在 Antigravity 中新开对话。', 'After resolving the Codex issue above, start a new chat in Antigravity.');
-      const use = plan.mode === 'manual'
-        ? t('输入 /polish，或提问时加一句「请润色」。', 'Use /polish or ask for polishing in your question.')
-        : t('输入 /polish，或像平常一样提问。', 'Use /polish or ask a question as usual.');
-      console.log(start + ' ' + use);
-      console.log(t('首次看到 MCP 授权提示时，只授权 agy-polish 的 polish_reply 工具。',
-        'At the first MCP approval prompt, approve only the polish_reply tool from agy-polish.'));
-    }
-    return 0;
-  });
-}
-
 function usage(lang) {
   return tr(
-    '用法：codex-polish [setup|update|doctor|uninstall] [--host codex|agy|both] [--install-agy]\nsetup（默认命令）可安装插件、选择模式和模型，或关闭润色。交互式 setup 可选择宿主。其他命令和非交互式 setup 默认使用 Codex。\nupdate 更新插件，doctor 检查设置和环境，uninstall 卸载。--install-agy 在缺少 agy 时安装，仅限 setup 和 update。\ncodex-polish openai 管理 Codex 插件的可选 OpenAI Decisions API 检查和密钥。\n-h, --help 显示帮助。',
-    'Usage: codex-polish [setup|update|doctor|uninstall] [--host codex|agy|both] [--install-agy]\nsetup (default) installs the plugin, lets you choose the mode and model, or turns polishing off. Interactive setup lets you choose a host. Other commands and noninteractive setup default to Codex.\nupdate upgrades the plugin, doctor checks settings and the environment, and uninstall removes the plugin. --install-agy installs Google’s Antigravity CLI if missing during setup or update.\ncodex-polish openai manages the optional OpenAI Decisions API check and its key for the Codex plugin.\n-h, --help shows this help.',
+    '用法：codex-polish [setup|update|doctor|uninstall] [--install-agy] [--advanced]\nsetup（默认命令）安装 Codex 插件，由 Gemini 润色回复。\n--advanced 在 setup 中显示完整的模式和模型选项。--install-agy 可在 setup 或 update 中安装 Google 的 Antigravity CLI。\ncodex-polish openai 管理可选的 OpenAI Decisions API 检查和密钥。\n旧命令仍支持 --host codex|agy|both。Antigravity 插件的独立命令为 agy-polish。\n-h, --help 显示帮助。',
+    'Usage: codex-polish [setup|update|doctor|uninstall] [--install-agy] [--advanced]\nsetup (default) installs the Codex plugin to polish replies with Gemini.\n--advanced shows the full mode and model choices during setup. --install-agy can install Google’s Antigravity CLI during setup or update.\ncodex-polish openai manages the optional OpenAI Decisions API check and its key.\nLegacy commands still accept --host codex|agy|both. The standalone Antigravity command is agy-polish.\n-h, --help shows this help.',
     lang
   );
 }
 
-async function runCodexHost(action, installDependency, interactive, mode, lang) {
+async function runCodexHost(action, { installDependency, advanced }, lang) {
   if (action === 'doctor') {
     const checks = checkAgyVersion(readChecks());
     console.log(doctor(checks));
-    if (checks.mode !== 'off') console.log(await hookGuidance(checks.ui_language, checks.mode));
+    if (checks.mode === 'auto' || (checks.mode === 'manual' && checks.history_turns > 0))
+      console.log(await hookGuidance(checks.ui_language, checks.mode));
     return 0;
   }
-  const [message, enabled] = await manage(action, ROOT, snapshotStore());
+  const interactive = interactiveTerminal();
+  let savePreferences;
+  if (action === 'setup' && interactive) {
+    const checks = readChecks();
+    const current = currentSetupMode(checks, advanced);
+    const mode = advanced ? await chooseSetupMode(lang, current) :
+      await chooseCodexOnboarding(lang, current, undefined, undefined, checks);
+    if (!mode) return null;
+    if (mode !== current) {
+      savePreferences = () => applySetupMode(readChecks(), mode,
+        value => saveSetupMode(REWRITE_MODE_FILE, value), value => saveSetupMode(MODE_FILE, value));
+    }
+  }
+  const [message, enabled] = await manage(action, ROOT, snapshotStore(), undefined, undefined, savePreferences);
   console.log(message);
-  const onboard = action === 'setup' && (enabled || interactive);
+  const onboard = action === 'setup' && (enabled || (advanced && interactive));
   if ((onboard || installDependency) && !(await showSetupGuidance({
-    installDependency, dependencyOnly: !onboard, interactive,
-    ...(mode && { chooseMode: () => mode })
+    installDependency, dependencyOnly: !onboard, interactive, advanced, configureMode: false
   }))) return 1;
   if (enabled) {
     const trigger = triggerMode();
-    if (trigger !== 'off') console.log(await hookGuidance(lang, trigger, homedir()));
+    if (trigger === 'auto' || (trigger === 'manual' && historyTurns() > 0))
+      console.log(await hookGuidance(lang, trigger, homedir()));
+    if (onboard && trigger !== 'off') console.log(
+      tr('要调整模式、模型或思考等级，在 Codex 中说「配置回复润色」。',
+        'To change the mode, model, or thinking level, say “Set up Codex Polish” in Codex.', lang));
   }
   return 0;
 }
 
 function reportInstallerError(error, lang) {
-  console.error(error instanceof SetupError || error instanceof AgyInstallError ? error.message :
+  console.error(error instanceof SetupError ? error.message :
     tr('没法核对安装文件或环境。请检查文件权限和发行包后再试。',
       "Couldn't verify the installation files or environment. Check the package and file permissions, then try again.", lang));
+}
+
+function legacyAgyCommand() {
+  const source = join(ROOT, 'scripts', 'agy-cli.mjs');
+  if (available(source)) return [process.execPath, source];
+  const scope = dirname(ROOT);
+  if (basename(scope) === '@kyun.si') {
+    const sibling = join(scope, 'agy-polish', 'scripts', 'agy-cli.mjs');
+    if (available(sibling)) return [process.execPath, sibling];
+  }
+  for (const directory of pathDirectories()) {
+    const command = resolve(directory, windows ? 'agy-polish.exe' : 'agy-polish');
+    if (available(command, fs.constants.X_OK)) return [command];
+    if (windows && available(join(directory, 'agy-polish.cmd'))) {
+      for (const prefix of [join(directory, 'node_modules'), dirname(directory)]) {
+        const script = join(prefix, '@kyun.si', 'agy-polish', 'scripts', 'agy-cli.mjs');
+        if (available(script)) return [process.execPath, script];
+      }
+    }
+  }
+  return null;
+}
+
+function npxCommand() {
+  if (!windows) return ['npx'];
+  // Use npm's JS entry point so arguments never pass through cmd.exe.
+  const directories = [
+    ...(process.env.npm_execpath ? [dirname(process.env.npm_execpath)] : []),
+    ...[dirname(process.execPath), ...pathDirectories()].map(dir => join(dir, 'node_modules', 'npm', 'bin'))
+  ];
+  const entry = directories.map(dir => join(dir, 'npx-cli.js')).find(file => available(file));
+  return entry ? [process.execPath, entry] : null;
+}
+
+function delegateLegacyAgy(action, { installDependency, advanced }, lang, codexStatus) {
+  const flags = [...(installDependency ? ['--install-agy'] : []), ...(advanced ? ['--advanced'] : [])];
+  const spec = `@kyun.si/agy-polish@${channel}`;
+  let command = legacyAgyCommand();
+  if (!command) {
+    const npx = npxCommand();
+    if (npx) command = [...npx, '--yes', spec];
+  }
+  if (command) {
+    const [bin, ...args] = command;
+    const env = { ...process.env };
+    delete env[LEGACY_BOTH_SETUP];
+    if (action === 'setup' && codexStatus !== undefined) {
+      env[LEGACY_BOTH_SETUP] = codexStatus === 0 ? 'codex-complete' : 'codex-failed';
+    }
+    const result = spawnSync(bin, [...args, action, ...flags], { stdio: 'inherit', windowsHide: true, env });
+    if (result.status === 0) return 0;
+  }
+  const standalone = [windows ? 'npx.cmd' : 'npx', spec, action, ...flags].join(' ');
+  console.error(tr(`Antigravity 操作未完成。可单独运行 ${standalone}`,
+    `The Antigravity operation did not finish. Run ${standalone} directly.`, lang));
+  return 1;
 }
 
 export async function main(args = process.argv.slice(2)) {
@@ -1886,16 +1512,18 @@ export async function main(args = process.argv.slice(2)) {
     console.log(usage(lang));
     return 0;
   }
-  let action, host, installDependency;
+  let action, host, installDependency, advanced;
   try {
     const { values, positionals } = parseArgs({
       args, allowPositionals: true,
-      options: { host: { type: 'string', multiple: true }, 'install-agy': { type: 'boolean' } }
+      options: { host: { type: 'string', multiple: true }, 'install-agy': { type: 'boolean' }, advanced: { type: 'boolean' } }
     });
     action = positionals[0] ?? 'setup';
-    host = values.host?.[0];
+    host = values.host?.[0] ?? 'codex';
     installDependency = values['install-agy'] ?? false;
+    advanced = values.advanced ?? false;
     if (positionals.length > 1 || !['setup', 'update', 'doctor', 'openai', 'uninstall'].includes(action) ||
+        (advanced && action !== 'setup') ||
         (values.host && (values.host.length !== 1 || !['codex', 'agy', 'both'].includes(host) || action === 'openai'))) {
       throw new Error('invalid installer arguments');
     }
@@ -1910,35 +1538,20 @@ export async function main(args = process.argv.slice(2)) {
   }
   try {
     if (action === 'openai') return (await manageOpenAI(lang)) ? 0 : 1;
-    const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY && typeof process.stdin.setRawMode === 'function');
-    host ??= action === 'setup' && interactive ? await chooseHost(lang) : 'codex';
-    if (!host) return 0;
-    const useCodex = host !== 'agy';
-    const useAgy = host !== 'codex';
-    let codexMode, agyPlan, status = 0;
-    if (action === 'setup' && interactive && useCodex) {
-      const checks = readChecks();
-      codexMode = await chooseSetupMode(lang, currentSetupMode(checks));
-      if (!codexMode) return 0;
-    }
-    if (action === 'setup' && useAgy) {
-      try { agyPlan = await prepareAgySetup(interactive, lang); }
-      catch (error) {
-        reportInstallerError(error, lang);
-        status = 1;
+    const options = { installDependency, advanced };
+    let status = 0;
+    if (host !== 'agy') {
+      try {
+        const result = await runCodexHost(action, options, lang);
+        if (result === null) return 0;
+        status = result;
       }
-      if (agyPlan === null) return 0;
-    }
-    const operations = [];
-    if (useCodex) operations.push(() => runCodexHost(action, installDependency, interactive, codexMode, lang));
-    if (useAgy && (action !== 'setup' || agyPlan)) operations.push(() => runAgyHost(action, agyPlan, installDependency, lang));
-    for (const operation of operations) {
-      try { status = Math.max(status, await operation()); }
       catch (error) {
         reportInstallerError(error, lang);
         status = 1;
       }
     }
+    if (host !== 'codex') status = Math.max(status, delegateLegacyAgy(action, options, lang, host === 'both' ? status : undefined));
     return status;
   } catch (error) {
     reportInstallerError(error, lang);

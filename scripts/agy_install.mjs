@@ -1,10 +1,11 @@
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { constants, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { delimiter, isAbsolute, join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { executable } from '../plugins/codex-polish/hooks/platform.mjs';
-import { tr } from '../plugins/codex-polish/hooks/ui_locale.mjs';
+import { agyExecutable, available, pathDirectories, windows } from './installer_common.mjs';
+import { tr } from './installer_locale.mjs';
+import { AGY_INSTALL } from './agy_bootstrap.mjs';
 import { fileLoginExists, withWorkspace } from '../plugins/agy-polish/scripts/codex-process.mjs';
 import { withCodexAppServer } from '../plugins/agy-polish/scripts/codex-provider.mjs';
 
@@ -12,7 +13,6 @@ const PLUGIN = 'agy-polish';
 const SOURCE = new URL('../plugins/agy-polish/', import.meta.url);
 const MANIFESTS = ['plugin.json', '.antigravity-plugin/plugin.json'];
 const CODEX_INSTALL = 'https://developers.openai.com/codex/cli/';
-const AGY_INSTALL = 'https://antigravity.google/docs/getting-started/?tab=cli';
 
 export class AgyInstallError extends Error {}
 
@@ -24,30 +24,6 @@ export function agyProfile() {
   return join(homedir(), '.gemini', 'config');
 }
 
-function readManifest(directory) {
-  for (const file of MANIFESTS) {
-    try { return readJSON(join(directory, file)); }
-    catch (err) { if (err.code !== 'ENOENT') throw err; }
-  }
-  return null;
-}
-
-// Even agy plugin list creates its config directory on first run. The host
-// chooser inspects the personal plugin directory and only reads the config.
-export function localAgyState() {
-  const profile = agyProfile();
-  const manifest = readManifest(join(profile, 'plugins', PLUGIN));
-  if (!manifest) return null;
-  if (manifest.name !== PLUGIN) throw new Error('invalid Antigravity plugin manifest');
-  try {
-    const config = readJSON(join(profile, 'config.json'));
-    return { enabled: config.plugins?.[PLUGIN]?.enabled !== false };
-  } catch (err) {
-    if (err.code === 'ENOENT') return { enabled: true };
-    throw err;
-  }
-}
-
 function run(cli, args, timeout) {
   return spawnSync(cli.command, [...cli.args, ...args], {
     encoding: 'utf8', timeout, killSignal: 'SIGKILL', maxBuffer: 4 * 1024 * 1024, windowsHide: true,
@@ -56,12 +32,23 @@ function run(cli, args, timeout) {
 }
 
 export function requireAgyCli() {
-  const cli = executable('agy');
+  const cli = agyExecutable();
   if (!cli) {
     throw error('没找到 Antigravity CLI（agy）。请按官方指南安装。\n  ' + AGY_INSTALL,
       "Couldn't find Antigravity CLI (agy). Follow the official installation guide.\n  " + AGY_INSTALL);
   }
   return cli;
+}
+
+function hasCodexCli() {
+  const paths = [...pathDirectories(), process.env.CODEX_INSTALL_DIR, join(homedir(), '.local', 'bin')];
+  if (windows) {
+    const local = process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local');
+    paths.push(join(local, 'Programs', 'OpenAI', 'Codex', 'bin'));
+  }
+  return paths.some(directory => directory && isAbsolute(directory) &&
+    (available(join(directory, windows ? 'codex.exe' : 'codex'), constants.X_OK) ||
+     (windows && available(join(directory, 'codex.cmd')))));
 }
 
 function pluginCommand(args, json = false) {
@@ -131,8 +118,7 @@ export async function checkCodexProvider(lang) {
   const blocked = (zh, en) => ({ ready: false, message: t(zh, en) });
   const unconfirmed = () => blocked('未能确认当前 Codex 提供商的认证状态。请检查 Codex CLI 和提供商配置。',
     'Could not confirm authentication for the selected Codex provider. Check the Codex CLI and provider configuration.');
-  const fallback = [process.env.CODEX_INSTALL_DIR, join(homedir(), '.local', 'bin')].filter(Boolean).join(delimiter);
-  if (!executable('codex') && !executable('codex', { ...process.env, PATH: fallback })) {
+  if (!hasCodexCli()) {
     return blocked('没找到 Codex CLI。请按官方指南安装。\n  ' + CODEX_INSTALL,
       "Couldn't find Codex CLI. Follow the official installation guide.\n  " + CODEX_INSTALL);
   }

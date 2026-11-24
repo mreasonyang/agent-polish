@@ -8,6 +8,7 @@ import { supportsFileSymlink, windows } from './hook_fixture.mjs';
 import { isolatedHosts, root, until, withSettings, write } from './host_fixture.mjs';
 
 const installer = join('scripts', 'install.mjs');
+const reverseInstaller = join('scripts', 'agy-cli.mjs');
 const forwardMode = join('codex-polish', 'settings', 'codex-polish.mode');
 const readSettings = 'console.log(JSON.stringify(await settings.readSettings()));';
 const writeSettings = 'await settings.writeSettings(JSON.parse(process.argv[1]));';
@@ -36,8 +37,8 @@ test('setup and the editor treat a dangling auth.json link as a missing login', 
   assert.equal(fileLoginExists(fixture.profile), false);
 });
 
-function install(fixture, args, release = root) {
-  const result = fixture.run(process.execPath, [join(release, installer), ...args]);
+function install(fixture, args, release = root, entry = installer) {
+  const result = fixture.run(process.execPath, [join(release, entry), ...args]);
   assert.equal(result.status, 0, result.stderr || result.stdout);
   return result.stdout;
 }
@@ -72,13 +73,89 @@ hostTest('noninteractive setup still defaults to Codex even with both host CLIs 
   assert.ok(!fixture.records().some(row => row.host === 'agy' && row.args[0] === 'plugin'));
 });
 
+hostTest('legacy delegation and setup guidance use the host package release channel', async t => {
+  for (const [channel, codexVersion, agyVersion] of [
+    ['beta', '0.0.4-beta.3', '0.0.4-beta.2'],
+    ['latest', '0.0.5', '0.0.4']
+  ]) {
+    await t.test(channel, t => {
+      const fixture = isolatedHosts(t, { agy: true });
+      const forwardRelease = join(fixture.base, 'codex archive');
+      const reverseRelease = join(fixture.base, 'agy archive');
+      for (const [release, name, version, manifest] of [
+        [forwardRelease, 'codex-polish', codexVersion, '.codex-plugin/plugin.json'],
+        [reverseRelease, 'agy-polish', agyVersion, 'plugin.json']
+      ]) {
+        const folder = join('plugins', name);
+        for (const entry of ['scripts', folder]) {
+          fs.cpSync(join(root, entry), join(release, entry), {
+            recursive: true,
+            filter: file => release !== forwardRelease || file !== join(root, reverseInstaller)
+          });
+        }
+        const pluginManifest = join(release, folder, manifest);
+        write(pluginManifest, JSON.stringify({ ...JSON.parse(fs.readFileSync(pluginManifest)), version }));
+        write(join(release, 'package.json'), JSON.stringify(channel === 'beta'
+          ? { name: 'agent-polish', private: true, version: '2.0.0' }
+          : { name: '@kyun.si/' + name, version }));
+      }
+      const npx = join(fixture.env.PATH, 'npx');
+      fixture.env.POLISH_TEST_NPX_ARGS = join(fixture.base, 'npm args');
+      write(npx, '#!/bin/sh\nprintf "%s\\n" "$@" > "$POLISH_TEST_NPX_ARGS"\nexit 1\n');
+      fs.chmodSync(npx, 0o755);
+      const forward = (...args) => fixture.run(process.execPath, [join(forwardRelease, installer), ...args]);
+      const reverse = (...args) => fixture.run(process.execPath, [join(reverseRelease, reverseInstaller), ...args]);
+      const codexSpec = `@kyun.si/codex-polish@${channel}`;
+      const agySpec = `@kyun.si/agy-polish@${channel}`;
+
+      const delegated = forward('doctor', '--host', 'agy');
+      assert.equal(delegated.status, 1);
+      assert.ok(delegated.stderr.includes(`npx ${agySpec} doctor`));
+      assert.equal(fs.readFileSync(fixture.env.POLISH_TEST_NPX_ARGS, 'utf8'), `--yes\n${agySpec}\ndoctor\n`);
+      assert.deepEqual(fixture.records(), []);
+      const doctor = reverse('doctor');
+      assert.equal(doctor.status, 1);
+      assert.ok(doctor.stdout.includes(`npx ${agySpec} setup`));
+      fs.renameSync(join(fixture.env.PATH, 'agy'), join(fixture.env.PATH, 'agy-unavailable'));
+      const missing = reverse('setup');
+      assert.equal(missing.status, 1);
+      assert.ok(missing.stderr.includes(`npx ${agySpec} setup --install-agy`));
+      assert.ok(forward('doctor').stdout.includes(`npx ${codexSpec} setup --install-agy`));
+      assert.ok(forward('openai').stderr.includes(`npx ${codexSpec} openai`));
+    });
+  }
+});
+
+hostTest('standalone Antigravity setup honors an active legacy dependency installation lock', t => {
+  const fixture = isolatedHosts(t, { agy: true });
+  const lock = join(fixture.home, '.local', 'bin', '.codex-polish-agy.sqlite');
+  write(lock, '');
+  const { DatabaseSync } = process.getBuiltinModule('node:sqlite');
+  const db = new DatabaseSync(lock);
+  try {
+    db.exec('BEGIN EXCLUSIVE');
+    const busy = fixture.run(process.execPath, [join(root, reverseInstaller), 'setup', '--install-agy']);
+    assert.equal(busy.status, 1);
+    assert.match(busy.stderr, /Another installer is running/);
+    assert.deepEqual(fixture.records(), []);
+    assert.equal(fs.statSync(lock).size, 0);
+  } finally {
+    db.close();
+  }
+  install(fixture, ['setup', '--install-agy'], root, reverseInstaller);
+  assert.ok(fs.existsSync(installedReverse(fixture)));
+  assert.ok(!fs.existsSync(lock));
+});
+
 hostTest('each host can update and uninstall without replacing the other plugin or touching its settings', t => {
   const fixture = isolatedHosts(t, { agy: true });
   const release = join(fixture.base, '提取目录');
   for (const entry of ['scripts', 'plugins', '.agents', 'package.json']) {
     fs.cpSync(join(root, entry), join(release, entry), { recursive: true });
   }
-  const run = (action, host) => install(fixture, [action, '--host', host], release);
+  const run = (action, host) => host === 'both'
+    ? install(fixture, [action, '--host', 'both'], release)
+    : install(fixture, [action], release, host === 'agy' ? reverseInstaller : installer);
   const forward = join(fixture.profile, forwardMode);
   const reverse = installedReverse(fixture);
   const agySettings = { mode: 'manual', model: 'fixture-model', effort: 'xhigh' };
@@ -166,8 +243,8 @@ hostTest('reverse doctor checks the selected provider and reports only local aut
       const fixture = isolatedHosts(t, { agy: true });
       if (envValue !== undefined) fixture.env[envName] = envValue;
       fixture.env.POLISH_TEST_CODEX_PROVIDER = JSON.stringify(provider);
-      const setup = install(fixture, ['setup', '--host', 'agy']);
-      const report = fixture.run(process.execPath, [join(root, installer), 'doctor', '--host', 'agy']);
+      const setup = install(fixture, ['setup'], root, reverseInstaller);
+      const report = fixture.run(process.execPath, [join(root, reverseInstaller), 'doctor']);
       assert.equal(report.status, status, report.stderr || report.stdout);
       assert.match(report.stdout, expected);
       if (status !== 0) assert.match(setup, expected);
@@ -183,7 +260,7 @@ hostTest('reverse doctor with polishing off skips the Codex CLI', t => {
   const fixture = isolatedHosts(t, { agy: true });
   withSettings(fixture, writeSettings, [JSON.stringify({ mode: 'off' })]);
   install(fixture, ['setup', '--host', 'agy']);
-  const report = install(fixture, ['doctor', '--host', 'agy']);
+  const report = install(fixture, ['doctor'], root, reverseInstaller);
   assert.match(report, /Antigravity polishing mode: Off/);
   assert.ok(!fixture.records().some(row => row.host === 'codex'));
 });
@@ -234,46 +311,118 @@ sys.exit(os.waitstatus_to_exitcode(pty.spawn(sys.argv[1:], master_read=read_mast
   };
 }
 
-test('interactive terminal and Finder ask for direction first and reverse Off exits before model or Decisions', {
+test('first terminal and Finder setups ask directly when to polish in their own host', {
   skip: (windows || !fs.existsSync(python)) && 'requires POSIX Python 3 for a pseudo-terminal'
 }, async t => {
-  for (const [name, command, args] of [
-    ['terminal', process.execPath, [join(root, installer), 'setup']],
-    ['Finder', join(root, 'Install Codex Polish.command'), []]
+  for (const [name, command, args, reverse] of [
+    ['Codex terminal', process.execPath, [join(root, installer), 'setup'], false],
+    ['Finder', join(root, 'Install Codex Polish.command'), [], false],
+    ['Antigravity terminal', process.execPath, [join(root, reverseInstaller), 'setup'], true]
   ]) {
     await t.test(name, async t => {
       const fixture = isolatedHosts(t, { agy: true });
-      const forward = join(fixture.profile, forwardMode);
-      write(forward, 'manual\n');
-      withSettings(fixture, writeSettings, [JSON.stringify({ mode: 'manual', model: 'fixture-model', effort: 'xhigh' })]);
       const session = terminal(fixture, command, args);
-      await session.waitFor(/Configure both/i);
-      assert.match(session.display(), /In Codex[^\n]*Gemini/i);
-      assert.match(session.display(), /In Antigravity[^\n]*Codex/i);
-      assert.doesNotMatch(session.display(), /\b(?:Turbo|Decisions)\b/i);
+      await session.waitFor(/Polish only when asked/);
+      assert.match(session.display(), reverse ? /provider configured in Codex/ : /question and Codex draft to Google Gemini/);
+      assert.match(session.display(), /❯ ● Automatic polishing \(Normal\)/);
+      assert.doesNotMatch(session.display(), /Choose a host|Configure both|Turbo|\bOff\b/i);
       assert.deepEqual(fixture.records(), []);
       assert.equal(fs.existsSync(installedForward(fixture)), false);
       assert.equal(fs.existsSync(installedReverse(fixture)), false);
-      const start = session.display().length;
-      session.write('\x1b[B\r');
-      await session.waitFor(/Turbo[\s\S]*\bOff\b/i, start);
+
       session.write('\x1b[B\r');
       if (name === 'Finder') {
-        await session.waitFor(/Press Enter to close the installer/i);
+        await session.waitFor(/Press Enter to close the installer/);
         session.write('\r');
       }
       await session.finish();
-      assert.ok(fs.existsSync(installedReverse(fixture)), session.display());
-      assert.equal(fs.existsSync(installedForward(fixture)), false);
-      assert.equal(fs.readFileSync(forward, 'utf8'), 'manual\n');
-      assert.deepEqual(withSettings(fixture, readSettings), { mode: 'off', model: 'fixture-model', effort: 'xhigh' });
-      assert.doesNotMatch(session.display(), /\bDecisions\b|API key|(?:choose|select) (?:a |the )?model/i);
-      assert.ok(!fixture.records().some(row => row.host === 'codex'), 'reverse Off must exit before checking Codex sign-in or models');
+      assert.equal(fs.existsSync(installedForward(fixture)), !reverse, session.display());
+      assert.equal(fs.existsSync(installedReverse(fixture)), reverse, session.display());
+      if (reverse) {
+        assert.deepEqual(withSettings(fixture, readSettings), { mode: 'manual', model: null, effort: null });
+        assert.match(session.display(), /polish_reply[\s\S]*\/polish-settings/);
+      } else {
+        assert.equal(fs.readFileSync(join(fixture.profile, forwardMode), 'utf8'), 'manual\n');
+        assert.equal(fs.existsSync(join(fixture.profile, 'codex-polish', 'settings', 'codex-polish.model')), false);
+        assert.match(session.display(), /To include chat history, trust UserPromptSubmit[\s\S]*Set up Codex Polish/);
+      }
+      assert.doesNotMatch(session.display(), /Decisions|API key|(?:choose|select) (?:a |the )?model/i);
+      assert.ok(!fixture.records().some(row => row.host === (reverse ? 'codex' : 'agy') && row.args[0] === 'plugin'));
+      assert.ok(!fixture.records().some(row => row.method === 'model/list'));
     });
   }
 });
 
-test('interactive reverse setup selects a model and effort without asking for Decisions', {
+test('pressing Enter on ordinary setup keeps legacy settings and a disabled plugin', {
+  skip: (windows || !fs.existsSync(python)) && 'requires POSIX Python 3 for a pseudo-terminal'
+}, async t => {
+  for (const mode of ['off', 'turbo']) {
+    await t.test(mode, async t => {
+      const fixture = isolatedHosts(t, { agy: true });
+      const profileSettings = join(fixture.profile, 'codex-polish', 'settings');
+      const key = join(fixture.profile, 'codex-polish', 'credentials', 'openai.key');
+      const forwardSettings = new Map([
+        [join(fixture.profile, forwardMode), mode === 'off' ? 'off\n' : 'auto\n'],
+        [join(profileSettings, 'codex-polish.rewrite-mode'), 'turbo\n'],
+        [join(profileSettings, 'codex-polish.model'), 'gemini-4-test high\n'],
+        [key, 'synthetic-key-for-preservation-test\n']
+      ]);
+      for (const [file, value] of forwardSettings) write(file, value);
+      fs.chmodSync(key, 0o600);
+      const agySettings = { mode, model: 'fixture-model', effort: 'xhigh' };
+      withSettings(fixture, writeSettings, [JSON.stringify(agySettings)]);
+      install(fixture, ['setup', '--host', 'both']);
+      const forwardConfig = join(fixture.profile, 'fake-registration.json');
+      const reverseConfig = join(fixture.home, '.gemini', 'config', 'config.json');
+      const registration = JSON.parse(fs.readFileSync(forwardConfig, 'utf8'));
+      registration.plugin.enabled = false;
+      write(forwardConfig, JSON.stringify(registration));
+      write(reverseConfig, JSON.stringify({ plugins: { 'agy-polish': { enabled: false } } }));
+      const keep = new RegExp('❯ ● Keep current setting \\(' + mode + '\\)', 'i');
+      for (const entry of [installer, reverseInstaller]) {
+        const calls = fixture.records().length;
+        const session = terminal(fixture, process.execPath, [join(root, entry), 'setup']);
+        await session.waitFor(keep);
+        session.write('\r');
+        await session.finish();
+        assert.match(session.display(), /still disabled/i);
+        assert.doesNotMatch(session.display(), /(?:choose|select) (?:a |the )?model|codex login|MCP approval/i);
+        assert.ok(!fixture.records().slice(calls).some(row => row.method === 'model/list' || row.method === 'account/read'));
+      }
+      assert.equal(JSON.parse(fs.readFileSync(forwardConfig)).plugin.enabled, false);
+      assert.equal(JSON.parse(fs.readFileSync(reverseConfig)).plugins['agy-polish'].enabled, false);
+      for (const [file, value] of forwardSettings) assert.equal(fs.readFileSync(file, 'utf8'), value);
+      assert.deepEqual(withSettings(fixture, readSettings), agySettings);
+    });
+  }
+});
+
+test('cancelling the legacy combined setup after Codex reports that Antigravity was cancelled', {
+  skip: (windows || !fs.existsSync(python)) && 'requires POSIX Python 3 for a pseudo-terminal'
+}, async t => {
+  const fixture = isolatedHosts(t, { agy: true });
+  const combined = terminal(fixture, process.execPath, [join(root, installer), 'setup', '--host', 'both']);
+  await combined.waitFor(/Polish only when asked/);
+  combined.write('\r');
+  await combined.waitFor(/How should Antigravity replies be polished/);
+  combined.write('\x1b');
+  await combined.finish();
+  assert.match(combined.display(), /Codex setup is complete\. Antigravity setup was cancelled\./);
+  assert.ok(fs.existsSync(installedForward(fixture)));
+  assert.equal(fs.existsSync(installedReverse(fixture)), false);
+  assert.equal(fs.existsSync(fixture.reverseSettings), false);
+  assert.ok(!fixture.records().some(row => row.host === 'agy' && row.args[0] === 'plugin'));
+
+  const standalone = terminal(fixture, process.execPath, [join(root, reverseInstaller), 'setup']);
+  await standalone.waitFor(/Polish only when asked/);
+  standalone.write('\x1b');
+  await standalone.finish();
+  assert.doesNotMatch(standalone.display(), /setup was cancelled/);
+  assert.equal(fs.existsSync(installedReverse(fixture)), false);
+  assert.equal(fs.existsSync(fixture.reverseSettings), false);
+});
+
+test('advanced Antigravity setup selects a model and effort', {
   skip: (windows || !fs.existsSync(python)) && 'requires POSIX Python 3 for a pseudo-terminal'
 }, async t => {
   for (const [name, provider, lookup] of [
@@ -292,7 +441,7 @@ test('interactive reverse setup selects a model and effort without asking for De
       fixture.env.POLISH_TEST_CODEX_PROVIDER = JSON.stringify(provider);
       const forward = join(fixture.profile, forwardMode);
       write(forward, 'manual\n');
-      const session = terminal(fixture, process.execPath, [join(root, installer), 'setup', '--host', 'agy']);
+      const session = terminal(fixture, process.execPath, [join(root, reverseInstaller), 'setup', '--advanced']);
       await session.waitFor(/Turbo[\s\S]*\bOff\b/i);
       session.write('\x1b[B\r');
       await session.waitFor(lookup);

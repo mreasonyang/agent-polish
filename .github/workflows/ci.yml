@@ -8,6 +8,9 @@ on:
       ref:
         type: string
         required: true
+      legacy:
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
@@ -45,10 +48,15 @@ jobs:
           $files = @(Get-ChildItem tests -Filter '*.test.mjs' | Where-Object { $_.Name -match $env:TEST_PATTERN })
           if (!$files.Count) { throw 'No tests matched' }
           node --test $files.FullName
-      - run: npm pack --ignore-scripts --dry-run
-  windows-package:
-    runs-on: windows-latest
-    timeout-minutes: 10
+  packages:
+    if: '!inputs.legacy'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    name: Package isolation (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
@@ -58,45 +66,45 @@ jobs:
         with:
           node-version: '22.16.0'
       - run: npm install --global @openai/codex@0.170.0
-      - name: Install the packed plugin and Google's Windows CLI
+      - name: Install and verify the native Antigravity CLI
+        run: node .github/scripts/install-native-agy.mjs
+      - name: Test both packages against the native hosts
+        run: node --test tests/workspace_packages.test.mjs
+      - uses: actions/download-artifact@v4
+        if: inputs.ref != ''
+        with:
+          name: npm-release
+          path: ${{ runner.temp }}/qualified-npm-release
+      - name: Install each workspace archive independently
         shell: pwsh
         run: |
-          $env:CODEX_HOME = Join-Path $env:RUNNER_TEMP 'Polish smoke profile'
-          $project = Join-Path $env:RUNNER_TEMP 'Polish smoke project'
-          New-Item -ItemType Directory -Path $project, $env:CODEX_HOME | Out-Null
-          $package = (npm.cmd pack --ignore-scripts --silent --pack-destination $project | Select-Object -Last 1)
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Set-Location $project
-          $archive = "file:./$package"
-          npx.cmd --yes $archive setup --install-agy
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $agy = Join-Path $env:LOCALAPPDATA 'agy/bin/agy.exe'
-          & $agy --version
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $agyHelp = & $agy --help 2>&1 | Out-String
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          if ($agyHelp -notmatch '(?m)^\s*acp\s') { throw 'Installed agy does not list ACP' }
-          $env:CODEX_POLISH_AGY_SETTINGS_DIR = Join-Path $project 'agy-polish-settings'
-          npx.cmd --yes $archive setup --host agy
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $entries = & $agy plugin list --json | ConvertFrom-Json
-          $reverse = $entries | Where-Object { $_.name -eq 'agy-polish' }
-          if (-not $reverse.enabled) { throw 'Antigravity did not enable agy-polish' }
-          node (Join-Path $reverse.path 'scripts/settings.mjs') set --mode off
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          npx.cmd --yes $archive update --host both
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          npx.cmd --yes $archive doctor --host both
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          npx.cmd --yes $archive uninstall --host both
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $entries = & $agy plugin list --json | ConvertFrom-Json
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          if ($entries | Where-Object { $_.name -eq 'agy-polish' }) { throw 'Antigravity still lists agy-polish' }
-      - name: Show isolated plugin registration on failure
-        if: failure()
-        shell: pwsh
-        run: |
-          $env:CODEX_HOME = Join-Path $env:RUNNER_TEMP 'Polish smoke profile'
-          codex plugin marketplace list --json
-          codex plugin list --marketplace codex-polish-local --json
+          $npm = if ($IsWindows) { 'npm.cmd' } else { 'npm' }
+          $work = Join-Path $env:RUNNER_TEMP 'Agent Polish packages'
+          New-Item -ItemType Directory -Path $work | Out-Null
+          $names = @('codex-polish', 'agy-polish')
+          foreach ($name in $names) {
+            $other = $names | Where-Object { $_ -ne $name }
+            $file = & $npm pack --workspace "@kyun.si/$name" --silent --pack-destination $work
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $archives = @(Join-Path $work $file)
+            $qualified = Join-Path $env:RUNNER_TEMP "qualified-npm-release/$file"
+            if (Test-Path -LiteralPath $qualified) { $archives += $qualified }
+            foreach ($archive in $archives) {
+              $project = Join-Path $work ([guid]::NewGuid().ToString())
+              New-Item -ItemType Directory -Path $project | Out-Null
+              Push-Location $project
+              & $npm install --offline --ignore-scripts --no-save --no-package-lock $archive
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+              $package = Join-Path $project "node_modules/@kyun.si/$name"
+              $manifest = Get-Content -Raw (Join-Path $package 'package.json') | ConvertFrom-Json
+              if ($manifest.name -ne "@kyun.si/$name" -or -not $manifest.bin.$name) { throw "Unexpected npm manifest in $archive" }
+              if ((Test-Path -LiteralPath (Join-Path $package "plugins/$other")) -or
+                  (Test-Path -LiteralPath (Join-Path $project "node_modules/@kyun.si/$other"))) {
+                throw "$name installed files for $other"
+              }
+              $env:LC_ALL = 'en_US.UTF-8'
+              $helpText = & node (Join-Path $package $manifest.bin.$name) --help | Out-String
+              if ($LASTEXITCODE -ne 0 -or $helpText -notmatch "Usage: $name\b") { throw "Cannot run $name from $archive" }
+              Pop-Location
+            }
+          }

@@ -4,6 +4,7 @@
   "plugins": [
     {
       "name": "codex-polish",
+      "repository": "https://github.com/mreasonyang/agent-polish",
       "source": { "source": "local", "path": "./plugins/codex-polish" },
       "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" },
       "category": "Productivity"

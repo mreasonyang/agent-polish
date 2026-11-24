@@ -1,36 +1,31 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-version=${RELEASE_TAG#v}
-filename="kyun.si-codex-polish-$version.tgz"
+source "$(dirname "${BASH_SOURCE[0]}")/release-tag.sh"
 archive="$RUNNER_TEMP/npm-release/$filename"
-registry='https://registry.npmjs.org/@kyun.si%2fcodex-polish'
+npm_registry='https://registry.npmjs.org/'
+encoded_package=${package/\//%2f}
+registry="$npm_registry$encoded_package"
+tags="$npm_registry-/package/$encoded_package/dist-tags"
 release="$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
 fail() { echo "$*" >&2; exit 1; }
 
-number='(0|[1-9][0-9]*)'
-core="${number}\.${number}\.${number}"
-if [[ "$RELEASE_TAG" =~ ^v${core}-beta\.${number}$ ]]; then
-  channel=beta
-  other=latest
-  prerelease=true
-  before_pattern="^${core}-beta\.${number}$"
-elif [[ "$RELEASE_TAG" =~ ^v${core}$ ]]; then
-  channel=latest
-  other=beta
-  prerelease=false
-  # Before the first stable release, npm latest can point to a beta.
-  before_pattern="^${core}(-beta\.${number})?$"
-else
-  fail "Invalid release tag: $RELEASE_TAG"
-fi
-
 # An annotated tag also has a peeled commit. Lightweight tags point to the commit directly.
-tag_commit=$(git ls-remote --exit-code origin "refs/tags/$RELEASE_TAG" "refs/tags/$RELEASE_TAG^{}" | tail -n 1 | cut -f1)
-[[ "$tag_commit" == "$SOURCE_SHA" ]] || fail "The tag no longer points to the tested commit."
+verify_tag() {
+  local tag_commit
+  tag_commit=$(git ls-remote --exit-code origin "refs/tags/$RELEASE_TAG" "refs/tags/$RELEASE_TAG^{}" | tail -n 1 | cut -f1)
+  [[ "$tag_commit" == "$SOURCE_SHA" ]] || fail "The tag no longer points to the tested commit."
+}
+
+verify_tag
+archive_manifest=$(tar -xOzf "$archive" package/package.json)
+jq -e --arg pkg "$package" --arg v "$version" --arg channel "$channel" --arg registry "$npm_registry" '
+  .name == $pkg and .version == $v and .private != true and
+  .publishConfig.tag == $channel and .publishConfig.access == "public" and .publishConfig.registry == $registry
+' <<< "$archive_manifest" > /dev/null || fail "The verified archive has unexpected package metadata."
 
 qualified_archive=$archive
 use_archive() {
@@ -73,12 +68,17 @@ inspect_release() {
       fail "Existing GitHub release for $RELEASE_TAG must be published with prerelease=$prerelease."
     if jq -e --arg name "$filename" '.assets | any(.name == $name)' "$work/github.json" > /dev/null; then
       has_asset=true
-      local digest
-      digest=$(jq -er --arg name "$filename" '.assets[] | select(.name == $name and .state == "uploaded") | .digest' "$work/github.json")
-      if [[ "$digest" != "$expected_digest" && ${1:-} == reuse ]]; then
-        mkdir -p "$work/github"
-        gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --pattern "$filename" --dir "$work/github"
-        use_existing_archive "$work/github/$filename"
+      local digest download
+      digest=$(jq -er --arg name "$filename" '.assets[] | select(.name == $name and .state == "uploaded") | .digest // ""' "$work/github.json")
+      if [[ -z "$digest" || ( "$digest" != "$expected_digest" && ${1:-} == reuse ) ]]; then
+        download=$(mktemp -d "$work/github.XXXXXX")
+        gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --pattern "$filename" --dir "$download"
+        if [[ ${1:-} == reuse ]]; then
+          use_existing_archive "$download/$filename"
+        fi
+        if [[ -z "$digest" ]]; then
+          digest="sha256:$(sha256sum "$download/$filename" | cut -d' ' -f1)"
+        fi
       fi
       [[ "$expected_digest" == "$digest" ]] || fail "The existing GitHub release asset checksum differs."
     fi
@@ -87,7 +87,6 @@ inspect_release() {
 
 inspect_release reuse
 nonce="$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
-tags='https://registry.npmjs.org/-/package/@kyun.si%2fcodex-polish/dist-tags'
 fetch_json "$tags?verify=$nonce-before" "$work/tags.json"
 fetch_json "$registry/$version?verify=$nonce-before" "$work/version.json"
 before=$(jq -r --arg tag "$channel" '.[$tag] // empty' "$work/tags.json")
@@ -95,7 +94,7 @@ expected_other=$(jq -r --arg tag "$other" '.[$tag] // empty' "$work/tags.json")
 integrity_before=$(jq -r '.dist.integrity // empty' "$work/version.json")
 expected=$version
 
-if [[ -n "$before" && "$before" != "$version" ]]; then
+if [[ -n "$before" && "$before" != "$version" && ! ( "$host" == agy && "$channel" == latest && "$before" == 0.0.0-stage ) ]]; then
   [[ "$before" =~ $before_pattern ]] || fail "Unexpected npm $channel tag: $before"
   # sort -V orders numeric components, but a stable core outranks its own betas.
   if [[ "$before" != "$version"-beta.* && $(printf '%s\n%s\n' "$version" "$before" | LC_ALL=C sort -V | tail -n 1) == "$before" ]]; then
@@ -107,16 +106,35 @@ fi
 existing=false
 if jq -e 'length > 0' "$work/version.json" > /dev/null; then
   existing=true
-  jq -e --arg v "$version" '.version == $v and (.dist.integrity | type == "string" and length > 0)' "$work/version.json" > /dev/null ||
+  jq -e --arg pkg "$package" --arg v "$version" '.name == $pkg and .version == $v and (.dist.integrity | type == "string" and length > 0)' "$work/version.json" > /dev/null ||
     fail "Invalid npm metadata for $version."
   if ! "$has_asset" && [[ "$integrity_before" != "$expected_integrity" ]]; then
     mkdir -p "$work/npm"
-    curl -fsS --retry 2 "https://registry.npmjs.org/@kyun.si/codex-polish/-/codex-polish-$version.tgz" -o "$work/npm/$filename"
+    curl -fsS --retry 2 --connect-timeout 10 --max-time 30 "$npm_registry$package/-/$product-$version.tgz" -o "$work/npm/$filename"
     use_existing_archive "$work/npm/$filename"
   fi
   [[ "$integrity_before" == "$expected_integrity" ]] || fail "Published version $version has different contents."
 else
-  npm publish "$archive" --registry=https://registry.npmjs.org/ --tag "$channel" --access public --provenance --ignore-scripts
+  "$legacy" && fail "Legacy tags can recover published Codex versions. Publish new versions with a host tag."
+  [[ "$GITHUB_REF" == "refs/tags/$RELEASE_TAG" ]] || fail "Dispatch from the release tag to attest the tagged commit."
+  jq -e --arg url "git+https://github.com/$GITHUB_REPOSITORY.git" '.repository.url == $url' <<< "$archive_manifest" > /dev/null ||
+    fail "The archive repository must match the GitHub repository for provenance."
+  if [[ "$host" == agy ]]; then
+    fetch_json "$registry?verify=$nonce-bootstrap" "$work/package.json"
+    jq -e --arg pkg "$package" '.name == $pkg' "$work/package.json" > /dev/null ||
+      fail "Create $package on npm and configure its trusted publisher before releasing. See CONTRIBUTING.md."
+  fi
+  npm publish "$archive" --registry="$npm_registry" --tag "$channel" --access public --provenance --ignore-scripts
+fi
+
+# npm can assign latest during a first beta publish, including before a retry starts.
+# The AgY name may already have npm's staged-publishing placeholder as latest.
+remove_first_latest=false
+if [[ "$channel" == beta && "$expected" == "$version" ]]; then
+  if [[ -z "$expected_other" || "$expected_other" == "$version" || ( "$host" == agy && "$expected_other" == 0.0.0-stage ) ]]; then
+    remove_first_latest=true
+    expected_other=''
+  fi
 fi
 
 # npm can return success while a new package is still being processed.
@@ -129,21 +147,30 @@ for ((attempt = 1; ; attempt++)); do
   fetch_json "$tags?$query" "$work/tags.json"
   current=$(jq -r --arg tag "$channel" '.[$tag] // empty' "$work/tags.json")
   other_current=$(jq -r --arg tag "$other" '.[$tag] // empty' "$work/tags.json")
-  if [[ $(jq -r '.dist.integrity' "$work/version.json") == "$expected_integrity" ]]; then
+  seen_integrity=$(jq -r '.dist.integrity // empty' "$work/version.json")
+  if [[ -n "$seen_integrity" ]]; then
+    [[ "$seen_integrity" == "$expected_integrity" ]] || fail "Published version $version has different contents."
     if [[ "$current" == "$expected" && "$other_current" == "$expected_other" ]]; then
       break
-    elif "$existing" && ! "$channel_repaired" && [[ "$expected" == "$version" && "$current" == "$before" && "$other_current" == "$expected_other" ]]; then
+    fi
+    has_temporary_latest=false
+    if "$remove_first_latest" && [[ "$other_current" == "$version" || ( "$host" == agy && "$other_current" == 0.0.0-stage ) ]]; then
+      has_temporary_latest=true
+    fi
+    if "$existing" && ! "$channel_repaired" && [[ "$expected" == "$version" && "$current" != "$version" && "$current" == "$before" ]] &&
+       { [[ "$other_current" == "$expected_other" ]] || "$has_temporary_latest"; }; then
       # A retry can find the correct immutable version while its channel still lags.
-      npm dist-tag add "@kyun.si/codex-polish@$version" "$channel" --registry=https://registry.npmjs.org/ ||
+      npm dist-tag add "$package@$version" "$channel" --registry="$npm_registry" ||
         fail "Enable Allow npm dist-tag on this package's GitHub trusted publisher, then retry the tag."
       channel_repaired=true
-    elif [[ "$channel" == beta && -z "$expected_other" && "$current" == "$version" && "$other_current" == "$version" ]] && ! "$implicit_latest_removed"; then
-      # npm sometimes assigns latest to the first real version even with --tag beta.
-      # Clean up only a newly introduced latest when there are no stable versions.
+    elif [[ "$current" == "$version" ]] && "$has_temporary_latest" && ! "$implicit_latest_removed"; then
       fetch_json "$registry?$query" "$work/package.json"
-      jq -e --arg v "$version" '.versions | has($v) and (keys | all(test("^[0-9]+[.][0-9]+[.][0-9]+-")))' "$work/package.json" > /dev/null ||
+      jq -e --arg v "$version" --arg latest "$other_current" '
+        .["dist-tags"].latest == $latest and
+        (.versions | has($v) and has($latest) and (keys | all(test("^[0-9]+[.][0-9]+[.][0-9]+-"))))
+      ' "$work/package.json" > /dev/null ||
         fail "Refusing to change latest without a verified prerelease-only version history."
-      npm dist-tag rm @kyun.si/codex-polish latest --registry=https://registry.npmjs.org/ ||
+      npm dist-tag rm "$package" latest --registry="$npm_registry" ||
         fail "Enable Allow npm dist-tag on this package's GitHub trusted publisher, then retry the tag."
       implicit_latest_removed=true
     fi
@@ -157,19 +184,22 @@ for ((attempt = 1; ; attempt++)); do
   sleep 10
 done
 
+verify_tag
 if ! "$has_release"; then
   if "$prerelease"; then
     flags=(--prerelease --latest=false)
-  elif [[ "$expected" == "$version" ]]; then
+  elif [[ "$host" == codex && "$expected" == "$version" ]] && ! "$legacy"; then
     flags=(--latest)
   else
     flags=(--latest=false)
   fi
-  gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --verify-tag "${flags[@]}" --title "Codex Polish $version" --generate-notes
+  title='Codex Polish'
+  [[ "$host" != agy ]] || title='Antigravity Polish'
+  gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --verify-tag "${flags[@]}" --title "$title $version" --generate-notes
 fi
 if ! "$has_asset"; then
   gh release upload "$RELEASE_TAG" "$archive" --repo "$GITHUB_REPOSITORY"
 fi
 inspect_release
 "$has_asset" || fail "The verified GitHub release asset is missing."
-echo "Verified @kyun.si/codex-polish@$version, npm $channel=$expected, and GitHub release $RELEASE_TAG (prerelease=$prerelease)." >> "$GITHUB_STEP_SUMMARY"
+echo "Verified $package@$version, npm $channel=$expected, and GitHub release $RELEASE_TAG (prerelease=$prerelease)." >> "$GITHUB_STEP_SUMMARY"

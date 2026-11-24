@@ -2,6 +2,13 @@
 
 [中文使用说明](docs/README.zh-CN.md) · [English README](README.md)
 
+## 0.0.4-beta.2
+
+- 项目更名为 Agent Polish。Codex 用户安装 `@kyun.si/codex-polish`，Antigravity 用户安装 `@kyun.si/agy-polish`。每个包独立管理自己的插件，并沿用旧 beta 保存的设置。
+- 首次设置只需选择自动润色或仅在点名时润色。模型和思考等级沿用已有配置，之后可在对应的聊天里更改。
+- The project is now Agent Polish. Install `@kyun.si/codex-polish` for Codex or `@kyun.si/agy-polish` for Antigravity. Each package manages its own plugin and reuses settings saved by the previous beta.
+- First-time setup offers automatic or on-request polishing. Model and reasoning settings carry over and can be changed in the host chat.
+
 ## 0.0.4-beta.1
 
 - 在 Antigravity 中可让 Codex 润色 Gemini 的回复，改稿直接显示在原对话里。支持自动润色、点名改写和选段编辑，Codex 不可用时保留原稿。

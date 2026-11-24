@@ -1,10 +1,33 @@
-# Codex Polish
+# Agent Polish
 
 **English** | [简体中文](docs/README.zh-CN.md)
 
-[Install on Windows](#windows-powershell) · [Install on macOS or Linux](#macos-and-linux)
+Agent Polish provides two plugins. Install **Codex Polish** to have Gemini edit replies in Codex, or **Agy Polish** to have Codex edit replies in Antigravity (`agy`). The edited text appears in the chat where you asked the question. [Quick start](#quick-start)
 
-Codex Polish lets you use Codex to edit replies in Antigravity (`agy`) and Gemini to edit replies in Codex. Choose either direction or both during setup. The edited reply appears in the chat where you asked the question.
+## Quick start
+
+Install on the machine where you chat. Both plugins use **Node.js 22.16+**, the [Codex CLI](https://developers.openai.com/codex/cli/) and the [Antigravity CLI](https://antigravity.google/docs/cli). Each npm command installs the plugin for one host. In Windows PowerShell, use `npx.cmd` in place of `npx`.
+
+| Where you chat | Install from the beta channel | Editor |
+| --- | --- | --- |
+| Codex | `npx @kyun.si/codex-polish@beta setup` | Gemini |
+| Antigravity | `npx @kyun.si/agy-polish@beta setup` | Codex |
+
+From a source checkout, run `node scripts/install.mjs setup` for Codex or `node scripts/agy-cli.mjs setup` for Antigravity. Add `--advanced` to `setup` to open the full mode and model menus. Run both installers if you use both hosts. Each plugin uses its existing settings, including settings saved by the combined `0.0.4-beta.1` installer.
+
+### Edit replies in Antigravity with Codex
+
+Choose **Automatic** to let Codex read the current question and draft and edit it when useful, or **Only when asked** to request individual edits. Setup uses the model provider, model and reasoning effort configured in your local Codex CLI. If you use a ChatGPT account and it needs a sign-in, run `codex login`. Antigravity needs a version of `agy` with native plugin support.
+
+Start a new Antigravity chat. If prompted, allow the `polish_reply` tool from `agy-polish`. Try **“/polish Rewrite the previous reply in two sentences.”** If the editor fails, the chat keeps the original draft. Say **“Set up reply polishing”** to select another model or reasoning effort, switch to Turbo, or turn editing off.
+
+### Edit replies in Codex with Gemini
+
+Choose **Automatic** or **Only when asked**. A fresh installation uses **Gemini 4 Hydrogen** with **Medium** thinking, through your Antigravity sign-in. Setup can install `agy` if it is missing. This direction requires a Codex CLI with plugin support and `agy` 1.2.1 or newer. In T3 Code, select the Codex backend.
+
+For automatic edits, trust `UserPromptSubmit` in Codex **Settings → Hooks** (`/hooks` in the CLI), then start a new chat. For a manual edit, ask **“Polish the last reply.”** To change the mode, model, thinking level or history in this Codex profile, say **“Set up Codex Polish.”**
+
+### Example in Codex
 
 In Codex, you can expand the original underneath the rewrite in clients that support folding. Here’s an example translated from a Chinese test run.
 
@@ -19,54 +42,9 @@ Regarding progress with the export button fix, let me explain the actual situati
 
 During automatic polishing, you see only the draft if OpenAI Decisions keeps it or Gemini returns it word for word. If you asked for a rewrite and Gemini keeps the wording, you also see “Gemini returned the original draft.” If a rewrite fails, you get the draft and a brief reason.
 
-## Quick start
-
-Bidirectional polishing is available in the npm beta channel.
-
-Install on the machine where you chat. You need **Node.js 22.16+**, the [Codex CLI](https://developers.openai.com/codex/cli/) and [Antigravity CLI](https://antigravity.google/docs/cli). To edit replies in Antigravity, use a version of `agy` that supports native plugins and configure your model provider in Codex. For Gemini editing in Codex, use a Codex CLI with plugin support and `agy` 1.2.1+ with your Antigravity sign-in.
-
-### Windows (PowerShell)
-
-Open PowerShell and run this command from any folder.
-
-```powershell
-npx.cmd @kyun.si/codex-polish@beta setup
-```
-
-### macOS and Linux
-
-Open a terminal and run this command from any folder.
-
-```sh
-npx @kyun.si/codex-polish@beta setup
-```
-
-### Edit replies in Antigravity with Codex
-
-Choose **Antigravity** at the first prompt, or run `npx @kyun.si/codex-polish@beta setup --host agy` directly. From a source checkout, use `node scripts/install.mjs setup --host agy`. The editor uses your local Codex CLI configuration. For an OpenAI account, run `codex login` if you haven’t signed in yet.
-
-Choose **Normal** to let Codex keep a clear draft, or **Turbo** to request a rewrite every time. Both modes send the current question and draft to Codex before Antigravity delivers its answer. **Only when asked** enables explicit edits. **Off** stops editing and preserves your model selection. Keep the Codex default or select a model and reasoning effort from the account’s model list.
-
-Open a new `agy` chat. In automatic mode, ask an ordinary question. In manual mode, try **“/polish Rewrite the previous reply in two sentences.”** If Antigravity asks, allow the `polish_reply` tool. The final reply contains the edited text. If Codex is unavailable, Antigravity can deliver its original draft. Say **“Set up reply polishing”** in Antigravity to change these settings later.
-
-### Edit replies in Codex with Gemini
-
-Choose **Codex** at the first prompt, or use `setup --host codex`. Choose **both** to configure each direction in one run. If you run the installer non-interactively, the default host is Codex.
-
-For T3 Code, select the Codex backend.
-
-Use **↑ / ↓** and **Enter** to choose **Normal** (automatic, when useful), **Turbo** (automatic, every time), **Only when asked**, or **Turn off polishing**. When polishing is on, pick a Gemini model and its thinking level. The initial defaults are **Normal**, **Gemini 4 Hydrogen** and **Medium**. Setup offers to install `agy` if needed. Choosing **Turn off polishing** saves `off` for this Codex profile and exits right away without model, dependency, key or hook prompts. [Other installation options](docs/technical.en.md#installation-updates-and-uninstall)
-
-Codex Polish uses one set of preferences for your current Codex profile. Changes you save in chat or in the terminal take effect immediately in every chat and folder using that profile. Run `setup` again to review your mode, model and thinking level, turn polishing off, or select **Normal**, **Turbo** or **Only when asked** from the same menu to turn it back on. Press **Enter** to keep each saved choice or use the arrows to change it. Turning polishing off stops automatic and requested rewrites—nothing is sent to Gemini or OpenAI Decisions—while keeping your saved model, thinking level, custom prompt and OpenAI key. Use `update` to upgrade with your existing settings.
-
-- **Before trusting the hook:** Ask **“Why does a cache hit still take time? Polish the answer.”** Asking for a polish uses Turbo. Gemini receives the draft without earlier exchanges.
-- **Automatic mode (default):** Trust `UserPromptSubmit` in Codex **Settings → Hooks** (`/hooks` in the CLI) and start a **new chat**. Codex then runs the polishing workflow on ordinary questions and can include recent exchanges.
-
 ### Optional OpenAI Decisions API for Gemini rewrites
 
-On first interactive setup, choosing Normal lets you enable the OpenAI Decisions API to check whether Gemini should rewrite each draft. Press **Enter** to skip it and use Gemini alone. If you opt in, OpenAI receives your current question, draft and any custom polishing prompt. Create an OpenAI API key in the project that will pay for the checks and enter it at the hidden terminal prompt. The key is saved for this Codex profile. Turbo always goes directly to Gemini. [OpenAI API keys](https://platform.openai.com/api-keys)
-
-To add, replace or remove the key later, run `npx @kyun.si/codex-polish@beta openai`. In Windows PowerShell, use `npx.cmd @kyun.si/codex-polish@beta openai`. Codex Polish ignores the `OPENAI_API_KEY` environment variable. [Credentials guide](plugins/codex-polish/skills/codex-polish-setup/references/credentials.en.md#optional-openai-decisions-api)
+Normal mode uses Gemini directly by default. To ask OpenAI whether a draft needs a rewrite, run `npx @kyun.si/codex-polish@beta openai` and enter the key at the hidden terminal prompt. The check sends the current question, draft and any custom polishing prompt to OpenAI and incurs API usage on the project that owns the key. The same command replaces or removes the key. [Credentials guide](plugins/codex-polish/skills/codex-polish-setup/references/credentials.en.md#optional-openai-decisions-api)
 
 ## Useful chat prompts in Codex
 
@@ -80,7 +58,7 @@ To add, replace or remove the key later, run `npx @kyun.si/codex-polish@beta ope
 
 ## What gets sent
 
-Codex Polish sends the selected text as written, including any keys or tokens it contains. Say **“Skip polishing this time”** to keep this reply out of the polishing workflow. If you ask for JSON only, a single command, or a verbatim quote, Codex delivers that format directly.
+Both plugins send the selected text as written, including any keys or tokens it contains. Say **“Skip polishing this time”** to keep this reply out of the polishing workflow. If you ask for JSON only, a single command, or a verbatim quote, Codex delivers that format directly.
 
 **In Antigravity**, the model provider configured in your Codex CLI receives the current draft, the question it answers and any editing directions. For a selection it receives the selected text and applicable directions. The editor gets no additional chat history. Antigravity manages the conversation and tool results under its usual settings.
 
@@ -93,16 +71,18 @@ Codex Polish sends the selected text as written, including any keys or tokens it
 
 ## Maintenance
 
-Add `--host agy` to check, update or uninstall the Antigravity plugin. Use `--host both` to operate on both installations. Uninstalling the Antigravity plugin keeps its mode and model settings for a later installation.
+Run maintenance commands for the plugin you installed.
 
-| Action | Command |
-| --- | --- |
-| Check setup | `npx @kyun.si/codex-polish@beta doctor` |
-| Update | `npx @kyun.si/codex-polish@beta update` |
-| Uninstall | `npx @kyun.si/codex-polish@beta uninstall` |
+| Action | Codex | Antigravity |
+| --- | --- | --- |
+| Check setup | `npx @kyun.si/codex-polish@beta doctor` | `npx @kyun.si/agy-polish@beta doctor` |
+| Update while keeping settings | `npx @kyun.si/codex-polish@beta update` | `npx @kyun.si/agy-polish@beta update` |
+| Uninstall | `npx @kyun.si/codex-polish@beta uninstall` | `npx @kyun.si/agy-polish@beta uninstall` |
+
+Agy Polish keeps its settings after uninstall so you can reuse them later.
 
 In Windows PowerShell, use `npx.cmd` to run `doctor`, `update`, and `uninstall`. `doctor` checks local dependencies, your saved settings and hook trust. Ask **“Choose a rewrite model”** to check your Antigravity sign-in and see the available models. After an update, Codex may ask you to trust the hook again.
 
-Uninstall deletes the plugin settings, custom prompt and OpenAI API key saved in this Codex profile. It also removes empty lock files and empty plugin directories left by older versions, while keeping any unrelated files you placed there and the shared `agy` installation. [Uninstall details](docs/technical.en.md#installation-updates-and-uninstall)
+Uninstalling Codex Polish deletes the plugin settings, custom prompt and OpenAI API key saved in this Codex profile. It also removes empty lock files and empty plugin directories left by older versions, while keeping any unrelated files you placed there and the shared `agy` installation. [Uninstall details](docs/technical.en.md#installation-updates-and-uninstall)
 
 [Credentials Guide](plugins/codex-polish/skills/codex-polish-setup/references/credentials.en.md) · [Technical Reference](docs/technical.en.md) · [Evaluation](evaluation/README.en.md) · [Contributing](CONTRIBUTING.en.md) · [Security](SECURITY.en.md) · [Changelog](CHANGELOG.md) · [Apache-2.0 License](LICENSE)

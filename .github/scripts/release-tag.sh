@@ -21,9 +21,11 @@ if [[ "$version" == *-beta.* ]]; then
   other=latest
   prerelease=true
   before_pattern="^${core}-beta\.${number}$"
+  history_pattern=$before_pattern
 else
   channel=latest
   other=beta
   prerelease=false
   before_pattern="^${core}(-beta\.${number})?$"
+  history_pattern="^${core}$"
 fi

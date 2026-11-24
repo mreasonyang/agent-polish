@@ -94,6 +94,26 @@ expected_other=$(jq -r --arg tag "$other" '.[$tag] // empty' "$work/tags.json")
 integrity_before=$(jq -r '.dist.integrity // empty' "$work/version.json")
 expected=$version
 
+# A missing dist-tag can also mean it was deleted after a newer version shipped.
+# Use the same package's immutable version history before restoring that channel.
+if [[ -z "$before" ]]; then
+  fetch_json "$registry?verify=$nonce-history" "$work/package.json"
+  if jq -e 'length > 0' "$work/package.json" > /dev/null; then
+    jq -e --arg pkg "$package" '.name == $pkg and (.versions | type == "object")' "$work/package.json" > /dev/null ||
+      fail "Invalid npm version history for $package."
+    before=$(jq -r --arg tag "$channel" '.["dist-tags"][$tag] // empty' "$work/package.json")
+    if [[ -z "$before" ]]; then
+      newest=$(jq -r --arg re "$history_pattern" '.versions | keys[] | select(test($re))' "$work/package.json" | LC_ALL=C sort -V | tail -n 1)
+      if [[ -n "$newest" && "$newest" != "$version" && $(printf '%s\n%s\n' "$version" "$newest" | LC_ALL=C sort -V | tail -n 1) == "$newest" ]]; then
+        [[ -n "$integrity_before" ]] || fail "Publishing $version would roll back npm $channel from $newest."
+        expected=''
+      fi
+    fi
+  elif [[ -n "$integrity_before" ]]; then
+    fail "Missing npm version history for $package."
+  fi
+fi
+
 if [[ -n "$before" && "$before" != "$version" && ! ( "$host" == agy && "$channel" == latest && "$before" == 0.0.0-stage ) ]]; then
   [[ "$before" =~ $before_pattern ]] || fail "Unexpected npm $channel tag: $before"
   # sort -V orders numeric components, but a stable core outranks its own betas.
@@ -202,4 +222,4 @@ if ! "$has_asset"; then
 fi
 inspect_release
 "$has_asset" || fail "The verified GitHub release asset is missing."
-echo "Verified $package@$version, npm $channel=$expected, and GitHub release $RELEASE_TAG (prerelease=$prerelease)." >> "$GITHUB_STEP_SUMMARY"
+echo "Verified $package@$version, npm $channel=${expected:-unset}, and GitHub release $RELEASE_TAG (prerelease=$prerelease)." >> "$GITHUB_STEP_SUMMARY"

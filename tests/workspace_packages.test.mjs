@@ -39,7 +39,8 @@ function sandbox(base) {
   const agySettings = join(agyProfile, reverse, 'settings.json');
   const npmLogs = join(base, 'npm-logs');
   const tools = join(base, 'bin');
-  const path = (process.env.PATH || '').split(delimiter).filter(directory => directory &&
+  const path = [dirname(process.execPath), ...[nativeCodex, nativeAgy].filter(Boolean).map(host => dirname(host.command)),
+    ...(process.env.PATH || '').split(delimiter)].filter(directory => directory &&
     !['', '.cmd', '.exe'].some(suffix => fs.existsSync(join(directory, reverse + suffix))));
   for (const directory of [profile, tools, npmLogs]) fs.mkdirSync(directory, { recursive: true });
   const env = {

@@ -50,7 +50,7 @@ npm pack --workspace @kyun.si/agy-polish --pack-destination dist
 
 ### GitHub 仓库改名后的 npm 设置
 
-1. 已存在的 `@kyun.si/codex-polish` 由拥有 npm 包写权限且已启用 2FA 的维护者打开 **Settings → Trusted publishing**。添加 GitHub Actions 连接，所有者填 `mreasonyang`，仓库填 `agent-polish`，工作流填 `publish.yml`，环境留空。勾选 **Allow npm publish** 和 **Allow npm dist-tag**。npm 将已验证的连接绑定到仓库身份，连接的必填字段不可编辑。下次发布前配置新仓库名，成功后移除旧连接。新连接须在 48 小时内成功发布一次。[npm 可信发布设置](https://docs.npmjs.com/trusted-publishers/)
+1. 先尝试用现有的可信连接发布 `@kyun.si/codex-polish`。如果 npm 拒绝改名后仓库的 OIDC 身份，由拥有 npm 包写权限且已启用 2FA 的维护者打开 **Settings → Trusted publishing**。添加 GitHub Actions 连接，所有者填 `mreasonyang`，仓库填 `agent-polish`，工作流填 `publish.yml`，环境留空。勾选 **Allow npm publish** 和 **Allow npm dist-tag**。npm 将已验证的连接绑定到仓库身份，连接的必填字段不可编辑。新连接成功发布后即可移除失效的旧连接。新连接须在 48 小时内成功发布一次。[npm 可信发布设置](https://docs.npmjs.com/trusted-publishers/)
 2. 如果 `@kyun.si/agy-polish` 还未创建，有权在 `@kyun.si` 下创建包的维护者须先建立 npm 包名。使用 npm 11.21+ 和已登录的本地 npm 账号，打包并暂存公开 beta 归档。npm 会创建公开占位版本 `0.0.0-stage`。用 2FA 拒绝这份暂存，释放候选版本给后续 OIDC 发布，再为新包添加相同的 GitHub Actions 连接。`<stage-id>` 使用 npm 返回的暂存 ID。[npm 暂存新包公告](https://github.blog/changelog/2026-10-02-npm-staged-publishing-now-supports-creating-new-packages/) · [npm 暂存发布文档](https://docs.npmjs.com/staged-publishing/)
 
    ```sh

@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing host release tag or legacy Codex tag to recover
+        description: Existing host or legacy Codex release tag (branch dispatch requires a published npm version)
         required: true
         type: string
 
@@ -27,7 +27,7 @@ jobs:
     if: >-
       (github.event_name == 'push' && !github.event.deleted) ||
       (github.event_name == 'workflow_dispatch' &&
-       (github.ref == 'refs/heads/main' || github.ref == format('refs/tags/{0}', inputs.tag)))
+       (startsWith(github.ref, 'refs/heads/') || github.ref == format('refs/tags/{0}', inputs.tag)))
     runs-on: ubuntu-latest
     outputs:
       source_sha: ${{ steps.source.outputs.sha }}
@@ -46,6 +46,17 @@ jobs:
           if "$legacy" && [[ "$GITHUB_REF" != refs/heads/main ]]; then
             echo "Recover legacy tags by dispatching publish.yml from main." >&2
             exit 1
+          fi
+          if [[ "$GITHUB_REF" == refs/heads/* ]]; then
+            encoded_package=${package/\//%2f}
+            if ! curl -fsS --retry 2 --connect-timeout 10 --max-time 30 \
+                "https://registry.npmjs.org/$encoded_package/$version?verify=$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-qualify" |
+                jq -e --arg pkg "$package" --arg v "$version" '
+                  .name == $pkg and .version == $v and (.dist.integrity | type == "string" and length > 0)
+                ' > /dev/null; then
+              echo "Branch dispatch requires an existing npm release of $package@$version." >&2
+              exit 1
+            fi
           fi
           {
             echo "legacy=$legacy"

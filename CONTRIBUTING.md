@@ -46,7 +46,7 @@ npm pack --workspace @kyun.si/agy-polish --pack-destination dist
 
 目标提交通过 CI 后，在该提交上打对应的宿主标签并推送。Beta 可以从功能分支发布。两个宿主可以独立发布相同版本。比如 `codex-v0.0.4-beta.2` 只发布 `@kyun.si/codex-polish`，`agy-v0.0.4-beta.2` 只发布 `@kyun.si/agy-polish`。每个标签都在 Linux、macOS 和 Windows 上测试，验证过的归档上传到对应的 npm 包和 GitHub 发布。仓库的 GitHub **Latest** 跟随 Codex 正式版，npm 的 `latest` 由两个包各自维护。
 
-发布中断时，重新运行原标签触发的工作流，或运行 `gh workflow run publish.yml --ref <tag> -f tag=<tag>`。工作流会核对已存在的 npm 版本，并恢复可以安全补齐的发布附件或标签。恢复历史 `vX.Y.Z` 或 `vX.Y.Z-beta.N` 时，运行 `gh workflow run publish.yml --ref main -f tag=<tag>`，核验 npm 已发布的 Codex 版本并补齐 GitHub 归档。重试旧版不会把 npm 标签退回旧版本。
+发布中断时，重新运行原标签触发的工作流，或运行 `gh workflow run publish.yml --ref <tag> -f tag=<tag>`。如果 npm 版本已发布，也可以运行 `gh workflow run publish.yml --ref <branch> -f tag=<tag>`，使用该分支的工作流恢复发布。恢复流程从原标签打包、运行完整测试矩阵，并核验 npm 上的归档内容，再补齐可安全恢复的标签或 GitHub 附件。新版本必须从发布标签触发，才能为标签指向的提交生成 provenance。恢复历史 Codex 标签 `vX.Y.Z` 或 `vX.Y.Z-beta.N` 时，从 `main` 派发。重试旧版时保留较新的 npm 通道位置。
 
 ### GitHub 仓库改名后的 npm 设置
 
@@ -60,4 +60,4 @@ npm pack --workspace @kyun.si/agy-polish --pack-destination dist
    npm stage reject <stage-id> --registry https://registry.npmjs.org/
    ```
 
-GitHub Actions 从公开仓库通过 OIDC 发布实际 beta 并生成 provenance。**Allow npm dist-tag** 用于恢复标签。当 `latest` 指向占位版本或首个 beta，且版本历史仅有预发布版本时，工作流也会清除这一临时指向。[npm provenance](https://docs.npmjs.com/generating-provenance-statements/) · [npm dist-tag 权限](https://docs.npmjs.com/trusted-publishers/#managing-dist-tags-with-trusted-publishing)
+GitHub Actions 从公开仓库通过 OIDC 发布实际 beta 并生成 provenance。**Allow npm dist-tag** 用于恢复标签。经核验仅有预发布版本时，工作流接受 npm 为首个 Antigravity beta 分配的 `latest`，也兼容 `latest` 保留占位指向或未设置。首个正式版在核验版本历史后接管 `latest`，后续 beta 通过 `beta` 通道发布。[npm provenance](https://docs.npmjs.com/generating-provenance-statements/) · [npm dist-tag 权限](https://docs.npmjs.com/trusted-publishers/#managing-dist-tags-with-trusted-publishing)

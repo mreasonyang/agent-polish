@@ -58,6 +58,33 @@ fetch_json() {
   esac
 }
 
+fetch_history() {
+  fetch_json "$registry?$1" "$work/package.json"
+  jq -e --arg pkg "$package" 'length == 0 or (.name == $pkg and (.versions | type == "object"))' "$work/package.json" > /dev/null ||
+    fail "Invalid npm version history for $package."
+}
+
+agy_prerelease_tag() {
+  [[ "$host" == agy && ( "$1" == 0.0.0-stage || "$1" =~ ^${core}-beta\.${number}$ ) ]]
+}
+
+verify_prerelease_latest() {
+  local latest=$1 stable=${2:-}
+  jq -e --arg latest "$latest" --arg stable "$stable" '
+    .["dist-tags"].latest == $latest and
+    (.versions | has($latest) and (keys | all(. == $stable or test("^[0-9]+[.][0-9]+[.][0-9]+-"))))
+  ' "$work/package.json" > /dev/null ||
+    fail "Refusing to change or accept npm latest without a verified prerelease-only version history."
+}
+
+newest_in_channel_history() {
+  jq -r --arg re "$history_pattern" '.versions | keys[] | select(test($re))' "$work/package.json" | LC_ALL=C sort -V | tail -n 1
+}
+
+is_newer_than_target() {
+  [[ -n "$1" && "$1" != "$version" && $(printf '%s\n%s\n' "$version" "$1" | LC_ALL=C sort -V | tail -n 1) == "$1" ]]
+}
+
 inspect_release() {
   fetch_json "$release" "$work/github.json" -H "Authorization: Bearer $GH_TOKEN"
   has_release=false
@@ -95,18 +122,18 @@ integrity_before=$(jq -r '.dist.integrity // empty' "$work/version.json")
 expected=$version
 
 # A missing dist-tag can also mean it was deleted after a newer version shipped.
-# Use the same package's immutable version history before restoring that channel.
-if [[ -z "$before" ]]; then
-  fetch_json "$registry?verify=$nonce-history" "$work/package.json"
+# AgY stable releases also check for a newer stable behind the current latest.
+if [[ -z "$before" || ( "$host" == agy && "$channel" == latest ) ]] || agy_prerelease_tag "$expected_other"; then
+  fetch_history "verify=$nonce-history"
   if jq -e 'length > 0' "$work/package.json" > /dev/null; then
-    jq -e --arg pkg "$package" '.name == $pkg and (.versions | type == "object")' "$work/package.json" > /dev/null ||
-      fail "Invalid npm version history for $package."
-    before=$(jq -r --arg tag "$channel" '.["dist-tags"][$tag] // empty' "$work/package.json")
     if [[ -z "$before" ]]; then
-      newest=$(jq -r --arg re "$history_pattern" '.versions | keys[] | select(test($re))' "$work/package.json" | LC_ALL=C sort -V | tail -n 1)
-      if [[ -n "$newest" && "$newest" != "$version" && $(printf '%s\n%s\n' "$version" "$newest" | LC_ALL=C sort -V | tail -n 1) == "$newest" ]]; then
+      before=$(jq -r --arg tag "$channel" '.["dist-tags"][$tag] // empty' "$work/package.json")
+    fi
+    if [[ -z "$before" || ( "$host" == agy && "$channel" == latest ) ]]; then
+      newest=$(newest_in_channel_history)
+      if is_newer_than_target "$newest"; then
         [[ -n "$integrity_before" ]] || fail "Publishing $version would roll back npm $channel from $newest."
-        expected=''
+        expected=$before
       fi
     fi
   elif [[ -n "$integrity_before" ]]; then
@@ -114,10 +141,22 @@ if [[ -z "$before" ]]; then
   fi
 fi
 
-if [[ -n "$before" && "$before" != "$version" && ! ( "$host" == agy && "$channel" == latest && "$before" == 0.0.0-stage ) ]]; then
+# AgY has no stable latest to roll back when latest still points to a prerelease.
+# Recovery may find that the requested stable version is already published.
+first_agy_stable=false
+if [[ "$channel" == latest ]] && agy_prerelease_tag "$before"; then
+  already_published_stable=''
+  [[ -z "$integrity_before" ]] || already_published_stable=$version
+  verify_prerelease_latest "$before" "$already_published_stable"
+  first_agy_stable=true
+elif [[ "$channel" == beta ]] && agy_prerelease_tag "$expected_other"; then
+  verify_prerelease_latest "$expected_other"
+fi
+
+if [[ -n "$before" && "$before" != "$version" ]] && ! "$first_agy_stable"; then
   [[ "$before" =~ $before_pattern ]] || fail "Unexpected npm $channel tag: $before"
   # sort -V orders numeric components, but a stable core outranks its own betas.
-  if [[ "$before" != "$version"-beta.* && $(printf '%s\n%s\n' "$version" "$before" | LC_ALL=C sort -V | tail -n 1) == "$before" ]]; then
+  if [[ "$before" != "$version"-beta.* ]] && is_newer_than_target "$before"; then
     [[ -n "$integrity_before" ]] || fail "Publishing $version would roll back npm $channel from $before."
     expected=$before
   fi
@@ -140,27 +179,26 @@ else
   jq -e --arg url "git+https://github.com/$GITHUB_REPOSITORY.git" '.repository.url == $url' <<< "$archive_manifest" > /dev/null ||
     fail "The archive repository must match the GitHub repository for provenance."
   if [[ "$host" == agy ]]; then
-    fetch_json "$registry?verify=$nonce-bootstrap" "$work/package.json"
+    fetch_history "verify=$nonce-bootstrap"
     jq -e --arg pkg "$package" '.name == $pkg' "$work/package.json" > /dev/null ||
       fail "Create $package on npm and configure its trusted publisher before releasing. See CONTRIBUTING.md."
+    if "$first_agy_stable"; then
+      verify_prerelease_latest "$before"
+    elif [[ "$channel" == latest ]]; then
+      newest=$(newest_in_channel_history)
+      if is_newer_than_target "$newest"; then
+        fail "Publishing $version would roll back npm latest from $newest."
+      fi
+    elif agy_prerelease_tag "$expected_other"; then
+      verify_prerelease_latest "$expected_other"
+    fi
   fi
   npm publish "$archive" --registry="$npm_registry" --tag "$channel" --access public --provenance --ignore-scripts
-fi
-
-# npm can assign latest during a first beta publish, including before a retry starts.
-# The AgY name may already have npm's staged-publishing placeholder as latest.
-remove_first_latest=false
-if [[ "$channel" == beta && "$expected" == "$version" ]]; then
-  if [[ -z "$expected_other" || "$expected_other" == "$version" || ( "$host" == agy && "$expected_other" == 0.0.0-stage ) ]]; then
-    remove_first_latest=true
-    expected_other=''
-  fi
 fi
 
 # npm can return success while a new package is still being processed.
 deadline=$((SECONDS + 900))
 channel_repaired=false
-implicit_latest_removed=false
 for ((attempt = 1; ; attempt++)); do
   query="verify=$nonce-after-$attempt"
   fetch_json "$registry/$version?$query" "$work/version.json"
@@ -170,29 +208,49 @@ for ((attempt = 1; ; attempt++)); do
   seen_integrity=$(jq -r '.dist.integrity // empty' "$work/version.json")
   if [[ -n "$seen_integrity" ]]; then
     [[ "$seen_integrity" == "$expected_integrity" ]] || fail "Published version $version has different contents."
-    if [[ "$current" == "$expected" && "$other_current" == "$expected_other" ]]; then
+    other_verified=false
+    if [[ "$other_current" == "$expected_other" ]]; then
+      if [[ "$channel" == beta ]] && agy_prerelease_tag "$other_current"; then
+        fetch_history "$query-history"
+        verify_prerelease_latest "$other_current"
+      fi
+      other_verified=true
+    elif [[ "$host" == agy && "$channel" == beta && "$expected" == "$version" &&
+            ( -z "$expected_other" || "$expected_other" == 0.0.0-stage ) &&
+            ( -z "$other_current" || "$other_current" == 0.0.0-stage || "$other_current" == "$version" ) ]]; then
+      # npm can assign latest to the first public beta or retire the staging placeholder.
+      fetch_history "$query-history"
+      if jq -e --arg v "$version" --arg latest "$other_current" '
+        (.["dist-tags"].latest // "") == $latest and
+        (.versions | has($v) and (keys | all(. == $v or . == "0.0.0-stage")))
+      ' "$work/package.json" > /dev/null; then
+        other_verified=true
+      fi
+    fi
+    if [[ "$current" == "$expected" ]] && "$other_verified"; then
       break
     fi
-    has_temporary_latest=false
-    if "$remove_first_latest" && [[ "$other_current" == "$version" || ( "$host" == agy && "$other_current" == 0.0.0-stage ) ]]; then
-      has_temporary_latest=true
-    fi
-    if "$existing" && ! "$channel_repaired" && [[ "$expected" == "$version" && "$current" != "$version" && "$current" == "$before" ]] &&
-       { [[ "$other_current" == "$expected_other" ]] || "$has_temporary_latest"; }; then
+    if "$existing" && ! "$channel_repaired" && "$other_verified" &&
+       [[ "$expected" == "$version" && "$current" != "$version" && "$current" == "$before" ]]; then
       # A retry can find the correct immutable version while its channel still lags.
+      if [[ "$host" == agy ]]; then
+        fetch_history "$query-repair"
+        jq -e --arg channel "$channel" --arg v "$current" --arg other "$other" --arg ov "$other_current" '
+          (.["dist-tags"][$channel] // "") == $v and (.["dist-tags"][$other] // "") == $ov
+        ' "$work/package.json" > /dev/null || fail "npm $channel or $other changed while verifying $version."
+        newest=$(newest_in_channel_history)
+        if is_newer_than_target "$newest"; then
+          fail "Restoring $version would roll back npm $channel from $newest."
+        fi
+        if "$first_agy_stable"; then
+          verify_prerelease_latest "$current" "$version"
+        elif [[ "$channel" == beta ]] && agy_prerelease_tag "$other_current"; then
+          verify_prerelease_latest "$other_current"
+        fi
+      fi
       npm dist-tag add "$package@$version" "$channel" --registry="$npm_registry" ||
         fail "Enable Allow npm dist-tag on this package's GitHub trusted publisher, then retry the tag."
       channel_repaired=true
-    elif [[ "$current" == "$version" ]] && "$has_temporary_latest" && ! "$implicit_latest_removed"; then
-      fetch_json "$registry?$query" "$work/package.json"
-      jq -e --arg v "$version" --arg latest "$other_current" '
-        .["dist-tags"].latest == $latest and
-        (.versions | has($v) and has($latest) and (keys | all(test("^[0-9]+[.][0-9]+[.][0-9]+-"))))
-      ' "$work/package.json" > /dev/null ||
-        fail "Refusing to change latest without a verified prerelease-only version history."
-      npm dist-tag rm "$package" latest --registry="$npm_registry" ||
-        fail "Enable Allow npm dist-tag on this package's GitHub trusted publisher, then retry the tag."
-      implicit_latest_removed=true
     fi
   fi
   if (( SECONDS >= deadline )); then

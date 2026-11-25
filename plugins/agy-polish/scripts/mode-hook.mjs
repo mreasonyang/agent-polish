@@ -21,9 +21,18 @@ function modeContext() {
   } catch {
     // Treat unavailable settings as off for this turn.
   }
+  let guidance = instructions[mode];
+  if (typeof input.lastUserInput === 'string' && /^说人话[。！.!]*$/u.test(input.lastUserInput.trim())) {
+    guidance = mode === 'off'
+      ? 'For this request, return the previous assistant reply verbatim. Do not call polish_reply or invoke Codex.'
+      : 'The user explicitly asks for the previous reply in plain language. Call polish_reply once with trigger "explicit". ' +
+        'Use the complete previous assistant reply verbatim as draft, its original question if available, and the exact user request as rewrite_request. ' +
+        'Send the original reply to the editor before rewriting any of it yourself. Return the tool result verbatim.';
+    guidance += ' If there is no previous reply, ask which text to rewrite.';
+  }
   return {
     injectSteps: [{ systemMessage: { systemMessage:
-      'The Codex Polish mode for the current user turn is ' + mode + '. ' + instructions[mode]
+      'The Codex Polish mode for the current user turn is ' + mode + '. ' + guidance
     } }]
   };
 }

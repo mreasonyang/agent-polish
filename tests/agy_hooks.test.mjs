@@ -53,3 +53,36 @@ test('native Antigravity hooks tell the model to answer ordinary questions direc
   }
   assert.deepEqual(fixture.records(), [], 'the hook communicates mode without invoking either CLI');
 });
+
+test('a standalone 说人话 edits the previous reply explicitly and respects Off', t => {
+  const fixture = isolatedHosts(t);
+  function hook(lastUserInput, invocationNum) {
+    const result = fixture.run(process.execPath, [join(reversePlugin, 'scripts', 'mode-hook.mjs')], {
+      input: JSON.stringify({ lastUserInput, invocationNum }), stdio: ['pipe', 'pipe', 'pipe']
+    });
+    assert.equal(result.status, 0, result.stderr);
+    return JSON.parse(result.stdout).injectSteps?.[0].systemMessage.systemMessage;
+  }
+
+  for (const mode of ['normal', 'turbo', 'manual']) {
+    withSettings(fixture, 'await settings.writeSettings({ mode: process.argv[1] });', [mode]);
+    const message = hook('说人话');
+    assert.match(message, /trigger "explicit"/);
+    assert.match(message, /previous assistant reply verbatim as draft/);
+    assert.match(message, /exact user request as rewrite_request/);
+    assert.doesNotMatch(message, /trigger auto/);
+  }
+  assert.equal(hook(' 说人话！ '), hook('说人话'));
+  assert.equal(hook('说人话', 1), undefined);
+  const ordinary = hook('请解释 DNS。');
+  for (const prompt of ['“说人话”是什么意思？', '别说人话', '说人话？', '什么是 DNS？请说人话。']) {
+    assert.equal(hook(prompt), ordinary);
+  }
+
+  withSettings(fixture, 'await settings.writeSettings({ mode: "off" });');
+  const off = hook('说人话');
+  assert.match(off, /previous assistant reply verbatim/i);
+  assert.match(off, /do not call polish_reply or invoke Codex/i);
+  assert.doesNotMatch(off, /trigger "explicit"/);
+  assert.deepEqual(fixture.records(), []);
+});

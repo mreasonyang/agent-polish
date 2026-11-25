@@ -108,7 +108,9 @@ function protectedLiterals(text) {
 function promptFor(input, mode, selected) {
   let approach = 'Revise proactively for clarity, precision, and natural language.';
   if (input.trigger === 'explicit') {
-    approach = 'Make a direct editing pass. Follow the supplied rewrite_request where it applies to the prose.';
+    approach = 'Make a direct editing pass. Follow the supplied rewrite_request where it applies to the prose. ' +
+      'When asked for plain language (说人话), describe what actually happens in words the reader would use in conversation. ' +
+      'Replace process jargon with its concrete meaning and keep all limits and exceptions.';
   } else if (mode === 'normal') {
     approach = 'Make changes only if they clearly improve the draft. If it already reads well, return it exactly as supplied.';
   }

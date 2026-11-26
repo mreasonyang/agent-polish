@@ -10,7 +10,7 @@ Install the Antigravity plugin with `npx @kyun.si/agy-polish@beta setup`. From a
 
 Antigravity’s mode, Codex model and reasoning effort live in `~/.gemini/config/agy-polish/settings.json`. Terminal and chat settings use the same values. Set `CODEX_POLISH_AGY_SETTINGS_DIR` to choose a separate settings directory. Relative paths start in the user’s home directory. Normal lets Codex keep a clear draft, Turbo requests a rewrite, and Off preserves the model preference.
 
-The editor uses the model provider configured in the local Codex CLI. First-time setup uses the configured Codex model. When you later choose a model in chat, a custom provider without a catalog offers its configured model. The editor uses a temporary working directory and disables hooks and plugins for its own process to prevent another round of polishing. Antigravity manages its conversation records. The remaining sections describe Gemini editing in Codex.
+The editor uses the model provider configured in the local Codex CLI. In setup or chat, you can keep the Codex default or choose a model and a supported reasoning effort. A custom provider without a catalog offers its configured model. The editor uses a temporary working directory and disables hooks and plugins for its own process to prevent another round of polishing. Antigravity manages its conversation records. The remaining sections describe Gemini editing in Codex.
 
 ## Saved settings
 

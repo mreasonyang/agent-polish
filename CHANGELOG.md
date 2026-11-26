@@ -2,6 +2,11 @@
 
 [中文使用说明](docs/README.zh-CN.md) · [English README](README.md)
 
+## AGY Polish 0.0.4-beta.5
+
+- Antigravity 的默认 `setup` 恢复四种润色模式，可直接选择 Codex 模型和思考等级。重新运行时会预选已有设置。
+- Antigravity setup again offers all four polishing modes, the Codex model and reasoning effort. Running setup again preselects your saved settings.
+
 ## Codex Polish 0.0.4-beta.3
 
 - Codex 的默认 `setup` 恢复四种模式、Gemini 模型和思考等级的选择。Normal 模式下可选择配置 OpenAI 检查或跳过。

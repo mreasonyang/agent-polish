@@ -10,7 +10,7 @@ Agent Polish 的两个插件支持 Windows、macOS 和 Linux。本地脚本使�
 
 Antigravity 的模式、Codex 模型和推理强度保存在 `~/.gemini/config/agy-polish/settings.json`。安装器和聊天设置共用这些值。可通过 `CODEX_POLISH_AGY_SETTINGS_DIR` 指定独立的设置目录，相对路径从用户主目录解析。Normal 让 Codex 按需保留清楚的原稿，Turbo 请求改写，关闭时保留模型设置。
 
-编辑器使用本机 Codex 配置的模型提供商。首次设置沿用 Codex 已配置的模型。之后在聊天中选择其他模型时，如果自定义提供商没有模型目录，只列出其配置中指定的模型。编辑进程在本轮临时目录中运行，并关闭其插件和 hooks，以免再次触发正向润色。Antigravity 管理本机对话记录。其余章节描述在 Codex 中调用 Gemini 的流程。
+编辑器使用本机 Codex 配置的模型提供商。在安装向导或聊天里，可以沿用 Codex 默认设置，也可以选择模型和它支持的思考等级。自定义提供商没有模型目录时，只列出其配置中指定的模型。编辑进程在本轮临时目录中运行，并关闭其插件和 hooks，以免再次触发正向润色。Antigravity 管理本机对话记录。其余章节描述在 Codex 中调用 Gemini 的流程。
 
 ## 润色设置
 

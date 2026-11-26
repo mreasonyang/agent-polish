@@ -121,13 +121,25 @@ test('workspace tarballs install offline with independent npm entry points', asy
   const archive = Object.fromEntries(packs.map(pack => [pack.name, join(archives, pack.filename)]));
   const version = Object.fromEntries(packs.map(pack => [pack.name, pack.version]));
 
-  // Simulate a terminal on the real npm entry point so both menus can be
-  // exercised with piped keys on Windows as well as POSIX.
+  // Send each answer when the real npm entry point opens its next menu.
+  // A simulated terminal works on Windows as well as POSIX.
   const tty = join(base, 'terminal.mjs');
-  write(tty, `process.stdin.isTTY = process.stdout.isTTY = true;
-process.stdin.setRawMode = value => { process.stdin.isRaw = value; };
+  write(tty, `import { PassThrough } from 'node:stream';
+if (process.env.POLISH_TEST_MENU_ANSWERS) {
+  const answers = JSON.parse(process.env.POLISH_TEST_MENU_ANSWERS);
+  delete process.env.POLISH_TEST_MENU_ANSWERS;
+  const input = new PassThrough();
+  input.isTTY = process.stdout.isTTY = true;
+  input.setRawMode = value => {
+    input.isRaw = value;
+    if (value) setImmediate(() => answers.length ? input.write(answers.shift()) : input.end());
+  };
+  Object.defineProperty(process, 'stdin', { value: input });
+}
 `);
-  const keys = input => ({ input, extraEnv: { NODE_OPTIONS: '--import=' + pathToFileURL(tty).href } });
+  const keys = (...answers) => ({
+    extraEnv: { NODE_OPTIONS: '--import=' + pathToFileURL(tty).href, POLISH_TEST_MENU_ANSWERS: JSON.stringify(answers) }
+  });
 
   await t.test('each archive has one plugin and one npm bin, and setup starts at mode selection', () => {
     const box = sandbox(join(base, 'bins'));
@@ -144,10 +156,11 @@ process.stdin.setRawMode = value => { process.stdin.isRaw = value; };
       assert.match(firstMenu, new RegExp(`^How should ${host} replies be polished\\?$`, 'm'));
       if (name === forward) {
         assert.match(firstMenu, /Normal \(default\)[\s\S]*Turbo[\s\S]*Only when asked[\s\S]*Turn off polishing/);
-        assert.equal(box.cli(prefix, name, ['setup', '--advanced'], keys('\x03')), firstMenu);
       } else {
-        assert.match(firstMenu, /Automatic polishing \(Normal\)[\s\S]*Polish only when asked/);
+        assert.match(firstMenu, /Normal · rewrite when useful[\s\S]*Turbo[\s\S]*Manual[\s\S]*Off · turn off polishing/);
       }
+      assert.equal(box.cli(prefix, name, ['setup', '--advanced'], keys('\x03')), firstMenu);
+      assert.equal(box.cli(prefix, name, [], keys('\x03')), firstMenu);
       assert.doesNotMatch(firstMenu, /Where do you|Configure both|Both hosts/i);
       if (name === reverse) box.cli(prefix, name, ['setup', '--host', 'codex'], { status: 2 });
     }
@@ -242,7 +255,10 @@ process.stdin.setRawMode = value => { process.stdin.isRaw = value; };
     const updatedCodex = box.codexRows();
     assert.equal(updatedCodex[0].version, version[scope(forward)]);
     runReverse('update');
-    assert.match(box.cli(agy, reverse, ['setup'], keys('\r')), /● Keep current setting \(Turbo\)/);
+    const rerun = box.cli(agy, reverse, ['setup'], keys('\r', '\r'));
+    assert.match(rerun, /❯ ● Turbo · ask Codex to rewrite every time \(current\)/);
+    assert.match(rerun, /❯ ● Keep current settings · fixture-model · High/);
+    assert.match(rerun, /The plugin is still disabled/);
     assert.equal(box.agyRows()[0].version, version[scope(reverse)]);
     assert.equal(box.agyRows()[0].enabled, false);
     assert.equal(read(box.agySettings), beforeAgy);

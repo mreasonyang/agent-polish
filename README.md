@@ -13,17 +13,17 @@ Install on the machine where you chat. Both plugins use **Node.js 22.16+**, the 
 | Codex | `npx @kyun.si/codex-polish@beta setup` | Gemini |
 | Antigravity | `npx @kyun.si/agy-polish@beta setup` | Codex |
 
-From a source checkout, run `node scripts/install.mjs setup` for Codex or `node scripts/agy-cli.mjs setup` for Antigravity. Codex setup offers the polishing modes, Gemini models and thinking levels directly. For the full Antigravity menus, add `--advanced` to its setup command. Run both installers if you use both hosts. Each plugin uses its existing settings, including settings saved by the combined `0.0.4-beta.1` installer.
+From a source checkout, run `node scripts/install.mjs setup` for Codex or `node scripts/agy-cli.mjs setup` for Antigravity. Both installers offer Normal, Turbo, Manual, and Off. With polishing on, Codex users can choose a Gemini model and thinking level, and Antigravity users can choose a Codex model and reasoning effort. Run both installers if you use both hosts. Each plugin uses its existing settings, including settings saved by the combined `0.0.4-beta.1` installer.
 
 ### Edit replies in Antigravity with Codex
 
-Choose **Automatic** to let Codex read the current question and draft and edit it when useful, or **Only when asked** to request individual edits. Setup uses the model provider, model and reasoning effort configured in your local Codex CLI. If you use a ChatGPT account and it needs a sign-in, run `codex login`. Antigravity needs a version of `agy` with native plugin support.
+Normal sends the current question and draft to Codex and lets it keep a clear draft. Turbo asks Codex to rewrite every reply. Manual runs when you ask. In setup, you can keep the Codex default or choose a model from your configured provider and a reasoning effort the model supports. If you use a ChatGPT account and it needs a sign-in, run `codex login`. Antigravity needs a version of `agy` with native plugin support.
 
 Start a new Antigravity chat. If prompted, allow the `polish_reply` tool from `agy-polish`. Try **“/polish Rewrite the previous reply in two sentences.”** If the editor fails, the chat keeps the original draft. Say **“Set up reply polishing”** to select another model or reasoning effort, switch to Turbo, or turn editing off.
 
 ### Edit replies in Codex with Gemini
 
-Choose **Automatic** or **Only when asked**. A fresh installation uses **Gemini 4 Hydrogen** with **Medium** thinking, through your Antigravity sign-in. Setup can install `agy` if it is missing. This direction requires a Codex CLI with plugin support and `agy` 1.2.1 or newer. In T3 Code, select the Codex backend.
+A fresh installation defaults to **Gemini 4 Hydrogen** with **Medium** thinking, through your Antigravity sign-in. Setup can install `agy` if it is missing. This direction requires a Codex CLI with plugin support and `agy` 1.2.1 or newer. In T3 Code, select the Codex backend.
 
 For automatic edits, trust `UserPromptSubmit` in Codex **Settings → Hooks** (`/hooks` in the CLI), then start a new chat. For a manual edit, ask **“Polish the last reply.”** To change the mode, model, thinking level or history in this Codex profile, say **“Set up Codex Polish.”**
 

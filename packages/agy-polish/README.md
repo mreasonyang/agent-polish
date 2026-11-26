@@ -12,7 +12,9 @@ npx @kyun.si/agy-polish@beta setup
 
 In Windows PowerShell, use `npx.cmd` in place of `npx`.
 
-Choose when Codex should edit your replies, then start a new `agy` chat. Try `/polish Rewrite the previous reply in two sentences.` If Antigravity asks for permission, allow the `polish_reply` tool. Add `--advanced` to `setup` to choose a mode, model and reasoning effort, or say **“Set up reply polishing”** to change them in chat.
+Choose Normal, Turbo, Manual, or Off. With polishing on, you can keep the Codex default or choose a model and a supported reasoning effort from your provider’s model list. Run `setup` again to change your choices, or use `/polish-settings` in Antigravity.
+
+Start a new `agy` chat and try `/polish Rewrite the previous reply in two sentences.` If Antigravity asks for permission, allow the `polish_reply` tool.
 
 For a full reply rewrite, your Codex provider receives the current draft, its question and your editing directions. For a selected passage, it receives just that passage and the relevant directions.
 

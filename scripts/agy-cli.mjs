@@ -6,7 +6,7 @@ import { parseArgs } from 'node:util';
 import { agyExecutable, canonical, compareVersions, interactiveTerminal, LEGACY_BOTH_SETUP, npmChannel, windows } from './installer_common.mjs';
 import { systemLanguage, tr } from './installer_locale.mjs';
 import { withLock } from './installer_lock.mjs';
-import { chooseOnboardingMode, chooseOption, thinkingLabels, waitForCatalog } from './installer_terminal.mjs';
+import { chooseOption, thinkingLabels, waitForCatalog } from './installer_terminal.mjs';
 import { AGY_INSTALL, installAgyBootstrap } from './agy_bootstrap.mjs';
 import {
   AgyInstallError, agyProfile, requireAgyCli, installedAgy, validateAgyBundle,
@@ -100,27 +100,23 @@ async function chooseAgyModel(settings, { model, effort }, { signedIn }, lang) {
   }
 }
 
-async function prepareAgySetup(interactive, advanced, lang) {
+async function prepareAgySetup(interactive, lang) {
   const { settings, current } = await loadAgySettings();
   const t = (zh, en) => tr(zh, en, lang);
   const patch = {};
   let mode = current.mode;
   if (interactive) {
     console.log(t(...agyDataNotice));
-    const title = t('在 Antigravity 中如何润色？', 'How should Antigravity replies be polished?');
-    if (advanced) {
-      const modes = Object.entries(agyModeLabels).map(([id, label]) => ({
-        id, name: t(...label) + (id === current.mode ? t('（当前）', ' (current)') : '')
-      }));
-      mode = await chooseOption(title, modes, lang, process.stdin, process.stdout, current.mode);
-    } else {
-      mode = await chooseOnboardingMode(title, current.mode, lang);
-    }
+    const modes = Object.entries(agyModeLabels).map(([id, label]) => ({
+      id, name: t(...label) + (id === current.mode ? t('（当前）', ' (current)') : '')
+    }));
+    mode = await chooseOption(t('在 Antigravity 中如何润色？', 'How should Antigravity replies be polished?'),
+      modes, lang, process.stdin, process.stdout, current.mode);
     if (!mode) return null;
     if (mode !== current.mode) patch.mode = mode;
   }
   let provider;
-  if (mode !== 'off' && interactive && advanced) {
+  if (mode !== 'off' && interactive) {
     provider = await checkCodexProvider(lang);
     if (provider.ready || provider.canListModels) {
       const model = await chooseAgyModel(settings, current, provider, lang);
@@ -241,8 +237,8 @@ async function runAgyHost(action, plan, installDependency, lang) {
 
 function usage(lang) {
   return tr(
-    '用法：agy-polish [setup|update|doctor|uninstall] [--install-agy] [--advanced]\nsetup（默认命令）安装 Antigravity 插件，由 Codex 润色回复。\n--advanced 在 setup 中显示完整的模式和模型选项。--install-agy 可在 setup 或 update 中安装 Google 的 Antigravity CLI。\n-h, --help 显示帮助。',
-    'Usage: agy-polish [setup|update|doctor|uninstall] [--install-agy] [--advanced]\nsetup (default) installs the Antigravity plugin to polish replies with Codex.\n--advanced shows the full mode and model choices during setup. --install-agy can install Google’s Antigravity CLI during setup or update.\n-h, --help shows this help.',
+    '用法：agy-polish [setup|update|doctor|uninstall] [--install-agy]\nsetup（默认命令）安装 Antigravity 插件，可选择润色模式、Codex 模型和思考等级。\n--install-agy 可在 setup 或 update 中安装 Google 的 Antigravity CLI。\n-h, --help 显示帮助。',
+    'Usage: agy-polish [setup|update|doctor|uninstall] [--install-agy]\nsetup (default) installs the Antigravity plugin and lets you choose the polishing mode, Codex model and reasoning effort.\n--install-agy can install Google’s Antigravity CLI during setup or update.\n-h, --help shows this help.',
     lang
   );
 }
@@ -253,7 +249,7 @@ export async function main(args = process.argv.slice(2)) {
     console.log(usage(lang));
     return 0;
   }
-  let action, installDependency, advanced;
+  let action, installDependency;
   try {
     const { values, positionals } = parseArgs({
       args, allowPositionals: true,
@@ -261,9 +257,8 @@ export async function main(args = process.argv.slice(2)) {
     });
     action = positionals[0] ?? 'setup';
     installDependency = values['install-agy'] ?? false;
-    advanced = values.advanced ?? false;
     if (positionals.length > 1 || !['setup', 'update', 'doctor', 'uninstall'].includes(action) ||
-        (advanced && action !== 'setup') || (installDependency && !['setup', 'update'].includes(action))) {
+        (values.advanced && action !== 'setup') || (installDependency && !['setup', 'update'].includes(action))) {
       throw new Error('invalid installer arguments');
     }
   } catch {
@@ -271,7 +266,7 @@ export async function main(args = process.argv.slice(2)) {
     return 2;
   }
   try {
-    const plan = action === 'setup' ? await prepareAgySetup(interactiveTerminal(), advanced, lang) : undefined;
+    const plan = action === 'setup' ? await prepareAgySetup(interactiveTerminal(), lang) : undefined;
     if (plan === null) {
       const legacy = process.env[LEGACY_BOTH_SETUP];
       if (legacy === 'codex-complete') console.log(tr('Codex 配置已完成。Antigravity 配置已取消。',

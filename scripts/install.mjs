@@ -20,7 +20,7 @@ import { openSetupCatalog } from './setup_catalog.mjs';
 import { preserve } from './native_cache.mjs';
 import { withExistingLock, withLock } from './installer_lock.mjs';
 import { AGY_INSTALL, installAgyBootstrap, supportedAgy } from './agy_bootstrap.mjs';
-import { ask, chooseOnboardingMode, chooseOption, terminalKeys, thinkingLabels, waitForCatalog } from './installer_terminal.mjs';
+import { ask, chooseOption, terminalKeys, thinkingLabels, waitForCatalog } from './installer_terminal.mjs';
 import { available, canonical, compareVersions as compareInstallerVersions, interactiveTerminal, LEGACY_BOTH_SETUP, npmChannel, pathDirectories, VERSION } from './installer_common.mjs';
 export { withLock };
 
@@ -1181,13 +1181,12 @@ export async function showSetupGuidance({
   installDependency = false,
   dependencyOnly = false,
   interactive = process.stdin.isTTY && process.stdout.isTTY,
-  advanced = false,
   configureMode = true,
   check = readChecks,
   saveRewriteMode = value => saveSetupMode(REWRITE_MODE_FILE, value),
   saveTriggerMode = value => saveSetupMode(MODE_FILE, value),
   saveModel = ({ model, thinkingLevel }, lang) => saveModelSelection(model, thinkingLevel, lang),
-  chooseMode = advanced ? chooseSetupMode : chooseCodexOnboarding,
+  chooseMode = chooseSetupMode,
   chooseModel = chooseSetupModel,
   offerOpenAI = lang => manageOpenAI(lang, { onboarding: true }),
   install = installAgy,
@@ -1208,8 +1207,8 @@ export async function showSetupGuidance({
     return !installDependency;
   }
   if (interactive && !dependencyOnly && configureMode) {
-    const current = currentSetupMode(checks, advanced);
-    const selected = await chooseMode(lang, current, undefined, undefined, checks);
+    const current = currentSetupMode(checks);
+    const selected = await chooseMode(lang, current);
     if (!selected) return true;
     if (selected !== current) {
       await applySetupMode(checks, selected, saveRewriteMode, saveTriggerMode);
@@ -1264,7 +1263,9 @@ export async function showSetupGuidance({
   } else if (installDependency)
     console.log(tr('已找到 agy，直接使用现有安装。', 'Found agy. Your existing installation will be used.', lang));
   if (dependencyOnly) return true;
-  if (interactive && advanced && checks.agy_available && !checks.blockers.includes('agy_unsupported')) {
+  if (!interactive)
+    console.log(tr('要选择默认模式和模型，请在交互式终端运行 setup。', 'Run setup in an interactive terminal to choose your default mode and model.', lang));
+  if (interactive && checks.agy_available && !checks.blockers.includes('agy_unsupported')) {
     const selected = await chooseModel(checks, lang);
     if (!selected) return true;
     if (!checks.gemini_model_configured || selected.model !== checks.gemini_model || selected.thinkingLevel !== checks.gemini_thinking_level) {
@@ -1274,7 +1275,7 @@ export async function showSetupGuidance({
   }
   const [lines, pages] = setupIssues(checks, lang);
   if (lines.length) console.log(lines.join('\n'));
-  if (interactive && advanced && checks.mode === 'auto' && checks.rewrite_mode === 'normal' && checks.rewrite_mode_configured && !checks.blockers.length)
+  if (interactive && checks.mode === 'auto' && checks.rewrite_mode === 'normal' && checks.rewrite_mode_configured && !checks.blockers.length)
     await offerOpenAI(lang);
   if (
     pages.length &&
@@ -1306,13 +1307,12 @@ async function applySetupMode(checks, selected, saveRewriteMode, saveTriggerMode
   if (mode !== checks.mode) await saveTriggerMode(mode);
 }
 
-function currentSetupMode(checks, advanced) {
-  if (checks.mode !== 'auto') return checks.mode ?? 'invalid';
-  if (advanced && checks.rewrite_mode === 'normal' && !checks.rewrite_mode_configured) return undefined;
-  return checks.rewrite_mode ?? 'invalid';
+function currentSetupMode(checks) {
+  if (checks.mode !== 'auto') return checks.mode;
+  return checks.rewrite_mode_configured ? checks.rewrite_mode : undefined;
 }
 
-function chooseCodexOnboarding(lang, current, input, output, checks) {
+function showCodexSharingNotice(checks, lang) {
   const notice = tr(
     '选择自动润色后，插件会把本轮问题和 Codex 草稿通过 Antigravity CLI 发给 Google Gemini。',
     'Automatic polishing sends the current question and Codex draft to Google Gemini through the Antigravity CLI.', lang);
@@ -1325,8 +1325,6 @@ function chooseCodexOnboarding(lang, current, input, output, checks) {
   if (checks.decisions_mode === 'auto' && checks.openai_key_configured) console.log(tr(
     '已开启的 OpenAI Decisions API 检查会在 Normal 自动润色时接收本轮问题、草稿和自定义润色提示词。',
     'Your enabled OpenAI Decisions API check receives the question, draft, and any custom polishing prompt during Normal automatic polishing.', lang));
-  return chooseOnboardingMode(tr('在 Codex 中如何润色？', 'How should Codex replies be polished?', lang),
-    current, lang, input, output);
 }
 
 export function doctor(checks = checkAgyVersion(readChecks())) {
@@ -1400,13 +1398,13 @@ export function doctor(checks = checkAgyVersion(readChecks())) {
 }
 function usage(lang) {
   return tr(
-    '用法：codex-polish [setup|update|doctor|uninstall] [--install-agy] [--advanced]\nsetup（默认命令）安装 Codex 插件，由 Gemini 润色回复。\n--advanced 在 setup 中显示完整的模式和模型选项。--install-agy 可在 setup 或 update 中安装 Google 的 Antigravity CLI。\ncodex-polish openai 管理可选的 OpenAI Decisions API 检查和密钥。\n旧命令仍支持 --host codex|agy|both。Antigravity 插件的独立命令为 agy-polish。\n-h, --help 显示帮助。',
-    'Usage: codex-polish [setup|update|doctor|uninstall] [--install-agy] [--advanced]\nsetup (default) installs the Codex plugin to polish replies with Gemini.\n--advanced shows the full mode and model choices during setup. --install-agy can install Google’s Antigravity CLI during setup or update.\ncodex-polish openai manages the optional OpenAI Decisions API check and its key.\nLegacy commands still accept --host codex|agy|both. The standalone Antigravity command is agy-polish.\n-h, --help shows this help.',
+    '用法：codex-polish [setup|update|doctor|uninstall] [--install-agy] [--advanced]\nsetup（默认命令）安装 Codex 插件，可选择润色模式、Gemini 模型和思考等级。\n--install-agy 可在 setup 或 update 中安装 Google 的 Antigravity CLI。\ncodex-polish openai 管理可选的 OpenAI Decisions API 检查和密钥。\n旧命令仍支持 --host codex|agy|both。Antigravity 插件的独立命令为 agy-polish。\n-h, --help 显示帮助。',
+    'Usage: codex-polish [setup|update|doctor|uninstall] [--install-agy] [--advanced]\nsetup (default) installs the Codex plugin and lets you choose the polishing mode, Gemini model and thinking level.\n--install-agy can install Google’s Antigravity CLI during setup or update.\ncodex-polish openai manages the optional OpenAI Decisions API check and its key.\nLegacy commands still accept --host codex|agy|both. The standalone Antigravity command is agy-polish.\n-h, --help shows this help.',
     lang
   );
 }
 
-async function runCodexHost(action, { installDependency, advanced }, lang) {
+async function runCodexHost(action, { installDependency }, lang) {
   if (action === 'doctor') {
     const checks = checkAgyVersion(readChecks());
     console.log(doctor(checks));
@@ -1418,9 +1416,9 @@ async function runCodexHost(action, { installDependency, advanced }, lang) {
   let savePreferences;
   if (action === 'setup' && interactive) {
     const checks = readChecks();
-    const current = currentSetupMode(checks, advanced);
-    const mode = advanced ? await chooseSetupMode(lang, current) :
-      await chooseCodexOnboarding(lang, current, undefined, undefined, checks);
+    const current = currentSetupMode(checks);
+    showCodexSharingNotice(checks, lang);
+    const mode = await chooseSetupMode(lang, current);
     if (!mode) return null;
     if (mode !== current) {
       savePreferences = () => applySetupMode(readChecks(), mode,
@@ -1429,9 +1427,9 @@ async function runCodexHost(action, { installDependency, advanced }, lang) {
   }
   const [message, enabled] = await manage(action, ROOT, snapshotStore(), undefined, undefined, savePreferences);
   console.log(message);
-  const onboard = action === 'setup' && (enabled || (advanced && interactive));
+  const onboard = action === 'setup' && (enabled || interactive);
   if ((onboard || installDependency) && !(await showSetupGuidance({
-    installDependency, dependencyOnly: !onboard, interactive, advanced, configureMode: false
+    installDependency, dependencyOnly: !onboard, interactive, configureMode: false
   }))) return 1;
   if (enabled) {
     const trigger = triggerMode();

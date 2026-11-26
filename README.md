@@ -13,7 +13,7 @@ Install on the machine where you chat. Both plugins use **Node.js 22.16+**, the 
 | Codex | `npx @kyun.si/codex-polish@beta setup` | Gemini |
 | Antigravity | `npx @kyun.si/agy-polish@beta setup` | Codex |
 
-From a source checkout, run `node scripts/install.mjs setup` for Codex or `node scripts/agy-cli.mjs setup` for Antigravity. Add `--advanced` to `setup` to open the full mode and model menus. Run both installers if you use both hosts. Each plugin uses its existing settings, including settings saved by the combined `0.0.4-beta.1` installer.
+From a source checkout, run `node scripts/install.mjs setup` for Codex or `node scripts/agy-cli.mjs setup` for Antigravity. Codex setup offers the polishing modes, Gemini models and thinking levels directly. For the full Antigravity menus, add `--advanced` to its setup command. Run both installers if you use both hosts. Each plugin uses its existing settings, including settings saved by the combined `0.0.4-beta.1` installer.
 
 ### Edit replies in Antigravity with Codex
 

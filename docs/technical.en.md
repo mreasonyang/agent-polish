@@ -117,7 +117,7 @@ The plugin never invokes `agy -p` and writes no draft logs of its own. Codex ses
 
 Install Codex Polish from npm in any folder with `npx @kyun.si/codex-polish@beta setup`. Run `npx @kyun.si/codex-polish@beta doctor` to check the plugin settings and local environment, `npx @kyun.si/codex-polish@beta update` to upgrade, or `npx @kyun.si/codex-polish@beta uninstall` to remove the plugin. In Windows PowerShell, use `npx.cmd` for these commands. From a source checkout, run `node scripts/install.mjs setup` from its root. The same subcommands work there. [Quick Start](../README.md#quick-start)
 
-On macOS, you can also double-click the launcher in the extracted Codex Polish archive. First-time setup asks whether to polish automatically or only when asked. It uses your saved settings or the default Gemini model and thinking level. Run `setup --advanced` or say “Set up Codex Polish” in a Codex chat to open the full mode and model menus. [Finder launcher](../Install%20Codex%20Polish.command)
+On macOS, you can also double-click the launcher in the extracted Codex Polish archive. Interactive setup offers Normal, Turbo, manual polishing and Off. When polishing is on, you can then choose a Gemini model and thinking level. Run `setup` again or say “Set up Codex Polish” in a Codex chat to change these settings. [Finder launcher](../Install%20Codex%20Polish.command)
 
 Both `setup` and `update` accept `--install-agy` to install the Google CLI when needed. Updates skip the settings menus and preserve your saved settings and the plugin’s enabled state. Re-running `update` with the same version replaces the build or recovers an interrupted update.
 

@@ -104,7 +104,7 @@ test('setup reports actionable blockers and offers the relevant official key pag
     }
   }
 });
-test('the advanced setup screen offers Normal, Turbo, manual and off and restores the terminal after selection', async (t) => {
+test('the first setup screen offers Normal, Turbo, manual and off and restores the terminal after selection', async (t) => {
   const down = '\x1b[B', up = '\x1b[A', enter = '\r';
   for (const [name, keys, expected, lang, initiallyRaw, current] of [
     ['Enter accepts the default', [enter], 'normal', 'en', false],
@@ -190,14 +190,14 @@ async function openAIFlow(lang, onboarding, keys) {
   } finally { input.destroy(); output.destroy(); }
 }
 
-test('advanced Normal setup offers a single default skip after model selection and the manage command stays available', async t => {
+test('Normal setup offers a single default skip after model selection and the manage command stays available', async t => {
   useTestProfile(t);
   const enter = '\r', down = '\x1b[B';
   const order = [];
   const session = { ...checks, rewrite_mode_configured: false, gemini_model_configured: false };
   const offers = [];
   const options = {
-    interactive: true, advanced: true, check: () => session,
+    interactive: true, check: () => session,
     chooseMode() { order.push('mode'); return 'normal'; },
     saveRewriteMode() { session.rewrite_mode_configured = true; },
     chooseModel() { order.push('model'); return { model: 'gemini-4-hydrogen', thinkingLevel: 'medium' }; },
@@ -518,7 +518,7 @@ test('interactive setup can change saved profile defaults from any launch direct
       const choices = [];
       const setup = launch === 'extracted' ? packaged.showSetupGuidance : showSetupGuidance;
       const options = {
-        interactive: true, advanced: true,
+        interactive: true,
         chooseMode(lang, current) { assert.equal(lang, 'en'); choices.push(['mode', current]); return current ? 'turbo' : 'normal'; },
         chooseModel() { choices.push('model'); return { model: 'gemini-4-argon', thinkingLevel: 'high' }; },
         offerOpenAI() {},
@@ -548,14 +548,14 @@ test('interactive setup can change saved profile defaults from any launch direct
   }
 });
 
-test('advanced setup chooses an unsaved mode before offering to install agy', async (t) => {
+test('setup chooses an unsaved mode before offering to install agy', async (t) => {
   for (const [lang, expected] of [['en', 'normal'], ['zh', 'turbo']]) {
     await t.test(lang, async (t) => {
       const questions = [];
       const log = t.mock.method(console, 'log', () => {});
       const saveRewriteMode = t.mock.fn();
       const ok = await showSetupGuidance({
-        interactive: true, advanced: true,
+        interactive: true,
         check: () => ({
           ...checks, ui_language: lang, rewrite_mode_configured: saveRewriteMode.mock.callCount() > 0,
           gemini_model_configured: false, blockers: ['agy_missing'], agy_available: false
@@ -620,7 +620,7 @@ test('setup can re-enable Normal, Turbo or manual from a disabled profile', asyn
     writeProfileSetting('codex-polish.rewrite-mode', initialRewrite);
     const steps = [];
     const ok = await showSetupGuidance({
-      interactive: true, advanced: true,
+      interactive: true,
       check: () => ({ ...checks, mode: triggerMode(), ...rewriteModeSettings() }),
       chooseMode(lang, current) { assert.equal(current, 'off'); return selection; },
       chooseModel(status) {
@@ -654,7 +654,7 @@ test('setup opens saved choices, never writes on Enter for unchanged settings, a
   ]) {
     const offered = [];
     const ok = await showSetupGuidance({
-      interactive: true, advanced: true, ...options, check: () => status,
+      interactive: true, ...options, check: () => status,
       chooseMode(lang, current) {
         if (status.mode === 'manual' || status.mode === 'off') assert.equal(current, status.mode);
         offered.push('mode');
@@ -725,7 +725,7 @@ test('interactive dependency prompts, opt-ins, browser consent, failure messagin
   }
   let result = await setup({ interactive: false });
   assert.ok(result.text.includes(npxCodexPolish + ' setup --install-agy'));
-  assert.doesNotMatch(result.text, /interactive terminal/);
+  assert.match(result.text, /interactive terminal/);
   assert.equal(result.prompts, 0);
   assert.equal(result.installs, 0);
   assert.equal(result.opens, 0);

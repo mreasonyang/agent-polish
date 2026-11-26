@@ -142,7 +142,12 @@ process.stdin.setRawMode = value => { process.stdin.isRaw = value; };
       assert.match(box.cli(prefix, name, ['--help']), new RegExp(`Usage: ${name}\\b`));
       const firstMenu = box.cli(prefix, name, ['setup'], keys('\x03'));
       assert.match(firstMenu, new RegExp(`^How should ${host} replies be polished\\?$`, 'm'));
-      assert.match(firstMenu, /Automatic polishing \(Normal\)/);
+      if (name === forward) {
+        assert.match(firstMenu, /Normal \(default\)[\s\S]*Turbo[\s\S]*Only when asked[\s\S]*Turn off polishing/);
+        assert.equal(box.cli(prefix, name, ['setup', '--advanced'], keys('\x03')), firstMenu);
+      } else {
+        assert.match(firstMenu, /Automatic polishing \(Normal\)[\s\S]*Polish only when asked/);
+      }
       assert.doesNotMatch(firstMenu, /Where do you|Configure both|Both hosts/i);
       if (name === reverse) box.cli(prefix, name, ['setup', '--host', 'codex'], { status: 2 });
     }
@@ -229,7 +234,7 @@ process.stdin.setRawMode = value => { process.stdin.isRaw = value; };
     const beforeCodex = codexSettings();
     const beforeAgy = read(box.agySettings);
     runForward('update');
-    assert.match(box.cli(codex, forward, ['setup'], keys('\r')), /● Keep current setting \(Off\)/);
+    assert.match(box.cli(codex, forward, ['setup'], keys('\r')), /❯ ● Turn off polishing \(current\)/);
     assert.deepEqual(codexSettings(), beforeCodex);
     assert.deepEqual(box.agyRows(), [{ ...agyEntry, enabled: false }]);
     assert.equal(read(box.agySettings), beforeAgy);

@@ -13,7 +13,7 @@ Agent Polish 提供两个插件。在 Codex 里聊天就装 **Codex Polish**，�
 | Codex | `npx @kyun.si/codex-polish@beta setup` | Gemini |
 | Antigravity | `npx @kyun.si/agy-polish@beta setup` | Codex |
 
-从源码试用时，在仓库根目录运行 `node scripts/install.mjs setup` 配置 Codex，或运行 `node scripts/agy-cli.mjs setup` 配置 Antigravity。想在终端选 Turbo、关闭润色或指定模型，可在 `setup` 后加 `--advanced`。两个聊天工具都用，就分别运行两次安装。两个插件独立保存设置，也会沿用旧版 `0.0.4-beta.1` 安装器保存的配置。
+从源码试用时，在仓库根目录运行 `node scripts/install.mjs setup` 配置 Codex，或运行 `node scripts/agy-cli.mjs setup` 配置 Antigravity。Codex 的 `setup` 会直接列出四种模式，再让你选择 Gemini 模型和思考等级。Antigravity 端用 `setup --advanced` 打开完整菜单。两个聊天工具都用，就分别运行两次安装。两个插件独立保存设置，也会沿用旧版 `0.0.4-beta.1` 安装器保存的配置。
 
 ### 在 Antigravity 里，让 Codex 润色
 

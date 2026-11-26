@@ -1,6 +1,6 @@
 {
   "name": "@kyun.si/codex-polish",
-  "version": "0.0.4-beta.2",
+  "version": "0.0.4-beta.3",
   "description": "Polish Codex replies with Gemini · 用 Gemini 润色 Codex 回复",
   "license": "Apache-2.0",
   "type": "module",

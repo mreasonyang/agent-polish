@@ -114,7 +114,7 @@ Codex agent 用宿主进程工具直接启动官方 `agy acp` 并逐条发送请
 
 在任意目录运行 `npx @kyun.si/codex-polish@beta setup` 即可从 npm 安装 Codex Polish。检查插件设置和本地环境可运行 `npx @kyun.si/codex-polish@beta doctor`，更新和卸载可运行 `npx @kyun.si/codex-polish@beta update` 和 `npx @kyun.si/codex-polish@beta uninstall`。Windows PowerShell 中使用 `npx.cmd`。从 GitHub 源码安装时，在仓库根目录运行 `node scripts/install.mjs setup`，其余子命令相同。[安装步骤](README.zh-CN.md#快速开始)
 
-macOS 用户也可以解压 Codex Polish 安装包，在 Finder 中双击安装脚本。首次交互安装选择自动润色或仅手动，使用已有设置或默认 Gemini 模型及思考等级。运行 `setup --advanced`，或在 Codex 聊天里说“配置回复润色”，可以打开完整模式和模型菜单。[Finder 安装脚本](../安装回复润色.command)
+macOS 用户也可以解压 Codex Polish 安装包，在 Finder 中双击安装脚本。交互式 `setup` 直接列出 Normal、Turbo、仅手动和关闭。开启润色后可以接着选 Gemini 模型和思考等级。之后可重跑 `setup`，或在 Codex 聊天里说“配置回复润色”。[Finder 安装脚本](../安装回复润色.command)
 
 `setup` 和 `update` 支持 `--install-agy`，在缺少 Antigravity CLI 时可自动安装。更新会跳过设置菜单，保留已保存的润色设置与插件启用状态。同一版本号的新构建也能用 `update` 覆盖或重试中断的更新。
 

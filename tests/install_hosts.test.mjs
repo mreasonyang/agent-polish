@@ -322,15 +322,32 @@ test('first terminal and Finder setups ask directly when to polish in their own 
     await t.test(name, async t => {
       const fixture = isolatedHosts(t, { agy: true });
       const session = terminal(fixture, command, args);
-      await session.waitFor(/Polish only when asked/);
+      await session.waitFor(reverse ? /Polish only when asked/ : /Turn off polishing/);
       assert.match(session.display(), reverse ? /provider configured in Codex/ : /question and Codex draft to Google Gemini/);
-      assert.match(session.display(), /❯ ● Automatic polishing \(Normal\)/);
-      assert.doesNotMatch(session.display(), /Choose a host|Configure both|Turbo|\bOff\b/i);
+      if (reverse) {
+        assert.match(session.display(), /❯ ● Automatic polishing \(Normal\)/);
+        assert.doesNotMatch(session.display(), /Turbo|\bOff\b/i);
+      } else {
+        assert.match(session.display(), /❯ ● Normal \(default\)[\s\S]*Turbo[\s\S]*Only when asked[\s\S]*Turn off polishing/);
+      }
+      assert.doesNotMatch(session.display(), /Choose a host|Configure both/i);
       assert.deepEqual(fixture.records(), []);
       assert.equal(fs.existsSync(installedForward(fixture)), false);
       assert.equal(fs.existsSync(installedReverse(fixture)), false);
 
-      session.write('\x1b[B\r');
+      if (reverse) {
+        session.write('\x1b[B\r');
+      } else {
+        session.write(name === 'Finder' ? '\x1b[B\x1b[B\r' : '\r');
+        await session.waitFor(/Ask Codex to list models available to my account/);
+        session.write('\r');
+        await session.waitFor(/Extra High/);
+        session.write('\x1b[B\r');
+        if (name === 'Codex terminal') {
+          await session.waitFor(/Enable with my own OpenAI API key/);
+          session.write('\r');
+        }
+      }
       if (name === 'Finder') {
         await session.waitFor(/Press Enter to close the installer/);
         session.write('\r');
@@ -341,12 +358,18 @@ test('first terminal and Finder setups ask directly when to polish in their own 
       if (reverse) {
         assert.deepEqual(withSettings(fixture, readSettings), { mode: 'manual', model: null, effort: null });
         assert.match(session.display(), /polish_reply[\s\S]*\/polish-settings/);
+        assert.doesNotMatch(session.display(), /Decisions|API key|(?:choose|select) (?:a |the )?model/i);
       } else {
-        assert.equal(fs.readFileSync(join(fixture.profile, forwardMode), 'utf8'), 'manual\n');
-        assert.equal(fs.existsSync(join(fixture.profile, 'codex-polish', 'settings', 'codex-polish.model')), false);
-        assert.match(session.display(), /To include chat history, trust UserPromptSubmit[\s\S]*Set up Codex Polish/);
+        const settings = join(fixture.profile, 'codex-polish', 'settings');
+        assert.equal(fs.readFileSync(join(settings, 'codex-polish.model'), 'utf8'), 'gemini-4-hydrogen high\n');
+        if (name === 'Finder') {
+          assert.equal(fs.readFileSync(join(fixture.profile, forwardMode), 'utf8'), 'manual\n');
+          assert.doesNotMatch(session.display(), /OpenAI Decisions API/);
+        } else {
+          assert.equal(fs.readFileSync(join(settings, 'codex-polish.rewrite-mode'), 'utf8'), 'normal\n');
+          assert.equal(fs.readFileSync(join(settings, 'codex-polish.openai-offer'), 'utf8'), 'seen\n');
+        }
       }
-      assert.doesNotMatch(session.display(), /Decisions|API key|(?:choose|select) (?:a |the )?model/i);
       assert.ok(!fixture.records().some(row => row.host === (reverse ? 'codex' : 'agy') && row.args[0] === 'plugin'));
       assert.ok(!fixture.records().some(row => row.method === 'model/list'));
     });
@@ -378,15 +401,21 @@ test('pressing Enter on ordinary setup keeps legacy settings and a disabled plug
       registration.plugin.enabled = false;
       write(forwardConfig, JSON.stringify(registration));
       write(reverseConfig, JSON.stringify({ plugins: { 'agy-polish': { enabled: false } } }));
-      const keep = new RegExp('❯ ● Keep current setting \\(' + mode + '\\)', 'i');
       for (const entry of [installer, reverseInstaller]) {
         const calls = fixture.records().length;
         const session = terminal(fixture, process.execPath, [join(root, entry), 'setup']);
+        const keep = entry === reverseInstaller ? new RegExp('❯ ● Keep current setting \\(' + mode + '\\)', 'i') :
+          (mode === 'off' ? /❯ ● Turn off polishing \(current\)/ : /❯ ● Turbo \(current\)/);
         await session.waitFor(keep);
         session.write('\r');
+        if (entry === installer && mode === 'turbo') {
+          await session.waitFor(/❯ ● Keep gemini-4-test · High/);
+          session.write('\r');
+        }
         await session.finish();
         assert.match(session.display(), /still disabled/i);
-        assert.doesNotMatch(session.display(), /(?:choose|select) (?:a |the )?model|codex login|MCP approval/i);
+        assert.doesNotMatch(session.display(), /codex login|MCP approval/i);
+        if (entry === reverseInstaller || mode === 'off') assert.doesNotMatch(session.display(), /Choose the Gemini model|Choose the Codex model/i);
         assert.ok(!fixture.records().slice(calls).some(row => row.method === 'model/list' || row.method === 'account/read'));
       }
       assert.equal(JSON.parse(fs.readFileSync(forwardConfig)).plugin.enabled, false);
@@ -402,8 +431,8 @@ test('cancelling the legacy combined setup after Codex reports that Antigravity 
 }, async t => {
   const fixture = isolatedHosts(t, { agy: true });
   const combined = terminal(fixture, process.execPath, [join(root, installer), 'setup', '--host', 'both']);
-  await combined.waitFor(/Polish only when asked/);
-  combined.write('\r');
+  await combined.waitFor(/Turn off polishing/);
+  combined.write('\x1b[B\x1b[B\x1b[B\r');
   await combined.waitFor(/How should Antigravity replies be polished/);
   combined.write('\x1b');
   await combined.finish();

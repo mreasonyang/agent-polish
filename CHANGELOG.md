@@ -2,6 +2,11 @@
 
 [中文使用说明](docs/README.zh-CN.md) · [English README](README.md)
 
+## Codex Polish 0.0.4-beta.3
+
+- Codex 的默认 `setup` 恢复四种模式、Gemini 模型和思考等级的选择。Normal 模式下可选择配置 OpenAI 检查或跳过。
+- Codex setup again offers all four polishing modes, the Gemini model and thinking level. Normal mode also offers the optional OpenAI check.
+
 ## 0.0.4-beta.2
 
 - 项目更名为 Agent Polish。Codex 用户安装 `@kyun.si/codex-polish`，Antigravity 用户安装 `@kyun.si/agy-polish`。每个包独立管理自己的插件，并沿用旧 beta 保存的设置。

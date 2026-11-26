@@ -12,7 +12,7 @@ npx @kyun.si/agy-polish@beta setup
 
 In Windows PowerShell, use `npx.cmd` in place of `npx`.
 
-Choose Normal, Turbo, Manual, or Off. With polishing on, you can keep the Codex default or choose a model and a supported reasoning effort from your provider’s model list. Run `setup` again to change your choices, or use `/polish-settings` in Antigravity.
+Setup starts with **Manual · polish only when asked**. Press Enter to keep it, or select Normal, Turbo, or Off. AGY Polish uses `gpt-6.2-sol` with Extra High reasoning (`xhigh`) by default. In setup, you can also follow your local Codex settings or choose a model and reasoning effort from your provider. Run `setup` again to change your choices, or use `/polish-settings` in Antigravity.
 
 Start a new `agy` chat and try `/polish Rewrite the previous reply in two sentences.` If Antigravity asks for permission, allow the `polish_reply` tool.
 

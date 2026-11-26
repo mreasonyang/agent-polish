@@ -97,7 +97,7 @@ export function changeAgyPlugin(action, target = PLUGIN) {
   pluginCommand([action, target]);
 }
 
-export async function loadAgySettings() {
+export async function loadAgySettings(options) {
   let settings;
   try {
     settings = await import(new URL('scripts/settings.mjs', SOURCE));
@@ -106,7 +106,7 @@ export async function loadAgySettings() {
       'Could not load agy-polish settings. Download a fresh copy of the full package.');
   }
   try {
-    return { settings, current: await settings.readSettings() };
+    return { settings, current: await settings.readSettings(options) };
   } catch {
     throw error('无法读取 agy-polish 设置。请检查设置目录中的 settings.json 是否有效、可读。',
       'Could not read agy-polish settings. Check that settings.json is valid and readable.');

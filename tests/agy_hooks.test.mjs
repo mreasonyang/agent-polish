@@ -26,7 +26,7 @@ test('native Antigravity hooks tell the model to answer ordinary questions direc
     lastUserInput: '请用一句话解释 DNS。'
   };
   for (const mode of ['manual', 'off']) {
-    withSettings(fixture, 'await settings.writeSettings({ mode: process.argv[1] });', [mode]);
+    if (mode === 'off') withSettings(fixture, 'await settings.writeSettings({ mode: "off" });');
     const messages = handlers.flatMap(handler => {
       assert.equal(handler.type, 'command');
       assert.equal(typeof handler.command, 'string');

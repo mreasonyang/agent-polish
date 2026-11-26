@@ -37,26 +37,31 @@ function agyEffortLabel(effort, lang) {
 
 async function chooseAgyModel(settings, { model, effort }, { signedIn }, lang) {
   const t = (zh, en) => tr(zh, en, lang);
-  const defaultModel = t('Codex 默认', 'Codex default');
-  const saved = (model ?? defaultModel) + (effort ? ' · ' + agyEffortLabel(effort, lang) : '');
+  const { DEFAULT_MODEL, DEFAULT_EFFORT, FOLLOW_CODEX } = settings;
+  const usingRecommended = model === DEFAULT_MODEL && effort === DEFAULT_EFFORT;
+  const followingCodex = model === null && effort === null;
+  const initialChoice = usingRecommended ? 'recommended' : followingCodex ? 'follow' : 'keep';
   const choices = [
-    { id: 'default', name: defaultModel },
-    { id: 'keep', name: t('保留当前设置', 'Keep current settings') + ' · ' + saved },
-    { id: 'lookup', name: signedIn
-      ? t('选择账号可用模型和思考等级…', 'Choose a model and reasoning effort from my account…')
-      : t('从 Codex 模型列表选择模型和思考等级…', 'Choose a model and reasoning effort from the Codex model list…') }
+    { id: 'recommended', name: DEFAULT_MODEL + ' · ' + agyEffortLabel(DEFAULT_EFFORT, lang) + t('（默认）', ' (default)') },
+    { id: 'follow', name: t('跟随本机 Codex 配置', 'Follow local Codex configuration') }
   ];
+  if (initialChoice === 'keep') {
+    const saved = (model ?? t('Codex 默认', 'Codex default')) + (effort ? ' · ' + agyEffortLabel(effort, lang) : '');
+    choices.push({ id: 'keep', name: t('保留当前设置', 'Keep current settings') + ' · ' + saved });
+  }
+  choices.push({ id: 'lookup', name: signedIn
+    ? t('选择账号可用模型和思考等级…', 'Choose a model and reasoning effort from my account…')
+    : t('从 Codex 模型列表选择模型和思考等级…', 'Choose a model and reasoning effort from the Codex model list…') });
   const unavailable = signedIn
-    ? t('没能读取账号模型。可使用 Codex 默认或保留当前设置。',
-      'Could not read the account model list. You can use the Codex default or keep your settings.')
-    : t('没能读取 Codex 模型列表。可使用 Codex 默认或保留当前设置。',
-      'Could not read the Codex model list. You can use the Codex default or keep your settings.');
+    ? t('没能读取账号模型。', 'Could not read the account model list.')
+    : t('没能读取 Codex 模型列表。', 'Could not read the Codex model list.');
   while (true) {
     const choice = await chooseOption(t('选择改写用的 Codex 模型', 'Choose the Codex model for rewrites'),
-      choices, lang, process.stdin, process.stdout, model || effort ? 'keep' : 'default');
+      choices, lang, process.stdin, process.stdout, initialChoice);
     if (!choice) return null;
-    if (choice === 'keep') return {};
-    if (choice === 'default') return { model: null, effort: null };
+    if (choice === initialChoice) return {};
+    if (choice === 'recommended') return { model: null, effort: null };
+    if (choice === 'follow') return { model: FOLLOW_CODEX, effort: FOLLOW_CODEX };
     let models;
     const controller = new AbortController();
     try {
@@ -74,8 +79,7 @@ async function chooseAgyModel(settings, { model, effort }, { signedIn }, lang) {
     }
     if (!models.length) {
       console.log(signedIn ? unavailable
-        : t('Codex 模型列表中没有可选模型。可使用 Codex 默认或保留当前设置。',
-          'The Codex model list has no models to choose from. You can use the Codex default or keep your settings.'));
+        : t('Codex 模型列表中没有可选模型。', 'The Codex model list has no models to choose from.'));
       continue;
     }
     const defaultLabel = signedIn ? t('（账号默认）', ' (account default)') : t('（Codex 默认）', ' (Codex default)');
@@ -84,16 +88,19 @@ async function chooseAgyModel(settings, { model, effort }, { signedIn }, lang) {
       name: (models.some(other => other.id !== item.id && other.name === item.name) ? item.name + ' (' + item.id + ')' : item.name) +
         (item.isDefault ? defaultLabel : '')
     }));
+    const initialModel = models.find(item => item.id === model) ?? models.find(item => item.isDefault);
     const id = await chooseOption(t('用哪个模型改写？', 'Which model should rewrite your replies?'), rows,
-      lang, process.stdin, process.stdout, model ?? models.find(item => item.isDefault)?.id);
+      lang, process.stdin, process.stdout, initialModel?.id);
     if (!id) return null;
     const selected = models.find(item => item.id === id);
-    if (!selected.efforts.length) return { model: id, effort: null };
+    if (!selected.efforts.length) return { model: id, effort: id === DEFAULT_MODEL ? FOLLOW_CODEX : null };
     const efforts = selected.efforts.map(id => ({
       id,
       name: agyEffortLabel(id, lang) + (id === selected.defaultEffort ? t('（模型默认）', ' (model default)') : '')
     }));
-    const initial = id === model && selected.efforts.includes(effort) ? effort : selected.defaultEffort;
+    const savedEffort = id === model && selected.efforts.includes(effort) ? effort : null;
+    const recommendedEffort = id === DEFAULT_MODEL && selected.efforts.includes(DEFAULT_EFFORT) ? DEFAULT_EFFORT : null;
+    const initial = savedEffort ?? recommendedEffort ?? selected.defaultEffort;
     const level = await chooseOption(t('Codex 思考等级', 'Codex reasoning effort'), efforts,
       lang, process.stdin, process.stdout, initial);
     return level ? { model: id, effort: level } : null;
@@ -121,9 +128,7 @@ async function prepareAgySetup(interactive, lang) {
     if (provider.ready || provider.canListModels) {
       const model = await chooseAgyModel(settings, current, provider, lang);
       if (!model) return null;
-      if (Object.hasOwn(model, 'model') && (model.model !== current.model || model.effort !== current.effort)) {
-        Object.assign(patch, model);
-      }
+      Object.assign(patch, model);
     }
   }
   return { settings, patch, mode, provider };
@@ -131,9 +136,12 @@ async function prepareAgySetup(interactive, lang) {
 
 async function doctorAgy(lang) {
   const t = (zh, en) => tr(zh, en, lang);
-  const { current: { mode, model, effort } } = await loadAgySettings();
-  console.log(t('Antigravity 润色模式：', 'Antigravity polishing mode: ') + t(...agyModeLabels[mode]));
   const entry = installedAgy();
+  // Doctor describes the plugin Antigravity is running, even before the user updates it.
+  const legacyDefaults = entry && compareVersions(entry.version, '0.0.4-beta.6',
+    () => fail('没法确定 agy-polish 的版本。', "Couldn't determine the agy-polish version.")) < 0;
+  const { current: { mode, model, effort } } = await loadAgySettings({ legacyDefaults });
+  console.log(t('Antigravity 润色模式：', 'Antigravity polishing mode: ') + t(...agyModeLabels[mode]));
   if (entry) {
     console.log(t('agy-polish 已安装，版本 ', 'agy-polish is installed, version ') + entry.version +
       (entry.enabled ? '' : t('（已停用）', ' (disabled)')));

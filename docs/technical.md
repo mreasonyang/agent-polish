@@ -8,9 +8,9 @@ Agent Polish 的两个插件支持 Windows、macOS 和 Linux。本地脚本使�
 
 运行 `npx @kyun.si/agy-polish@beta setup` 安装 Antigravity 插件。源码入口是 `node scripts/agy-cli.mjs setup`。插件提供 `/polish`、聊天设置入口及本地 MCP 工具 `polish_reply`。Gemini 在交付最终消息前将拟好的草稿作为工具参数。工具通过标准输入向本机 Codex CLI 提交编辑材料，成功后将完整正文交回同一轮聊天。编辑通常使用 `codex exec`，需要在内存中衔接 ChatGPT 登录时则使用临时的 Codex app-server 会话。
 
-Antigravity 的模式、Codex 模型和推理强度保存在 `~/.gemini/config/agy-polish/settings.json`。安装器和聊天设置共用这些值。可通过 `CODEX_POLISH_AGY_SETTINGS_DIR` 指定独立的设置目录，相对路径从用户主目录解析。Normal 让 Codex 按需保留清楚的原稿，Turbo 请求改写，关闭时保留模型设置。
+Antigravity 的模式、Codex 模型和推理强度保存在 `~/.gemini/config/agy-polish/settings.json`。安装器和聊天设置共用这些值。可通过 `CODEX_POLISH_AGY_SETTINGS_DIR` 指定独立的设置目录，相对路径从用户主目录解析。默认仅手动，只有点名润色才调用 Codex。Normal 让 Codex 按需保留清楚的原稿，Turbo 请求改写，关闭时保留模型设置。
 
-编辑器使用本机 Codex 配置的模型提供商。在安装向导或聊天里，可以沿用 Codex 默认设置，也可以选择模型和它支持的思考等级。自定义提供商没有模型目录时，只列出其配置中指定的模型。编辑进程在本轮临时目录中运行，并关闭其插件和 hooks，以免再次触发正向润色。Antigravity 管理本机对话记录。其余章节描述在 Codex 中调用 Gemini 的流程。
+编辑器使用本机 Codex 配置的模型提供商。AgY Polish 默认使用 `gpt-6.2-sol` 和极高（`xhigh`）思考等级。在安装向导或聊天里，也可以选择跟随本机 Codex 设置，或选择模型和它支持的思考等级。自定义提供商没有模型目录时，只列出其配置中指定的模型。编辑进程在本轮临时目录中运行，并关闭其插件和 hooks，以免再次触发正向润色。Antigravity 管理本机对话记录。其余章节描述在 Codex 中调用 Gemini 的流程。
 
 ## 润色设置
 
@@ -20,7 +20,7 @@ Antigravity 的模式、Codex 模型和推理强度保存在 `~/.gemini/config/a
 
 | 配置文件 | 取值范围与默认值 | 运行行为 |
 | --- | --- | --- |
-| `codex-polish.mode` | `auto`（默认）、`manual`、`off` | 未保存模式时使用 `auto`。在 Codex 的 **设置 → Hooks** 或 CLI `/hooks` 中信任插件的 `UserPromptSubmit`，再新开聊天，普通提问就会触发润色流程。`manual` 仅在点名时触发。两种模式都可以点名润色本轮问答，无需 hook。`off` 关闭自动和点名改写，不向 Gemini 或 OpenAI Decisions 发送内容，并保留已保存的模型、思考等级、提示词和密钥。 |
+| `codex-polish.mode` | `manual`（默认）、`auto`、`off` | 选择 `auto` 后，在 Codex 的 **设置 → Hooks** 或 CLI `/hooks` 中信任插件的 `UserPromptSubmit`，再新开聊天，普通提问就会触发润色流程。`manual` 仅在点名时触发。两种模式都可以点名润色本轮问答，无需 hook。`off` 关闭自动和点名改写，不向 Gemini 或 OpenAI Decisions 发送内容，并保留已保存的模型、思考等级、提示词和密钥。 |
 | `codex-polish.rewrite-mode` | `normal`（内置默认值）、`turbo` | 仅用于自动 hook。两种模式都无须 OpenAI 密钥，未启用检查时都直接交由 Gemini 处理。使用内置提示词时，`normal` 可保留清晰原稿并支持可选的 OpenAI Decisions 检查，`turbo` 则跳过 Decisions 并请 Gemini 改写草稿。 |
 | `codex-polish.model` | Gemini 模型和思考等级，默认 `gemini-4-hydrogen`、`medium` | 选模型时可以选择该模型支持的思考等级。普通和 Turbo 模式都使用这组设置。若下次改写时模型或等级已不可用，本轮保留原稿。 |
 | `codex-polish.history-turns` | `0`–`10` 的整数，默认 `2` | 控制 Gemini 改写整条回复时附带的最近完整问答轮数，从下次改写起生效。设为 `0` 就不附历史问答。保存大于 `10` 的值会报错。手动写入无效值时，插件会报告配置错误和可用范围。无论手动还是自动模式，读取历史都需要受信任的 `UserPromptSubmit` hook。 |

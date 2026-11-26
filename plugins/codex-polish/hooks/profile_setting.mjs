@@ -28,7 +28,7 @@ function accessSetting(operation, target, value, checkStagedFile) {
       fs.closeSync(fd);
     }
   }
-  if (!['write', 'remove'].includes(operation)) throw new Error('invalid operation');
+  if (!['write', 'create', 'remove'].includes(operation)) throw new Error('invalid operation');
   if (operation === 'remove') {
     const current = fs.lstatSync(target, { throwIfNoEntry: false });
     if (current && !current.isFile())
@@ -47,8 +47,14 @@ function accessSetting(operation, target, value, checkStagedFile) {
     } finally {
       fs.closeSync(fd);
     }
-    replaceSettingFile(temporary, target);
-    published = true;
+    if (operation === 'create') {
+      // A concurrent explicit setting wins, and readers see only a complete value.
+      try { fs.linkSync(temporary, target); }
+      catch (error) { if (error.code !== 'EEXIST') throw error; }
+    } else {
+      replaceSettingFile(temporary, target);
+      published = true;
+    }
   } finally {
     if (!published) fs.rmSync(temporary, { force: true });
   }
@@ -102,10 +108,11 @@ export function readProfileSetting(filename, maxBytes) {
   }
 }
 
-export function writeProfileSetting(filename, value) {
+export function writeProfileSetting(filename, value, { ifMissing = false } = {}) {
   const directory = profileSettingsDirectory(value !== null);
+  const operation = value === null ? 'remove' : ifMissing ? 'create' : 'write';
   try {
-    accessSettingFile(directory, value === null ? 'remove' : 'write', filename, value);
+    accessSettingFile(directory, operation, filename, value);
   } catch (error) {
     if (value !== null || error.code !== 'ENOENT') throw error;
   }

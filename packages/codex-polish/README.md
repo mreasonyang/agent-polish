@@ -12,7 +12,7 @@ npx @kyun.si/codex-polish@beta setup
 
 In Windows PowerShell, use `npx.cmd` in place of `npx`.
 
-Choose Normal, Turbo, manual polishing or Off. When polishing is on, setup also lets you choose a Gemini model and thinking level. For automatic polishing, trust `UserPromptSubmit` in Codex’s `/hooks` menu, then start a new chat. To try a manual edit, ask Codex to polish its last reply. To change these settings later, run `setup` again or say **“Set up Codex Polish”** in chat.
+Setup starts with **Manual · polish only when asked**. Press Enter to keep it, or select Normal, Turbo, or Off. When polishing is on, setup also lets you choose a Gemini model and thinking level. For automatic polishing, trust `UserPromptSubmit` in Codex’s `/hooks` menu, then start a new chat. To try a manual edit, ask Codex to polish its last reply. To change these settings later, run `setup` again or say **“Set up Codex Polish”** in chat.
 
 Gemini receives the draft and its question for a full reply rewrite. A trusted hook can include recent exchanges from the same chat. If you enable the optional OpenAI Decisions check in Normal mode, OpenAI evaluates the draft before Gemini rewrites it.
 

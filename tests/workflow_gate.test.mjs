@@ -5,10 +5,11 @@ import path from 'node:path';
 import { json, makeProject, plugin, run, windows, runHookCommand, agyName, useTestProfile } from './hook_fixture.mjs';
 import { saveOpenAIKey, clearOpenAIKey } from '../plugins/codex-polish/hooks/openai_credentials.mjs';
 
-function fixture(t, { savedKey = true } = {}) {
+function fixture(t, { savedKey = true, automatic = true } = {}) {
   const f = makeProject(t), installed = path.join(f.home, 'installed'), bin = path.join(f.home, 'bin');
   useTestProfile(t, f.env.CODEX_HOME);
   fs.mkdirSync(f.settings, { recursive: true });
+  if (automatic) fs.writeFileSync(f.mode, 'auto');
   if (savedKey) saveOpenAIKey('plugin-test-key');
   fs.cpSync(plugin, installed, { recursive: true });
   fs.mkdirSync(bin);
@@ -40,6 +41,20 @@ export async function decide(args, stream) {
   const logged = () => fs.readFileSync(calls, 'utf8').trim().split('\n');
   return { ...f, installed, bin, agy, env, calls, script, invoke, judge, check, helper, logged };
 }
+
+test('a fresh profile only accepts explicit rewrites even after setting an automatic strategy', t => {
+  const { check, judge, invoke, calls, mode } = fixture(t, { automatic: false });
+  for (const strategy of ['normal', 'turbo']) {
+    if (strategy === 'turbo') assert.equal(invoke(['set-rewrite-mode', strategy])[0], 0);
+    const status = check();
+    assert.equal(status.mode, 'manual');
+    assert.equal(status.rewrite_mode, strategy);
+    assert.equal(status.decisions_enabled, false);
+    assert.deepEqual(judge('auto'), [0, { action: 'keep', reason: 'trigger_mode' }]);
+    assert.deepEqual(judge('explicit'), [0, { action: 'rewrite', reason: 'direct_acp', route: 'acp' }]);
+    assert.ok(!fs.existsSync(calls) && !fs.existsSync(mode));
+  }
+});
 
 test('the interactive style check consumes one host record and keeps its contents private in stdout', t => {
   const f = fixture(t);
@@ -238,7 +253,7 @@ test('explicit requests honor the trigger mode and runtime checks independently 
     fs.writeFileSync(mode, value);
     assert.equal(judge('explicit')[1].reason, reason);
   }
-  fs.unlinkSync(mode);
+  fs.writeFileSync(mode, 'auto');
   fs.writeFileSync(setting, 'broken');
   assert.equal(judge('auto')[1].reason, 'rewrite_mode_invalid');
   assert.equal(judge('explicit')[1].route, 'acp');
@@ -326,7 +341,8 @@ test('a profile setting change or credential removal while stdin is being read p
     assert.equal(decision.action, 'keep');
     assert.equal(decision.reason, reason);
     assert.equal(fs.existsSync(env.FAULT_TEST_CALLS), false);
-    if (value !== null) fs.unlinkSync(file);
+    if (file === mode) fs.writeFileSync(mode, 'auto');
+    else if (value !== null) fs.unlinkSync(file);
   }
 });
 

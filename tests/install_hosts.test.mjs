@@ -265,6 +265,24 @@ hostTest('reverse doctor with polishing off skips the Codex CLI', t => {
   assert.ok(!fixture.records().some(row => row.host === 'codex'));
 });
 
+hostTest('updating an older Antigravity installation without a saved mode uses Manual', t => {
+  const fixture = isolatedHosts(t, { agy: true });
+  const legacy = join(fixture.base, 'legacy agy-polish');
+  write(join(legacy, 'plugin.json'), JSON.stringify({ name: 'agy-polish', version: '0.0.4-beta.5' }));
+  const registration = fixture.run(join(fixture.env.PATH, 'agy'), ['plugin', 'install', legacy]);
+  assert.equal(registration.status, 0, registration.stderr || registration.stdout);
+  assert.ok(!fs.existsSync(fixture.reverseSettings));
+
+  const before = install(fixture, ['doctor'], root, reverseInstaller);
+  assert.match(before, /Antigravity polishing mode: Normal/);
+  assert.match(before, /Codex model: Codex default/);
+  install(fixture, ['update'], root, reverseInstaller);
+  const after = install(fixture, ['doctor'], root, reverseInstaller);
+  assert.match(after, /Antigravity polishing mode: Manual · polish only when asked/);
+  assert.match(after, /Codex model: gpt-6\.2-sol · Extra High/);
+  assert.ok(!fs.existsSync(fixture.reverseSettings));
+});
+
 const python = '/usr/bin/python3';
 
 function terminal(fixture, cmd, args) {
@@ -311,7 +329,7 @@ sys.exit(os.waitstatus_to_exitcode(pty.spawn(sys.argv[1:], master_read=read_mast
   };
 }
 
-test('first terminal and Finder setups ask directly when to polish in their own host', {
+test('first terminal and Finder setups preselect Manual in their own host', {
   skip: (windows || !fs.existsSync(python)) && 'requires POSIX Python 3 for a pseudo-terminal'
 }, async t => {
   for (const [name, command, args, reverse] of [
@@ -324,30 +342,21 @@ test('first terminal and Finder setups ask directly when to polish in their own 
       const session = terminal(fixture, command, args);
       await session.waitFor(reverse ? /Off · turn off polishing/ : /Turn off polishing/);
       assert.match(session.display(), reverse ? /provider configured in Codex/ : /question and Codex draft to Google Gemini/);
-      if (reverse) {
-        assert.match(session.display(), /❯ ● Normal · rewrite when useful \(current\)[\s\S]*Turbo[\s\S]*Manual[\s\S]*Off/);
-      } else {
-        assert.match(session.display(), /❯ ● Normal \(default\)[\s\S]*Turbo[\s\S]*Only when asked[\s\S]*Turn off polishing/);
-      }
+      assert.match(session.display(), /○ Normal[\s\S]*○ Turbo[\s\S]*❯ ● Manual · polish only when asked[\s\S]*○ (?:Off · turn off polishing|Turn off polishing)/);
       assert.doesNotMatch(session.display(), /Choose a host|Configure both/i);
       assert.deepEqual(fixture.records(), []);
       assert.equal(fs.existsSync(installedForward(fixture)), false);
       assert.equal(fs.existsSync(installedReverse(fixture)), false);
 
+      session.write('\r');
       if (reverse) {
-        session.write('\x1b[B\x1b[B\r');
-        await session.waitFor(/❯ ● Codex default/);
+        await session.waitFor(/❯ ● gpt-6\.2-sol · Extra High \(default\)/);
         session.write('\r');
       } else {
-        session.write(name === 'Finder' ? '\x1b[B\x1b[B\r' : '\r');
         await session.waitFor(/Ask Codex to list models available to my account/);
         session.write('\r');
         await session.waitFor(/Extra High/);
         session.write('\x1b[B\r');
-        if (name === 'Codex terminal') {
-          await session.waitFor(/Enable with my own OpenAI API key/);
-          session.write('\r');
-        }
       }
       if (name === 'Finder') {
         await session.waitFor(/Press Enter to close the installer/);
@@ -357,19 +366,14 @@ test('first terminal and Finder setups ask directly when to polish in their own 
       assert.equal(fs.existsSync(installedForward(fixture)), !reverse, session.display());
       assert.equal(fs.existsSync(installedReverse(fixture)), reverse, session.display());
       if (reverse) {
-        assert.deepEqual(withSettings(fixture, readSettings), { mode: 'manual', model: null, effort: null });
+        assert.deepEqual(withSettings(fixture, readSettings), { mode: 'manual', model: 'gpt-6.2-sol', effort: 'xhigh' });
         assert.match(session.display(), /polish_reply[\s\S]*\/polish-settings/);
         assert.doesNotMatch(session.display(), /Decisions|API key|Choose the Gemini model/i);
       } else {
         const settings = join(fixture.profile, 'codex-polish', 'settings');
         assert.equal(fs.readFileSync(join(settings, 'codex-polish.model'), 'utf8'), 'gemini-4-hydrogen high\n');
-        if (name === 'Finder') {
-          assert.equal(fs.readFileSync(join(fixture.profile, forwardMode), 'utf8'), 'manual\n');
-          assert.doesNotMatch(session.display(), /OpenAI Decisions API/);
-        } else {
-          assert.equal(fs.readFileSync(join(settings, 'codex-polish.rewrite-mode'), 'utf8'), 'normal\n');
-          assert.equal(fs.readFileSync(join(settings, 'codex-polish.openai-offer'), 'utf8'), 'seen\n');
-        }
+        assert.match(install(fixture, ['doctor']), /When to polish: only when asked/);
+        assert.doesNotMatch(session.display(), /OpenAI Decisions API/);
       }
       assert.ok(!fixture.records().some(row => row.host === (reverse ? 'codex' : 'agy') && row.args[0] === 'plugin'));
       assert.ok(!fixture.records().some(row => row.method === 'model/list'));
@@ -377,17 +381,54 @@ test('first terminal and Finder setups ask directly when to polish in their own 
   }
 });
 
+test('Antigravity setup remembers an explicit choice to follow local Codex configuration', {
+  skip: (windows || !fs.existsSync(python)) && 'requires POSIX Python 3 for a pseudo-terminal'
+}, async t => {
+  const fixture = isolatedHosts(t, { agy: true });
+  const setup = (...args) => terminal(fixture, process.execPath, [join(root, reverseInstaller), ...args]);
+  const session = setup('setup', '--advanced');
+  await session.waitFor(/Off · turn off polishing/);
+  session.write('\r');
+  await session.waitFor(/○ Follow local Codex configuration/);
+  session.write('\x1b[B\r');
+  await session.finish();
+  const settingsPath = join(fixture.reverseSettings, 'settings.json');
+  const saved = fs.readFileSync(settingsPath, 'utf8');
+  assert.deepEqual(JSON.parse(saved), { mode: 'manual', model: 'codex-default', effort: 'codex-default' });
+  assert.deepEqual(withSettings(fixture, readSettings), { mode: 'manual', model: null, effort: null });
+
+  const rerun = setup();
+  await rerun.waitFor(/Off · turn off polishing/);
+  rerun.write('\r');
+  await rerun.waitFor(/❯ ● Follow local Codex configuration/);
+  rerun.write('\r');
+  await rerun.finish();
+  assert.equal(fs.readFileSync(settingsPath, 'utf8'), saved);
+
+  const reset = setup();
+  await reset.waitFor(/Off · turn off polishing/);
+  reset.write('\r');
+  await reset.waitFor(/❯ ● Follow local Codex configuration/);
+  reset.write('\x1b[A\r');
+  await reset.finish();
+  assert.deepEqual(JSON.parse(fs.readFileSync(settingsPath, 'utf8')), { mode: 'manual', model: null, effort: null });
+  assert.deepEqual(withSettings(fixture, readSettings), { mode: 'manual', model: 'gpt-6.2-sol', effort: 'xhigh' });
+  withSettings(fixture, writeSettings, [JSON.stringify({ model: 'fixture-model' })]);
+  assert.deepEqual(withSettings(fixture, readSettings), { mode: 'manual', model: 'fixture-model', effort: null });
+  assert.ok(!fixture.records().some(row => row.method === 'model/list'));
+});
+
 test('pressing Enter on ordinary setup keeps legacy settings and a disabled plugin', {
   skip: (windows || !fs.existsSync(python)) && 'requires POSIX Python 3 for a pseudo-terminal'
 }, async t => {
-  for (const mode of ['off', 'turbo']) {
+  for (const mode of ['off', 'normal', 'turbo']) {
     await t.test(mode, async t => {
       const fixture = isolatedHosts(t, { agy: true });
       const profileSettings = join(fixture.profile, 'codex-polish', 'settings');
       const key = join(fixture.profile, 'codex-polish', 'credentials', 'openai.key');
       const forwardSettings = new Map([
         [join(fixture.profile, forwardMode), mode === 'off' ? 'off\n' : 'auto\n'],
-        [join(profileSettings, 'codex-polish.rewrite-mode'), 'turbo\n'],
+        [join(profileSettings, 'codex-polish.rewrite-mode'), (mode === 'normal' ? 'normal' : 'turbo') + '\n'],
         [join(profileSettings, 'codex-polish.model'), 'gemini-4-test high\n'],
         [key, 'synthetic-key-for-preservation-test\n']
       ]);
@@ -405,11 +446,11 @@ test('pressing Enter on ordinary setup keeps legacy settings and a disabled plug
       for (const entry of [installer, reverseInstaller]) {
         const calls = fixture.records().length;
         const session = terminal(fixture, process.execPath, [join(root, entry), 'setup']);
-        const keep = entry === reverseInstaller ? new RegExp('❯ ● ' + mode + ' · [^\\n]*\\(current\\)', 'i') :
-          (mode === 'off' ? /❯ ● Turn off polishing \(current\)/ : /❯ ● Turbo \(current\)/);
+        const modeLabel = mode === 'off' && entry === installer ? 'Turn off polishing' : mode;
+        const keep = new RegExp('❯ ● ' + modeLabel + '[^\\r\\n]* \\(current\\)', 'i');
         await session.waitFor(keep);
         session.write('\r');
-        if (mode === 'turbo') {
+        if (mode !== 'off') {
           await session.waitFor(entry === reverseInstaller ? /❯ ● Keep current settings · fixture-model · Extra High/ :
             /❯ ● Keep gemini-4-test · High/);
           session.write('\r');
@@ -435,8 +476,8 @@ test('cancelling the legacy combined setup after Codex reports that Antigravity 
 }, async t => {
   const fixture = isolatedHosts(t, { agy: true });
   const combined = terminal(fixture, process.execPath, [join(root, installer), 'setup', '--host', 'both']);
-  await combined.waitFor(/Turn off polishing/);
-  combined.write('\x1b[B\x1b[B\x1b[B\r');
+  await combined.waitFor(/❯ ● Manual · polish only when asked[\s\S]*Turn off polishing/);
+  combined.write('\x1b[B\r');
   await combined.waitFor(/How should Antigravity replies be polished/);
   combined.write('\x1b');
   await combined.finish();
@@ -458,8 +499,8 @@ test('cancelling the legacy combined setup after Codex reports that Antigravity 
 test('default Antigravity setup selects a model and effort', {
   skip: (windows || !fs.existsSync(python)) && 'requires POSIX Python 3 for a pseudo-terminal'
 }, async t => {
-  for (const [name, provider, lookup] of [
-    ['ChatGPT account', {}, /from my account/i],
+  for (const [name, provider, lookup, modelChoice] of [
+    ['ChatGPT account', { catalogDefaultModel: 'gpt-6.2-sol' }, /from my account/i],
     ['local provider', {
       config: syntheticConfig({ model_catalog_url: 'http://127.0.0.1:1/v1/models' }),
       accountResponse: noOpenaiAccount, loginStatus: 1
@@ -467,31 +508,54 @@ test('default Antigravity setup selects a model and effort', {
     ['provider with external authentication', {
       config: syntheticConfig({ auth: { command: 'test-credential-helper' }, model_catalog_url: 'http://127.0.0.1:1/v1/models' }),
       accountResponse: noOpenaiAccount, loginStatus: 1
-    }, /from the Codex model list/i]
+    }, /from the Codex model list/i, 'fixture-other']
   ]) {
     await t.test(name, async t => {
       const fixture = isolatedHosts(t, { agy: true });
       fixture.env.POLISH_TEST_CODEX_PROVIDER = JSON.stringify(provider);
       const forward = join(fixture.profile, forwardMode);
       write(forward, 'manual\n');
-      const session = terminal(fixture, process.execPath, [join(root, reverseInstaller), 'setup']);
-      await session.waitFor(/Turbo[\s\S]*\bOff\b/i);
-      session.write('\x1b[B\r');
+      const session = terminal(fixture, process.execPath, [join(root, reverseInstaller)]);
+      await session.waitFor(/❯ ● Manual · polish only when asked[\s\S]*\bOff\b/);
+      session.write('\x1b[A\r');
       await session.waitFor(lookup);
       session.write('\x1b[B\x1b[B\r');
-      await session.waitFor(/模型 Café[\s\S]*Other model/);
-      session.write('\r');
-      await session.waitFor(/Codex reasoning effort[\s\S]*(?:Extra High|xhigh)/i);
-      session.write('\x1b[B\r');
+      await session.waitFor(/❯ ● 模型 Café \((?:account|Codex) default\)[\s\S]*Other model/);
+      const model = modelChoice ?? provider.catalogDefaultModel ?? 'fixture-model';
+      session.write(model === 'fixture-other' ? '\x1b[B\r' : '\r');
+      const initialEffort = {
+        'gpt-6.2-sol': /❯ ● Extra High/,
+        'fixture-model': /❯ ● Low \(model default\)[\s\S]*Extra High/,
+        'fixture-other': /❯ ● Medium \(model default\)/
+      };
+      await session.waitFor(initialEffort[model]);
+      session.write(model === 'fixture-model' ? '\x1b[B\r' : '\r');
       await session.finish();
       assert.ok(fs.existsSync(installedReverse(fixture)));
       assert.equal(fs.existsSync(installedForward(fixture)), false);
       assert.equal(fs.readFileSync(forward, 'utf8'), 'manual\n');
-      assert.deepEqual(withSettings(fixture, readSettings), { mode: 'turbo', model: 'fixture-model', effort: 'xhigh' });
+      assert.deepEqual(withSettings(fixture, readSettings), {
+        mode: 'turbo', model, effort: model === 'fixture-other' ? 'medium' : 'xhigh'
+      });
       assert.doesNotMatch(session.display(), /\bDecisions\b|API key|codex login/i);
       const pages = fixture.records().filter(row => row.method === 'model/list');
       assert.equal(pages.length, 2);
       if (provider.config) assert.ok(pages.every(row => row.params.modelProvider === 'synthetic'));
+
+      if (model === 'gpt-6.2-sol') {
+        withSettings(fixture, writeSettings, [JSON.stringify({ effort: 'low' })]);
+        const rerun = terminal(fixture, process.execPath, [join(root, reverseInstaller)]);
+        await rerun.waitFor(/Turbo[\s\S]*\bOff\b/i);
+        rerun.write('\r');
+        await rerun.waitFor(/❯ ● Keep current settings · gpt-6\.2-sol · Low[\s\S]*from my account/);
+        rerun.write('\x1b[B\r');
+        await rerun.waitFor(/❯ ● 模型 Café \(account default\)[\s\S]*Other model/);
+        rerun.write('\r');
+        await rerun.waitFor(/❯ ● Low \(model default\)[\s\S]*Extra High/);
+        rerun.write('\r');
+        await rerun.finish();
+        assert.deepEqual(withSettings(fixture, readSettings), { mode: 'turbo', model, effort: 'low' });
+      }
     });
   }
 });

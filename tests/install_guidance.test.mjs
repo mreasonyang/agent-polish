@@ -107,17 +107,18 @@ test('setup reports actionable blockers and offers the relevant official key pag
 test('the first setup screen offers Normal, Turbo, manual and off and restores the terminal after selection', async (t) => {
   const down = '\x1b[B', up = '\x1b[A', enter = '\r';
   for (const [name, keys, expected, lang, initiallyRaw, current] of [
-    ['Enter accepts the default', [enter], 'normal', 'en', false],
-    ['Down selects Turbo', [down, enter], 'turbo', 'zh', false],
-    ['Down twice selects manual', [down, down, enter], 'manual', 'en', false],
-    ['Down three times selects off', [down, down, down, enter], 'off', 'zh', false],
-    ['Up returns to Normal', [down, up, enter], 'normal', 'en', true],
+    ['Enter accepts the Manual default', [enter], 'manual', 'en', false],
+    ['Up selects Turbo', [up, enter], 'turbo', 'zh', false],
+    ['Up twice selects Normal', [up, up, enter], 'normal', 'en', false],
+    ['Down selects off', [down, enter], 'off', 'zh', false],
+    ['Down returns to Manual', [up, down, enter], 'manual', 'en', true],
+    ['Enter keeps the saved Normal mode', [enter], 'normal', 'en', false, 'normal'],
     ['Enter keeps the saved Turbo mode', [enter], 'turbo', 'zh', false, 'turbo'],
     ['Enter keeps the saved manual mode', [enter], 'manual', 'zh', false, 'manual'],
     ['Enter keeps the saved off mode', [enter], 'off', 'en', false, 'off'],
     ['Up switches saved Turbo back to Normal', [up, enter], 'normal', 'en', false, 'turbo'],
-    ['2 leaves Normal highlighted', ['2', enter], 'normal', 'en', false],
-    ['1 does not confirm a choice', ['1', down, enter], 'turbo', 'en', false],
+    ['2 leaves Manual highlighted', ['2', enter], 'manual', 'en', false],
+    ['1 does not confirm a choice', ['1', up, enter], 'turbo', 'en', false],
     ['Escape cancels a pending selection', [down, '\x1b'], null, 'zh', false],
     ['Ctrl+C cancels', ['\x03'], null, 'en', false],
     ['Ctrl+D cancels', ['\x04'], null, 'en', false],
@@ -139,8 +140,9 @@ test('the first setup screen offers Normal, Turbo, manual and off and restores t
       assert.equal(input.isRaw, true);
       assert.match(display, /Normal/);
       assert.match(display, /Turbo/);
-      assert.match(display, lang === 'en' ? /manual|when (?:I |you )?(?:ask|request)/i : /手动|要求|点名/);
+      assert.match(display, lang === 'en' ? /Manual · polish only when asked/ : /仅手动 · 只在我要求时润色/);
       assert.match(display, lang === 'en' ? /off|disable/i : /关闭|停用/);
+      if (!current) assert.match(display, /❯ ● (?:Manual · polish only when asked \(default\)|仅手动 · 只在我要求时润色（默认）)/);
       if (current === 'turbo') assert.match(display, /❯ ● Turbo(?:（当前）| \(current\))/);
       assert.match(display, lang === 'en' ? /Enter/i : /回车|Enter/);
       assert.match(display, /↑/);
@@ -194,12 +196,13 @@ test('Normal setup offers a single default skip after model selection and the ma
   useTestProfile(t);
   const enter = '\r', down = '\x1b[B';
   const order = [];
-  const session = { ...checks, rewrite_mode_configured: false, gemini_model_configured: false };
+  const session = { ...checks, mode: 'manual', mode_configured: false, rewrite_mode_configured: false, gemini_model_configured: false };
   const offers = [];
   const options = {
     interactive: true, check: () => session,
     chooseMode() { order.push('mode'); return 'normal'; },
     saveRewriteMode() { session.rewrite_mode_configured = true; },
+    saveTriggerMode(mode) { session.mode = mode; session.mode_configured = true; },
     chooseModel() { order.push('model'); return { model: 'gemini-4-hydrogen', thinkingLevel: 'medium' }; },
     saveModel(selection) {
       assert.deepEqual(selection, { model: 'gemini-4-hydrogen', thinkingLevel: 'medium' });
@@ -639,12 +642,13 @@ test('setup can re-enable Normal, Turbo or manual from a disabled profile', asyn
 });
 
 test('setup opens saved choices, never writes on Enter for unchanged settings, and stops when cancelled', async () => {
-  const fresh = { ...checks, rewrite_mode_configured: false, gemini_model_configured: false };
+  const fresh = { ...checks, mode: 'manual', mode_configured: false, rewrite_mode_configured: false, gemini_model_configured: false };
   const savedModel = { model: checks.gemini_model, thinkingLevel: checks.gemini_thinking_level };
   for (const [options, status, selectedMode, selectedModel, expected] of [
     [{ interactive: false }, fresh, null, null, []],
     [{ dependencyOnly: true }, checks, null, null, []],
     [{}, fresh, null, null, ['mode']],
+    [{}, fresh, 'manual', null, ['mode', 'model']],
     [{}, checks, null, null, ['mode']],
     [{}, { ...checks, mode: 'off' }, null, null, ['mode']],
     [{}, { ...checks, mode: 'off' }, 'off', null, ['mode']],
@@ -656,7 +660,8 @@ test('setup opens saved choices, never writes on Enter for unchanged settings, a
     const ok = await showSetupGuidance({
       interactive: true, ...options, check: () => status,
       chooseMode(lang, current) {
-        if (status.mode === 'manual' || status.mode === 'off') assert.equal(current, status.mode);
+        if (status === fresh) assert.equal(current, undefined);
+        else if (status.mode === 'manual' || status.mode === 'off') assert.equal(current, status.mode);
         offered.push('mode');
         return selectedMode;
       },

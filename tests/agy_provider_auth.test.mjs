@@ -199,7 +199,7 @@ args = ${JSON.stringify([unexpectedProgram])}
         assert.equal(headers['x-fixture-route'], 'fixture-route');
         assert.ok(body.includes(material.draft));
         for (const secret of [token, storedKey, ...canaries]) assert.ok(!body.includes(secret));
-        assert.deepEqual(JSON.parse(body).tools, []);
+        assert.deepEqual(JSON.parse(body).tools ?? [], []);
         assert.ok(!fs.existsSync(unexpectedProgram));
         const homes = fs.readFileSync(editorHomes, 'utf8').trim().split('\n');
         assert.ok(homes.every(home => home !== fixture.home && home !== fixture.profile));

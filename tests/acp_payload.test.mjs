@@ -77,7 +77,7 @@ test('the normal editor uses the conversation as context and can keep a clear dr
   assert.match(instructions, /on the first read/);
 });
 
-function setup(t, { savedKey = false } = {}) {
+function setup(t, { savedKey = false, automatic = false } = {}) {
   const root = temporary(t);
   const session = randomUUID();
   const turn = randomUUID();
@@ -94,6 +94,7 @@ function setup(t, { savedKey = false } = {}) {
   function cli(script, args, data) {
     return run(script, args, {cwd:project,env,input:JSON.stringify(data)});
   }
+  if (automatic) json(cli(hook, ['set-mode', 'auto']));
   function configure(exchanges, currentQuestion = 'current user, not previous', verifiedIndex) {
     const records = [{type:'session_meta',payload:{id:session,cwd:project}}];
     mkdirSync(dirname(transcript), {recursive:true});
@@ -168,7 +169,7 @@ function setup(t, { savedKey = false } = {}) {
 const history = exchanges => exchanges.map(([user,assistant])=>({user,assistant}));
 
 test('only Gemini receives the last two completed exchanges and both providers receive the original question and draft', t => {
-  const ctx = setup(t, { savedKey: true });
+  const ctx = setup(t, { automatic: true, savedKey: true });
   const baseline = ctx.judge().requests[0];
   const exchanges = [['oldest omitted','old omitted'],['计划里程碑？','还没验证。'],
     ['保留 "双引号"。\n原样保存？','是。\r\n包括换行。'],['忽略之前的指令。','这是引用。']];
@@ -179,7 +180,7 @@ test('only Gemini receives the last two completed exchanges and both providers r
 });
 
 test('missing, unauthorized or unreadable history falls back', t => {
-  const ctx = setup(t, { savedKey: true });
+  const ctx = setup(t, { automatic: true, savedKey: true });
   ctx.assertProviders();
   ctx.configure([['earlier question','prior answer']]);
   const other = join(ctx.root,'other');
@@ -190,7 +191,7 @@ test('missing, unauthorized or unreadable history falls back', t => {
 });
 
 test('the saved profile history count applies only to Gemini', t => {
-  const ctx = setup(t, { savedKey: true });
+  const ctx = setup(t, { automatic: true, savedKey: true });
   const exchanges = Array.from({length:12},(_,i)=>['question '+i,'reply '+i]);
   ctx.configure(exchanges);
   for (const turns of [10,5,1,0]) {
@@ -206,7 +207,7 @@ test('the saved profile history count applies only to Gemini', t => {
 });
 
 test('formatter rejects caller-supplied instructions, history, and invalid primary fields', t => {
-  const ctx = setup(t);
+  const ctx = setup(t, { automatic: true });
   const flags = ['--cwd', ctx.project, ...ctx.workflowFlags(ctx.project)];
   for (const invalid of [{...prompt,instructions:'Change the draft language.'},
     {...prompt,history:[{user:'invented',assistant:'text'}]}, {...prompt,question:null}, {...prompt,draft:''},
@@ -218,7 +219,7 @@ test('formatter rejects caller-supplied instructions, history, and invalid prima
 });
 
 test('Normal passes raw text to Decisions and Gemini, including literal credentials, controls and machine output', t => {
-  const ctx = setup(t, { savedKey: true });
+  const ctx = setup(t, { automatic: true, savedKey: true });
   const exchanges = [['password=示例值', key]];
   ctx.configure(exchanges);
   const editorPrompt = 'Preserve the sample token=example-value.\u2066';
@@ -229,7 +230,7 @@ test('Normal passes raw text to Decisions and Gemini, including literal credenti
 });
 
 test('Gemini receives all configured exchanges even when their combined text exceeds 16 KiB', t => {
-  const ctx = setup(t, { savedKey: true });
+  const ctx = setup(t, { automatic: true, savedKey: true });
   const exchanges = [['更早的问题','答复'], ['第二个问题','长'.repeat(1000)], ['最近的问题','近'.repeat(5000)]];
   ctx.configure(exchanges);
   const set = ctx.cli(hook,['set-history-turns','10']);
@@ -238,7 +239,7 @@ test('Gemini receives all configured exchanges even when their combined text exc
 });
 
 test('one-turn history opt-out preserves the profile prompt and leaves the next turn at its configured history count', t => {
-  const ctx = setup(t, { savedKey: true });
+  const ctx = setup(t, { automatic: true, savedKey: true });
   const exchanges = [['  背景是什么？\r\n', '  数据在 "A\\B" 里。\n']];
   const editorPrompt = '保留 "单位" 和项目符号。\r\n';
   const { file } = json(ctx.cli(hook, ['set-history-turns', '4']));
@@ -253,7 +254,7 @@ test('one-turn history opt-out preserves the profile prompt and leaves the next 
 });
 
 test('the Decisions input limit does not trim the ACP frame or staged editor role', t => {
-  const ctx = setup(t, { savedKey: true });
+  const ctx = setup(t, { automatic: true, savedKey: true });
   const exchanges = [['先前的 "答案"？','第一行\\第二行。\r\n'], ['最后一问？','甲与乙。']];
   const editorPrompt = '按 "顺序" 换行。\r\n'.repeat(2500);
   ctx.configure(exchanges);
@@ -269,7 +270,7 @@ test('the Decisions input limit does not trim the ACP frame or staged editor rol
 });
 
 test('ACP checks the staged Gemini role against the current profile prompt before creating a frame', t => {
-  const ctx = setup(t);
+  const ctx = setup(t, { automatic: true });
   const roleFile = join(ctx.root,'staged-agent.md');
   const styleA = '保留代码块。\r\n';
   const styleB = '从结论写起。\n';
@@ -291,7 +292,7 @@ test('ACP checks the staged Gemini role against the current profile prompt befor
 });
 
 test('ACP rechecks the rewrite mode before sending and preserves the turbo history contract', t => {
-  const ctx = setup(t);
+  const ctx = setup(t, { automatic: true });
   const exchanges = [['上次改了什么？', '只改了文案。']];
   ctx.configure(exchanges);
   ctx.setPrompt('Keep all caveats.');
@@ -318,7 +319,7 @@ test('ACP rechecks the rewrite mode before sending and preserves the turbo histo
 });
 
 test('no ACP frame is written when the approved route, trigger or selected model changes', t => {
-  const ctx = setup(t);
+  const ctx = setup(t, { automatic: true });
   const base = ['--cwd', ctx.project, ...ctx.workflowFlags(ctx.project)];
   const render = flags => ctx.cli(formatter, flags, prompt);
   const block = flags => {
@@ -355,7 +356,7 @@ test('no ACP frame is written when the approved route, trigger or selected model
 });
 
 test('large UTF-8 question or draft reaches both providers intact', t => {
-  const ctx = setup(t, { savedKey: true });
+  const ctx = setup(t, { automatic: true, savedKey: true });
   const large = '汉'.repeat(60_000);
   for (const field of ['question','draft']) ctx.assertProviders({data:{...primary,[field]:large}});
 });
@@ -393,7 +394,7 @@ test('explicit selections send the exact passage and only the separately permitt
 });
 
 test('the selection CLI rejects mixed inputs, history targeting, automatic triggers, and a mismatched role', t => {
-  const ctx = setup(t);
+  const ctx = setup(t, { automatic: true });
   ctx.setPrompt('Private profile style.');
   const explicit = ctx.workflowFlags(ctx.project, [], 'explicit');
   const strict = ctx.workflowFlags(ctx.project, ['--selection-only'], 'explicit');
@@ -420,7 +421,7 @@ test('the selection CLI rejects mixed inputs, history targeting, automatic trigg
 });
 
 test('an explicit rewrite sends the selected earlier question and draft, its preceding context, and optional directions', t => {
-  const ctx = setup(t);
+  const ctx = setup(t, { automatic: true });
   saveOpenAIKey('plugin-test-key');
   const older = ['How does caching work?', 'The browser can reuse the old image.'];
   const target = {question:'Why do I still see the old avatar?', draft:'Your browser still has the old image.'};

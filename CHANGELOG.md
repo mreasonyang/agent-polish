@@ -2,6 +2,13 @@
 
 [中文使用说明](docs/README.zh-CN.md) · [English README](README.md)
 
+## Codex Polish 0.0.4-beta.4 / AGY Polish 0.0.4-beta.6
+
+- 两个插件的默认模式均为仅手动。普通提问直接作答，点名润色时才调用编辑模型。升级时保留已保存的模式。
+- Both plugins default to Manual. Ordinary questions get a direct reply. The editor runs when you ask for polishing. Upgrades preserve saved mode choices.
+- Antigravity 润色默认使用 `gpt-6.2-sol` 和极高（`xhigh`）思考等级。升级后，旧版留空的默认设置也会采用这组值。手动选过的模型和等级会保留，向导里仍可选择跟随本机 Codex。
+- Antigravity replies now use `gpt-6.2-sol` with Extra High (`xhigh`) reasoning by default. Upgrades apply these defaults to previously unset settings and keep explicit model and effort choices. Setup also offers the option to follow your local Codex settings.
+
 ## AGY Polish 0.0.4-beta.5
 
 - Antigravity 的默认 `setup` 恢复四种润色模式，可直接选择 Codex 模型和思考等级。重新运行时会预选已有设置。

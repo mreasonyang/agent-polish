@@ -9,7 +9,7 @@
 用本文件的安装位置定位 `scripts/`、`references/` 和 `../../hooks/preferences.mjs`。后续命令的 `--cwd` 始终传本轮开始时的绝对工作目录，用于核实本轮和会话记录。润色设置由当前 Codex 配置下的所有聊天共用。按整句及会话上下文理解用户意图，无需固定口令。
 
 - 用户主动要求润色或改写，用 `--trigger explicit`，固定走 Turbo，跳过 Decisions。“返回结果 polish”“润色一下”“上一条换个说法”都属于主动请求。即使同一轮也有 hook 提醒，仍只处理一次。用户要求接下来几轮都润色时，在其指定范围内沿用。
-- 普通提问只有收到本轮受信任的 `UserPromptSubmit` 提醒才用 `--trigger auto`。这种自动润色按已保存的设置走 Normal 或 Turbo，默认 Normal。
+- 默认只在用户要求时润色。用户已启用 Normal 或 Turbo 自动润色时，普通提问只有收到本轮受信任的 `UserPromptSubmit` 提醒才用 `--trigger auto`。
 - 用户问“Turbo 怎么用”“‘说人话’为什么没触发”、讨论插件实现或引用别人的指令时，按实际问题回答。要求重写函数或修改文件时，按用户指定的对象完成任务。如果刚问过要翻译成哪种语言，用户回答 “Polish” 指波兰语。只有用户要求更改以后使用的设置时才保存。
 - 如果用户只想看 GPT 原稿，直接展示对话中可核实的原稿，也可在本地运行 `previous_reply.mjs --cwd "<本轮工作目录>" --turns-back N --require-gpt` 查找。没有可核实的原稿就如实说明，这条请求不启动 Gemini。
 

@@ -11,8 +11,13 @@ import { fileURLToPath } from 'node:url';
 import { decide, MAX_DECISION_DATA_BYTES, MAX_RESPONSE_BYTES } from '../plugins/codex-polish/skills/codex-polish/scripts/decisions.mjs';
 import { homeEnv, makeProject, temporary, useTestProfile, writeTestPrompt } from './hook_fixture.mjs';
 import { saveOpenAIKey, clearOpenAIKey } from '../plugins/codex-polish/hooks/openai_credentials.mjs';
+import { writeProfileSetting } from '../plugins/codex-polish/hooks/profile_setting.mjs';
 
-test.beforeEach(t => { useTestProfile(t); saveOpenAIKey('test-key'); });
+test.beforeEach(t => {
+  useTestProfile(t);
+  writeProfileSetting('codex-polish.mode', 'auto');
+  saveOpenAIKey('test-key');
+});
 
 const script = fileURLToPath(new URL('../plugins/codex-polish/skills/codex-polish/scripts/decisions.mjs', import.meta.url));
 const draft = {
@@ -82,7 +87,6 @@ test('a direct judge invocation checks the rewrite policy before using credentia
   const { cwd } = makeProject(t);
   const mock = mockResponse(t);
   const settings = path.join(process.env.CODEX_HOME, 'codex-polish', 'settings');
-  fs.mkdirSync(settings);
   const setting = path.join(settings, 'codex-polish.rewrite-mode');
   for (const [value, reason] of [['turbo', 'decision_route_changed'], ['typo', 'rewrite_mode_invalid']]) {
     fs.writeFileSync(setting, value);
@@ -99,8 +103,9 @@ test('standalone judge respects the profile trigger mode and OpenAI-specific opt
   const { cwd } = makeProject(t);
   const mock = mockResponse(t);
   const settings = path.join(process.env.CODEX_HOME, 'codex-polish', 'settings');
-  fs.mkdirSync(settings);
   const modeFile = path.join(settings, 'codex-polish.mode');
+  fs.unlinkSync(modeFile);
+  assert.deepEqual(await cli(['judge', '--cwd', cwd], draft), failure('trigger_mode'));
   for (const mode of ['off', 'manual']) {
     fs.writeFileSync(modeFile, mode);
     assert.deepEqual(await cli(['judge', '--cwd', cwd], draft), failure('trigger_mode'));

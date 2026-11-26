@@ -10,7 +10,10 @@ import { withCodexAppServer } from './codex-provider.mjs';
 import { withLock } from './directory-lock.mjs';
 
 const MODES = ['normal', 'turbo', 'manual', 'off'];
-const DEFAULTS = { mode: 'normal', model: null, effort: null };
+export const DEFAULT_MODEL = 'gpt-6.2-sol';
+export const DEFAULT_EFFORT = 'xhigh';
+export const FOLLOW_CODEX = 'codex-default';
+const EMPTY_SETTINGS = { mode: 'manual', model: null, effort: null };
 const own = Object.hasOwn;
 
 function settingsPath() {
@@ -39,18 +42,19 @@ function validate(key, value) {
   throw new Error(`Invalid polishing ${key}`);
 }
 
-function preferences(document) {
-  const values = { ...DEFAULTS };
-  for (const key of Object.keys(values)) {
-    if (!own(document, key)) continue;
-    validate(key, document[key]);
-    values[key] = document[key];
-  }
-  return values;
+function preferences(document, legacyDefaults = false) {
+  const { mode = legacyDefaults ? 'normal' : EMPTY_SETTINGS.mode, model = null, effort = null } = document;
+  validate('mode', mode);
+  validate('model', model);
+  validate('effort', effort);
+  if (legacyDefaults) return { mode, model, effort };
+  const editorModel = model === FOLLOW_CODEX ? null : model ?? DEFAULT_MODEL;
+  const defaultEffort = editorModel === DEFAULT_MODEL ? DEFAULT_EFFORT : null;
+  return { mode, model: editorModel, effort: effort === FOLLOW_CODEX ? null : effort ?? defaultEffort };
 }
 
-export function readSettings() {
-  return preferences(readDocument(settingsPath()));
+export function readSettings({ legacyDefaults = false } = {}) {
+  return preferences(readDocument(settingsPath()), legacyDefaults);
 }
 
 const lockWait = new Int32Array(new SharedArrayBuffer(4));
@@ -73,7 +77,7 @@ export async function writeSettings(patch) {
   }
   const keys = Object.keys(patch);
   for (const key of keys) {
-    if (!own(DEFAULTS, key)) throw new Error('Unknown polishing setting');
+    if (!own(EMPTY_SETTINGS, key)) throw new Error('Unknown polishing setting');
     validate(key, patch[key]);
   }
   if (!keys.length) return readSettings();
@@ -83,11 +87,12 @@ export async function writeSettings(patch) {
   const writer = join(dirname(file), '.settings-writer');
   mkdirSync(writer, { recursive: true, mode: 0o700 });
   return withLock(writer, () => {
-    const document = { ...readDocument(file), ...patch };
+    // Store the choice itself so changing only the model can use that model's default effort.
+    const document = { ...EMPTY_SETTINGS, ...readDocument(file), ...patch };
     const settings = preferences(document);
     const stage = join(writer, randomUUID() + '.tmp');
     try {
-      writeFileSync(stage, JSON.stringify({ ...document, ...settings }, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
+      writeFileSync(stage, JSON.stringify(document, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
       replaceSettings(stage, file);
       return settings;
     } finally {

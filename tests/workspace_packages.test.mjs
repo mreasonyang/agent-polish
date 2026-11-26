@@ -141,7 +141,7 @@ if (process.env.POLISH_TEST_MENU_ANSWERS) {
     extraEnv: { NODE_OPTIONS: '--import=' + pathToFileURL(tty).href, POLISH_TEST_MENU_ANSWERS: JSON.stringify(answers) }
   });
 
-  await t.test('each archive has one plugin and one npm bin, and setup starts at mode selection', () => {
+  await t.test('each archive has one plugin and one npm bin, and setup preselects Manual', () => {
     const box = sandbox(join(base, 'bins'));
     for (const [name, other, host] of [[reverse, forward, 'Antigravity'], [forward, reverse, 'Codex']]) {
       const pack = packs.find(row => row.name === scope(name));
@@ -154,11 +154,7 @@ if (process.env.POLISH_TEST_MENU_ANSWERS) {
       assert.match(box.cli(prefix, name, ['--help']), new RegExp(`Usage: ${name}\\b`));
       const firstMenu = box.cli(prefix, name, ['setup'], keys('\x03'));
       assert.match(firstMenu, new RegExp(`^How should ${host} replies be polished\\?$`, 'm'));
-      if (name === forward) {
-        assert.match(firstMenu, /Normal \(default\)[\s\S]*Turbo[\s\S]*Only when asked[\s\S]*Turn off polishing/);
-      } else {
-        assert.match(firstMenu, /Normal · rewrite when useful[\s\S]*Turbo[\s\S]*Manual[\s\S]*Off · turn off polishing/);
-      }
+      assert.match(firstMenu, /○ Normal[\s\S]*○ Turbo[\s\S]*❯ ● Manual · polish only when asked[\s\S]*○ (?:Off · turn off polishing|Turn off polishing)/);
       assert.equal(box.cli(prefix, name, ['setup', '--advanced'], keys('\x03')), firstMenu);
       assert.equal(box.cli(prefix, name, [], keys('\x03')), firstMenu);
       assert.doesNotMatch(firstMenu, /Where do you|Configure both|Both hosts/i);
@@ -233,6 +229,13 @@ if (process.env.POLISH_TEST_MENU_ANSWERS) {
     const agyEntry = box.agyRows()[0];
     assert.equal(codexEntry.version, oldVersion);
     assert.equal(agyEntry.version, oldVersion);
+    const codexPreferencePath = name => join(box.profile, forward, 'settings', `${forward}.${name}`);
+    assert.ok(!fs.existsSync(codexPreferencePath('mode')));
+    assert.ok(!fs.existsSync(codexPreferencePath('rewrite-mode')));
+    assert.ok(!fs.existsSync(box.agySettings));
+    for (const [name, prefix] of [[forward, codex], [reverse, agy]]) {
+      assert.match(box.cli(prefix, name, ['setup'], keys('\x03')), /❯ ● Manual · polish only when asked/);
+    }
     const preferences = join(box.profile, 'plugins', 'cache', market, forward, oldVersion, 'hooks/preferences.mjs');
     const setCodex = (...args) => inspect(box.run(process.execPath, [preferences, ...args]));
     setCodex('set-mode', 'off');
@@ -242,8 +245,7 @@ if (process.env.POLISH_TEST_MENU_ANSWERS) {
     setAgy('--mode', 'turbo', '--model', 'fixture-model', '--effort', 'high');
     box.agyRun('disable', reverse);
 
-    const codexSettings = () => ['mode', 'rewrite-mode', 'model'].map(name =>
-      read(join(box.profile, forward, 'settings', `${forward}.${name}`)));
+    const codexSettings = () => ['mode', 'rewrite-mode', 'model'].map(name => read(codexPreferencePath(name)));
     const beforeCodex = codexSettings();
     const beforeAgy = read(box.agySettings);
     runForward('update');

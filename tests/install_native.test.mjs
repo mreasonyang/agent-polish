@@ -120,13 +120,16 @@ nativeTest(
     env.LC_ALL = 'zh_CN.UTF-8';
     const chinese = windows ? invoke(process.execPath, [script, 'setup']) : invoke(join(download, '安装回复润色.command'), []);
     checkInstallMessage(chinese, pack.version, /安装/, 'zh');
+    assert.match(chinese, /手动润色已开启/);
     checkInstallMessage(invoke(process.execPath, [script, 'update']), pack.version, /更新/, 'zh');
     assert.doesNotMatch(chinese, /GEMINI_API_KEY|aistudio.google.com/);
     assert.match(invoke(process.execPath, [script, 'uninstall']), /已卸载/);
     assert.equal(fs.existsSync(join(profile, NAME)), false);
     env.LC_ALL = 'en_US.UTF-8';
     const englishSetup = () => windows ? invoke(process.execPath, [script, 'setup']) : invoke(join(download, 'Install Codex Polish.command'), []);
-    checkInstallMessage(englishSetup(), pack.version, /\binstalled\b/i, 'en');
+    const english = englishSetup();
+    checkInstallMessage(english, pack.version, /\binstalled\b/i, 'en');
+    assert.match(english, /Manual polishing is on/);
     checkInstallMessage(invoke(process.execPath, [script, 'update']), pack.version, /\bupdated\b/i, 'en');
     const first = snapshot();
     assert.ok(first.startsWith(join(profile,'codex-polish','sources') + sep));
@@ -221,12 +224,16 @@ nativeTest('settings are shared across directories and uninstall removes all plu
   fs.mkdirSync(second);
   const run = (cwd, args, input) => JSON.parse(invoke(process.execPath, [script, ...args], { cwd, input }));
   const initial = run(first, ['check']);
+  assert.equal(initial.mode, 'manual');
+  assert.ok(!fs.existsSync(join(profile, NAME, 'settings', 'codex-polish.mode')));
   assert.equal(initial.openai_key_configured, false);
   assert.equal(initial.decisions_enabled, false);
   assert.equal(initial.gemini_thinking_level, 'medium');
   const credentials = pathToFileURL(join(dirname(script), 'openai_credentials.mjs')).href;
   invoke(process.execPath, ['--input-type=module', '-e',
     `import {saveOpenAIKey} from ${JSON.stringify(credentials)}; saveOpenAIKey('sk-test-isolated-install');`]);
+  assert.equal(run(second, ['check']).decisions_enabled, false);
+  run(first, ['set-mode', 'auto']);
   assert.equal(run(second, ['check']).decisions_enabled, true);
   run(first, ['set-rewrite-mode', 'turbo']);
   run(first, ['set-model', 'gemini-4-hydrogen', '--thinking-level', 'high']);
@@ -270,6 +277,75 @@ nativeTest('settings are shared across directories and uninstall removes all plu
     for (const file of unrelated) assert.equal(fs.readFileSync(file, 'utf8'), 'keep me');
   }
 });
+nativeTest('updates preserve legacy saved automatic choices and explicit trigger settings', async t => {
+  const fresh = isolated(t);
+  assert.match(fresh.local('doctor'), /When to polish: only when asked/);
+  assert.ok(!fs.existsSync(join(fresh.profile, NAME, 'settings')));
+  const legacyRoot = join(fresh.base, 'legacy release');
+  for (const entry of [INDEX, PRODUCT, 'scripts']) {
+    fs.mkdirSync(dirname(join(legacyRoot, entry)), { recursive: true });
+    fs.cpSync(join(ROOT, entry), join(legacyRoot, entry), { recursive: true });
+  }
+  const manifest = join(legacyRoot, PRODUCT, '.codex-plugin/plugin.json');
+  const metadata = JSON.parse(fs.readFileSync(manifest, 'utf8'));
+  fs.writeFileSync(manifest, JSON.stringify({ ...metadata, version: '0.0.4-beta.3' }));
+
+  const cases = [
+    { name: 'legacy Normal', rewrite: 'normal', expected: 'auto' },
+    { name: 'legacy Turbo', rewrite: 'turbo', expected: 'auto' },
+    { name: 'legacy implicit default', expected: 'manual' },
+    { name: 'explicit auto', mode: 'AUTO', expected: 'auto' },
+    { name: 'explicit Manual', mode: 'MANUAL', rewrite: 'turbo', expected: 'manual' },
+    { name: 'explicit Off', mode: 'OFF', rewrite: 'normal', expected: 'off' },
+    { name: 'Manual saved during migration', concurrentMode: 'manual', rewrite: 'turbo', expected: 'manual' },
+    { name: 'new profile with a saved strategy', legacy: false, rewrite: 'turbo', expected: 'manual' }
+  ];
+  const labels = { auto: 'automatic', manual: 'only when asked', off: 'off' };
+  for (const { name, legacy = true, mode, rewrite, concurrentMode, expected } of cases) {
+    await t.test(name, t => {
+      const { profile, invoke, snapshot, local } = isolated(t);
+      if (legacy) invoke(process.execPath, [join(legacyRoot, 'scripts/install.mjs'), 'setup']);
+      else local('setup');
+      const settings = join(profile, NAME, 'settings');
+      const modeFile = join(settings, 'codex-polish.mode');
+      const rewriteFile = join(settings, 'codex-polish.rewrite-mode');
+      if (mode || rewrite) fs.mkdirSync(settings, { recursive: true });
+      if (mode) fs.writeFileSync(modeFile, mode + '\n');
+      if (rewrite) fs.writeFileSync(rewriteFile, rewrite + '\n');
+      const effectiveBefore = mode?.toLowerCase() ?? (legacy ? 'auto' : 'manual');
+      assert.ok(local('doctor').includes('When to polish: ' + labels[effectiveBefore]));
+      if (mode) assert.equal(fs.readFileSync(modeFile, 'utf8'), mode + '\n');
+      else assert.ok(!fs.existsSync(modeFile));
+
+      if (concurrentMode) {
+        const previousPreferences = join(snapshot(), PRODUCT, 'hooks/preferences.mjs');
+        const beforePublish = `
+          import fs from 'node:fs';
+          import assert from 'node:assert/strict';
+          import { spawnSync } from 'node:child_process';
+          const link = fs.linkSync;
+          fs.linkSync = function(source, target) {
+            if (target === 'codex-polish.mode') {
+              const saved = spawnSync(process.execPath, [${JSON.stringify(previousPreferences)}, 'set-mode', ${JSON.stringify(concurrentMode)}], { encoding: 'utf8' });
+              assert.equal(saved.status, 0, saved.stderr);
+            }
+            return link(source, target);
+          };
+        `;
+        invoke(process.execPath, ['--import', 'data:text/javascript,' + encodeURIComponent(beforePublish),
+          join(ROOT, 'scripts/install.mjs'), 'update']);
+      } else local('update');
+      const preferences = join(snapshot(), PRODUCT, 'hooks/preferences.mjs');
+      assert.equal(invoke(process.execPath, [preferences, 'mode']).trim(), expected);
+      assert.ok(local('doctor').includes('When to polish: ' + labels[expected]));
+      if (mode || concurrentMode || expected === 'auto')
+        assert.equal(fs.readFileSync(modeFile, 'utf8'), (mode ?? concurrentMode ?? 'auto') + '\n');
+      else assert.ok(!fs.existsSync(modeFile));
+      if (rewrite) assert.equal(fs.readFileSync(rewriteFile, 'utf8'), rewrite + '\n');
+      else assert.ok(!fs.existsSync(rewriteFile));
+    });
+  }
+});
 nativeTest('setup and update respect saved Off and stop prompting for hook trust', (t) => {
   const { local, invoke, snapshot, rows } = isolated(t);
   local('setup');
@@ -299,7 +375,7 @@ nativeTest('uninstall reports an unreadable ownership database and can be retrie
   assert.match(local('uninstall'), /uninstalled/i);
 });
 nativeTest('native hook trust survives identical content and reports package, editor prompt and hook changes until reviewed', async (t) => {
-  const { base, env, invoke, marketplace } = isolated(t);
+  const { base, env, invoke, marketplace, snapshot } = isolated(t);
   const root = join(base, 'release');
   fs.mkdirSync(dirname(join(root, INDEX)), { recursive: true });
   fs.copyFileSync(join(ROOT, INDEX), join(root, INDEX));
@@ -313,6 +389,7 @@ nativeTest('native hook trust survives identical content and reports package, ed
     keyPath: 'hooks.state."' + h.key + '".trusted_hash', value: h.currentHash, mergeStrategy: 'upsert'
   });
   assert.match(install('setup'), /trust UserPromptSubmit/i);
+  invoke(process.execPath, [join(snapshot(), PRODUCT, 'hooks/preferences.mjs'), 'set-mode', 'auto']);
   const fixedMarket = marketplace();
   let initial = await hook();
   assert.equal(initial.trustStatus, 'untrusted');

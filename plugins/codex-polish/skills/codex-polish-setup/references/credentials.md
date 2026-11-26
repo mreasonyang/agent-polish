@@ -2,7 +2,7 @@
 
 [English](credentials.en.md)
 
-在运行 Codex 的机器上，从任意目录交互运行 `npx @kyun.si/codex-polish@beta setup`，或在 macOS 的 Finder 里双击 Codex 安装脚本。新安装可以选择自动按需润色或只在要求时润色，使用已有的 Gemini 模型和思考等级。
+在运行 Codex 的机器上，从任意目录运行 `npx @kyun.si/codex-polish@beta setup`，或在 macOS 的 Finder 里双击 Codex 安装脚本。新安装默认只在你要求时润色。
 
 默认模型是 **Gemini 4 Hydrogen · 中等（Medium）**。在 Codex 聊天中说“配置回复润色”可以切换 Normal、Turbo、仅手动或关闭，也可以查看 Antigravity 账号的其他模型并选择思考等级。同一份 Codex 配置下的所有聊天和目录共用这些设置。
 
@@ -12,7 +12,9 @@
 
 只有 Antigravity 提示需要登录时，才需要在自己的终端运行 `agy` 登录。如果终端找不到命令，在 Windows PowerShell 中运行 `& "$env:LOCALAPPDATA\agy\bin\agy.exe"`，macOS 或 Linux 上运行 `~/.local/bin/agy`。登录后回 Codex 再试一次改写。[ACP 认证说明](https://antigravity.google/docs/ide/extensions/acp#authentication)
 
-默认启用自动润色。改写整条答复时，Google 收到的是那条答复、它所回答的问题，以及你这次提出的改写要求。改写材料按原文发送，包括其中的代码、命令、路径或密钥。在当前 Codex 配置中保存过自定义润色提示词时，这份提示词也会发给 Google。默认还会附上原答复之前最多 2 轮问答。润色选段时省略原问题和历史。要求“只把这段原文发给 Gemini”时，只发送选段，使用内置 Turbo 提示词。在 Codex 的 **设置 → Hooks**（CLI 输入 `/hooks`）里信任插件的 `UserPromptSubmit`，再开一个聊天，问 **“用一句话解释 DNS。”** 如果想自己决定何时润色，可以说 **“只在我要求时润色”**。说“返回结果 polish”就会用 Turbo，直接把草稿交给 Gemini。信任 hook 前，这次请求不附带以前的问答。想停用就说 **“关闭润色”**，重新开启就说 **“开启自动润色”**。
+想试用手动润色，可以说 **“用一句话解释 DNS，再把你的回复润色一下。”** 改写整条答复时，Google 收到的是那条答复、它所回答的问题，以及你这次提出的改写要求。改写材料按原文发送，包括其中的代码、命令、路径或密钥。在当前 Codex 配置中保存过自定义润色提示词时，这份提示词也会发给 Google。信任 hook 后，默认会附上原答复之前最多 2 轮问答。想附带历史或使用自动润色，请在 Codex 的 **设置 → Hooks**（CLI 输入 `/hooks`）里信任插件的 `UserPromptSubmit`，再新开一个聊天。润色选段时省略原问题和历史。要求“只把这段原文发给 Gemini”时，只发送选段，使用内置 Turbo 提示词。
+
+说 **“只在我要求时润色”** 可以切换到手动模式。想停用就说 **“关闭润色”**，想启用自动润色就说 **“开启自动润色”**。
 
 ## 选配 OpenAI Decisions API
 

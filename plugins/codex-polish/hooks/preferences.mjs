@@ -12,6 +12,7 @@ import { cacheScope, withCache } from './recovery.mjs';
 
 const MODES = ['auto', 'manual', 'off'];
 export const MODE_FILE = 'codex-polish.mode';
+export const DEFAULT_TRIGGER_MODE = 'manual';
 const HISTORY_FILE = 'codex-polish.history-turns';
 export const DECISIONS_FILE = 'codex-polish.decisions';
 export const MODEL_FILE = 'codex-polish.model';
@@ -38,7 +39,7 @@ const DECISION_REASONS = { rewrite: 'needs_rewrite', keep: 'already_clear' };
 
 export function triggerMode() {
   const value = readProfileSetting(MODE_FILE, 16);
-  const mode = value?.toLowerCase() ?? 'auto';
+  const mode = value?.toLowerCase() ?? DEFAULT_TRIGGER_MODE;
   return MODES.includes(mode) ? mode : null;
 }
 

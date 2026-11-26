@@ -29,15 +29,17 @@ function fixture(t) {
   return { ...f, hook, getMode: () => f.call(['mode']).stdout.trim() };
 }
 
-test('a fresh project receives a reminder for an ordinary prompt without writing settings', t => {
+test('a fresh profile defaults to Manual and recognizes a rewrite request without writing settings', t => {
   const { mode, cwd, getMode, check, hook } = fixture(t);
   fs.rmdirSync(path.dirname(mode));
-  assert.equal(getMode(), 'auto');
-  assert.equal(check().mode, 'auto');
-  const response = JSON.parse(hook());
+  assert.equal(getMode(), 'manual');
+  assert.equal(check().mode, 'manual');
+  assert.equal(hook(), '');
+  const response = JSON.parse(hook('UserPromptSubmit', 'Polish.'));
   assert.equal(Object.hasOwn(response, 'systemMessage'), false);
   const output = response.hookSpecificOutput;
   assert.equal(output.hookEventName, 'UserPromptSubmit');
+  assert.match(output.additionalContext, /--trigger explicit\b/);
   assert.ok(output.additionalContext.includes(JSON.stringify(path.join(plugin, 'skills/codex-polish/WORKFLOW.md'))));
   assert.doesNotMatch(output.additionalContext, /codex-polish:codex-polish/);
   assert.equal(hook('SessionStart'), '');
@@ -120,11 +122,11 @@ test('one profile supplies all settings across unrelated repositories, nested wo
   }
   const selected = status => [status.mode, status.decisions_mode, status.history_turns, status.language_mode,
     status.gemini_model, status.gemini_thinking_level, status.rewrite_mode, status.prompt_source];
-  const defaults = ['auto', 'auto', 2, 'auto', 'gemini-4-hydrogen', 'medium', 'normal', 'default'];
+  const defaults = ['manual', 'auto', 2, 'auto', 'gemini-4-hydrogen', 'medium', 'normal', 'default'];
   const dirs = [project, cwd, second, clean, ordinary];
   const hook = where => call(['hook'], { where, input: JSON.stringify({ hook_event_name: 'UserPromptSubmit', cwd: where }) });
   for (const where of dirs) assert.deepEqual(selected(check({ where })), defaults);
-  for (const where of [project, cwd, second]) assert.equal(json(hook(where)).hookSpecificOutput.hookEventName, 'UserPromptSubmit');
+  for (const where of [project, cwd, second]) assert.equal(hook(where).stdout, '');
   assert.equal(fs.existsSync(settings), false);
 
   const commands = [
@@ -256,7 +258,8 @@ test('Decisions settings recognize ON and OFF and report unknown values', t => {
 });
 
 test('automatic Normal bypasses an invalid Decisions setting when there is no OpenAI key', t => {
-  const { project, env, call, settings } = fixture(t);
+  const { project, env, call, mode, settings } = fixture(t);
+  fs.writeFileSync(mode, 'auto');
   fs.writeFileSync(path.join(settings, 'codex-polish.decisions'), 'typo');
   fs.writeFileSync(path.join(project, agyName), '#!/bin/sh\nexit 1\n', { mode: 0o700 });
   const options = { env: { ...env, PATH: project } };
@@ -300,7 +303,8 @@ test('the saved rewrite mode is independent of the trigger and Decisions setting
 });
 
 test('invalid or linked automatic rewrite settings block automatic polishing and leave explicit Turbo available', t => {
-  const { call, check, env, project, cwd } = fixture(t);
+  const { call, check, env, mode, project, cwd } = fixture(t);
+  fs.writeFileSync(mode, 'auto');
   fs.mkdirSync(path.join(cwd, '.git'));
   const { file } = json(call(['set-rewrite-mode', 'turbo']));
   const inspect = () => {

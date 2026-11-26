@@ -19,7 +19,7 @@ test('the reverse settings API isolates profiles and can reset one field without
   const read = env => withSettings(fixture, 'console.log(JSON.stringify(await settings.readSettings()));', [], env);
   const set = (values, env) => withSettings(fixture, 'await settings.writeSettings(JSON.parse(process.argv[1]));',
     [JSON.stringify(values)], env);
-  const defaults = { mode: 'normal', model: null, effort: null };
+  const defaults = { mode: 'manual', model: 'gpt-6.2-sol', effort: 'xhigh' };
   assert.deepEqual(read(), defaults);
   assert.deepEqual(read(alternate), defaults);
 
@@ -30,13 +30,33 @@ test('the reverse settings API isolates profiles and can reset one field without
     assert.deepEqual(read(), { mode, model: 'provider/fixture-model', effort: 'xhigh' });
   }
   set({ model: null });
-  assert.deepEqual(read(), { mode: 'off', model: null, effort: 'xhigh' });
+  assert.deepEqual(read(), { ...defaults, mode: 'off' });
   set({ effort: null });
-  assert.deepEqual(read(), { mode: 'off', model: null, effort: null });
+  assert.deepEqual(read(), { ...defaults, mode: 'off' });
   assert.deepEqual(read(alternate), { mode: 'turbo', model: 'other-model', effort: null });
   assert.equal(fs.readFileSync(forward, 'utf8'), 'manual\n');
   assert.equal(fs.existsSync(reverseDefault), false);
   assert.deepEqual(fixture.records(), []);
+});
+
+test('old default settings, explicit Codex inheritance and a reset resolve in the settings command', t => {
+  const fixture = isolatedHosts(t);
+  const script = fileURLToPath(settingsModule);
+  const invoke = (...args) => {
+    const result = fixture.run(process.execPath, [script, ...args]);
+    assert.equal(result.status, 0, result.stderr);
+    return JSON.parse(result.stdout);
+  };
+  write(join(fixture.reverseSettings, 'settings.json'), JSON.stringify({ mode: 'manual', model: null, effort: null }));
+  const defaults = { mode: 'manual', model: 'gpt-6.2-sol', effort: 'xhigh' };
+  assert.deepEqual(invoke('show'), defaults);
+  assert.deepEqual(invoke('set', '--model', 'local-editor'), { mode: 'manual', model: 'local-editor', effort: null });
+  assert.deepEqual(invoke('set', '--model', 'default', '--effort', 'low'), { ...defaults, effort: 'low' });
+  assert.deepEqual(invoke('set', '--model', 'codex-default', '--effort', 'codex-default'),
+    { mode: 'manual', model: null, effort: null });
+  assert.deepEqual(invoke('set', '--mode', 'turbo'), { mode: 'turbo', model: null, effort: null });
+  assert.deepEqual(invoke('set', '--model', 'default'), { ...defaults, mode: 'turbo', effort: null });
+  assert.deepEqual(invoke('set', '--effort', 'default'), { ...defaults, mode: 'turbo' });
 });
 
 test('the first Off setting with a relative directory follows the fixture home across working directories', t => {
@@ -49,10 +69,11 @@ test('the first Off setting with a relative directory follows the fixture home a
     assert.equal(result.status, 0, result.stderr);
     return JSON.parse(result.stdout);
   };
-  const first = { mode: 'off', model: null, effort: null };
+  const first = { mode: 'off', model: 'gpt-6.2-sol', effort: 'xhigh' };
   assert.deepEqual(invoke(fixture.workspace, 'set', '--mode', 'off'), first);
   assert.deepEqual(invoke(fixture.base, 'show'), first);
-  assert.deepEqual(JSON.parse(fs.readFileSync(join(fixture.home, directory, 'settings.json'), 'utf8')), first);
+  const stored = JSON.parse(fs.readFileSync(join(fixture.home, directory, 'settings.json'), 'utf8'));
+  assert.deepEqual(stored, { mode: 'off', model: null, effort: null });
   assert.equal(fs.existsSync(join(fixture.workspace, directory)), false);
 });
 
@@ -60,7 +81,7 @@ test('a legacy empty settings lock does not block the next write', t => {
   const fixture = isolatedHosts(t);
   write(join(fixture.reverseSettings, 'settings.json.lock'), '');
   assert.deepEqual(withSettings(fixture, 'console.log(JSON.stringify(await settings.writeSettings({ mode: "off" })));'),
-    { mode: 'off', model: null, effort: null });
+    { mode: 'off', model: 'gpt-6.2-sol', effort: 'xhigh' });
   assert.equal(withSettings(fixture, 'console.log(JSON.stringify(settings.readSettings()));').mode, 'off');
 });
 

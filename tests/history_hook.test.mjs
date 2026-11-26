@@ -35,10 +35,9 @@ function fixture(t) {
   return { ...project, transcript, hook, source, database, sql };
 }
 
-test('manual and auto store only metadata and the hook never prints it', t => {
+test('the Manual default and auto store only metadata and the hook never prints it', t => {
   const { transcript, hook, source, mode, database } = fixture(t);
   fs.writeFileSync(transcript, 'synthetic private conversation');
-  fs.writeFileSync(mode, 'manual');
   assert.equal(hook(), '');
   assert.deepEqual(source(), { session_id: SESSION, turn_id: 'turn-1', transcript_path: transcript });
   fs.writeFileSync(mode, 'auto');
@@ -53,7 +52,8 @@ test('manual and auto store only metadata and the hook never prints it', t => {
 });
 
 test('source matches current thread, profile, and exact cwd', t => {
-  const { hook, source, home, cwd } = fixture(t);
+  const { hook, source, home, cwd, mode } = fixture(t);
+  fs.writeFileSync(mode, 'auto');
   hook();
   assert.equal(source({}, cwd), null);
   assert.equal(source({ CODEX_HOME: path.join(home, 'different profile') }), null);
@@ -71,6 +71,7 @@ test('source matches current thread, profile, and exact cwd', t => {
 
 test('invalid source and disabled profile revoke stored metadata', t => {
   const { hook, source, mode } = fixture(t);
+  fs.writeFileSync(mode, 'auto');
   for (const fields of [{ turn_id: null }, { transcript_path: null }, { transcript_path: 'relative.jsonl' }]) {
     hook();
     assert.match(hook(fields), /additionalContext/);
@@ -85,7 +86,8 @@ test('invalid source and disabled profile revoke stored metadata', t => {
 });
 
 test('a large user message still receives the automatic hook', t => {
-  const { hook, source } = fixture(t);
+  const { hook, source, mode } = fixture(t);
+  fs.writeFileSync(mode, 'auto');
   const output = hook({prompt: '中'.repeat(750_000)});
   assert.match(output, /additionalContext/);
   assert.equal(source().turn_id, 'turn-1');
@@ -125,7 +127,7 @@ test('uses private cache only and prunes stale pointers', t => {
   if (windows) execFileSync(windowsSystemTool('icacls.exe'), [file, '/grant', '*S-1-1-0:(R)']);
   else fs.chmodSync(file, 0o644);
   assert.equal(source(), null);
-  assert.match(hook(), /additionalContext/);
+  assert.equal(hook(), '');
   if (windows) execFileSync(windowsSystemTool('icacls.exe'), [file, '/remove:g', '*S-1-1-0']);
   else fs.chmodSync(file, 0o600);
   sql('UPDATE history_source SET updated=0');

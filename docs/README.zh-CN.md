@@ -13,11 +13,11 @@ Agent Polish 提供两个插件。在 Codex 里聊天就装 **Codex Polish**，�
 | Codex | `npx @kyun.si/codex-polish@beta setup` | Gemini |
 | Antigravity | `npx @kyun.si/agy-polish@beta setup` | Codex |
 
-从源码试用时，在仓库根目录运行 `node scripts/install.mjs setup` 配置 Codex，或运行 `node scripts/agy-cli.mjs setup` 配置 Antigravity。两个安装器都会先列出 Normal、Turbo、仅手动和关闭四种模式。开启润色后，Codex 用户可以选 Gemini 模型和思考等级，Antigravity 用户可以选 Codex 模型和思考等级。两个聊天工具都用，就分别运行两次安装。两个插件独立保存设置，也会沿用旧版 `0.0.4-beta.1` 安装器保存的配置。
+从源码试用时，在仓库根目录运行 `node scripts/install.mjs setup` 配置 Codex，或运行 `node scripts/agy-cli.mjs setup` 配置 Antigravity。首次安装时，两个向导都默认选中**仅手动 · 只在我要求时润色**。直接按回车即可保留，也可以选择 Normal、Turbo 或关闭。再次运行会预选已保存的模式。开启润色后，Codex 用户可以选 Gemini 模型和思考等级，Antigravity 用户可以选 Codex 模型和思考等级。两个聊天工具都用，就分别运行两次安装。两个插件独立保存设置，也会沿用旧版 `0.0.4-beta.1` 安装器保存的配置。
 
 ### 在 Antigravity 里，让 Codex 润色
 
-Normal 会把本轮问题和草稿交给 Codex，由它判断是否需要改写。Turbo 每次都请 Codex 改写，仅手动模式则在你点名时润色。向导里可以沿用 Codex 默认设置，也可以从当前提供商的列表里选择模型和它支持的思考等级。使用 ChatGPT 账号时，若需登录可运行 `codex login`。`agy` 需要支持原生插件。
+Normal 会把本轮问题和草稿交给 Codex，由它判断是否需要改写。Turbo 每次都请 Codex 改写，仅手动模式则在你点名时润色。默认使用 `gpt-6.2-sol`，思考等级为极高（Extra High）。向导里也可以选择跟随本机 Codex 设置，或从当前提供商的列表里选择模型和思考等级。使用 ChatGPT 账号时，若需登录可运行 `codex login`。`agy` 需要支持原生插件。
 
 新开一个 Antigravity 聊天。首次出现工具授权提示时，允许 `agy-polish` 的 `polish_reply`。可以试试 **“/polish 把上一条回复缩成两句话”**。编辑失败时保留原稿。之后说 **“配置回复润色”**，就能换模型、调思考等级、改用 Turbo 或关闭润色。
 

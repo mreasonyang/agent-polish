@@ -79,15 +79,16 @@ if (args.includes('--version')) {
     if (method === 'initialize') result = { userAgent: 'codex-test', codexHome: profile, platformFamily: 'unix', platformOs: process.platform };
     else if (!initialized) throw new Error('App Server handshake is incomplete');
     else if (method === 'model/list') {
+      const defaultModel = codexProvider.catalogDefaultModel ?? 'fixture-model';
       const model = (id, displayName, reasoningEfforts) => ({
-        id, model: id, displayName, description: displayName, hidden: false, isDefault: id === 'fixture-model',
+        id, model: id, displayName, description: displayName, hidden: false, isDefault: id === defaultModel,
         defaultReasoningEffort: reasoningEfforts[0],
         supportedReasoningEfforts: reasoningEfforts.map(reasoningEffort => ({ reasoningEffort, description: 'fixture effort' })),
         inputModalities: ['text'], supportsPersonality: false
       });
       result = params.cursor === 'next-page'
         ? { data: [model('fixture-other', 'Other model', ['medium'])], nextCursor: null }
-        : { data: [model('fixture-model', '模型 Café', ['low', 'xhigh'])], nextCursor: 'next-page' };
+        : { data: [model(defaultModel, '模型 Café', ['low', 'xhigh'])], nextCursor: 'next-page' };
     } else if (method === 'hooks/list') {
       result = { data: [{ hooks: [{ pluginId, eventName: 'userPromptSubmit', enabled: true, trustStatus: 'untrusted' }] }] };
     } else if (method === 'config/read') {

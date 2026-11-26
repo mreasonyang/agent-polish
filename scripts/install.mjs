@@ -10,8 +10,8 @@ import { isDeepStrictEqual, parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { executable, windows, agyDirectory, windowsSystemTool, openRegular, sameEntry } from '../plugins/codex-polish/hooks/platform.mjs';
 import { language, languageSettings, tr } from '../plugins/codex-polish/hooks/ui_locale.mjs';
-import { DEFAULT_GEMINI_MODEL, DEFAULT_THINKING_LEVEL, DECISIONS_FILE, MODE_FILE, PROFILE_PREFERENCE_FILES, historyTurns, runtimeStatus, saveModelSelection, triggerMode } from '../plugins/codex-polish/hooks/preferences.mjs';
-import { REWRITE_MODE_FILE, REWRITE_MODES } from '../plugins/codex-polish/hooks/rewrite_mode.mjs';
+import { DEFAULT_GEMINI_MODEL, DEFAULT_THINKING_LEVEL, DEFAULT_TRIGGER_MODE, DECISIONS_FILE, MODE_FILE, PROFILE_PREFERENCE_FILES, historyTurns, runtimeStatus, saveModelSelection, triggerMode } from '../plugins/codex-polish/hooks/preferences.mjs';
+import { REWRITE_MODE_FILE, REWRITE_MODES, rewriteModeSettings } from '../plugins/codex-polish/hooks/rewrite_mode.mjs';
 import { accessSettingFile, readProfileSetting, writeProfileSetting } from '../plugins/codex-polish/hooks/profile_setting.mjs';
 import { readOpenAIKey, saveOpenAIKey, clearOpenAIKey } from '../plugins/codex-polish/hooks/openai_credentials.mjs';
 import { cleanupProjectSettings } from '../plugins/codex-polish/hooks/owned_settings.mjs';
@@ -34,6 +34,7 @@ const CODEX_INSTALL = 'https://developers.openai.com/codex/cli/';
 const GEMINI_KEYS = 'https://aistudio.google.com/apikey';
 const OPENAI_KEYS = 'https://platform.openai.com/api-keys';
 const OPENAI_OFFER_FILE = 'codex-polish.openai-offer';
+const LAST_IMPLICIT_AUTOMATIC_VERSION = '0.0.4-beta.3';
 const codexPackage = '@kyun.si/codex-polish';
 const channel = npmChannel(ROOT, codexPackage, PRODUCT + '/.codex-plugin/plugin.json');
 const codexCommandPrefix = `${windows ? 'npx.cmd' : 'npx'} ${codexPackage}@${channel}`;
@@ -628,6 +629,9 @@ async function setup(root, store, run, setEnabled, action, savePreferences) {
   const [target, version] = makeSnapshot(root, store, before ? [before.version] : [], previous);
   // A new plugin can be loaded as soon as Codex registers it.
   if (!before) await savePreferences?.();
+  // Older setup saved the chosen Normal or Turbo strategy with an implicit auto trigger.
+  if (!savePreferences && store === snapshotStore() && legacyAutomaticMode(before?.version))
+    saveSetupMode(MODE_FILE, 'auto', { ifMissing: true });
   if (before)
     writeAtomicJson(join(store, '.pending-update.json'), { previous: basename(previous), target: basename(target), version: before.version, enabled });
   preserveNativeCache(store, previous, before);
@@ -888,8 +892,27 @@ export async function manage(action, root, store, run = codex, setEnabled = writ
   }
   return result;
 }
-function readChecks() {
-  return { ...runtimeStatus(), ...languageSettings() };
+function readChecks(implicitMode) {
+  const modeConfigured = readProfileSetting(MODE_FILE, 16) !== null;
+  return { ...runtimeStatus(modeConfigured ? undefined : implicitMode), mode_configured: modeConfigured, ...languageSettings() };
+}
+function hasImplicitAutomaticTrigger(version) {
+  return typeof version === 'string' && compareVersions(version, LAST_IMPLICIT_AUTOMATIC_VERSION) <= 0;
+}
+function legacyAutomaticMode(version) {
+  if (!hasImplicitAutomaticTrigger(version) || readProfileSetting(MODE_FILE, 16) !== null) return null;
+  const { rewrite_mode, rewrite_mode_configured } = rewriteModeSettings();
+  return rewrite_mode_configured ? rewrite_mode : null;
+}
+async function managedVersion(store) {
+  try {
+    const snapshot = activeSnapshot(store);
+    if (!snapshot || !await registeredMarket(codex, store)) return null;
+    const version = bundleVersion(snapshot);
+    return installed(codex)?.version === version ? version : null;
+  } catch {
+    return null;
+  }
 }
 function checkAgyVersion(checks) {
   if (checks.agy_path && checks.agy_available && !supportedAgy(checks.agy_path)) {
@@ -899,9 +922,9 @@ function checkAgyVersion(checks) {
   return checks;
 }
 
-function saveSetupMode(file, value) {
+function saveSetupMode(file, value, options) {
   try {
-    writeProfileSetting(file, value);
+    writeProfileSetting(file, value, options);
   } catch {
     throw new SetupError(tr('无法保存默认设置。请检查 Codex 用户目录的写入权限。',
       'Could not save your defaults. Check write access to your Codex profile.', language()));
@@ -1098,13 +1121,13 @@ export async function manageOpenAI(lang, { onboarding = false, input = process.s
 }
 export function chooseSetupMode(lang, current, input, output) {
   const currentLabel = id => id === current ? tr('（当前）', ' (current)', lang) : '';
-  const normalLabel = current ? currentLabel('normal') : tr('（默认）', ' (default)', lang);
+  const manualLabel = current ? currentLabel('manual') : tr('（默认）', ' (default)', lang);
   return chooseOption(tr('在 Codex 中如何润色？', 'How should Codex replies be polished?', lang), [
-    { id: 'normal', name: 'Normal' + normalLabel + tr(' · 按需改写', ' · rewrite when useful', lang) },
+    { id: 'normal', name: 'Normal' + currentLabel('normal') + tr(' · 按需改写', ' · rewrite when useful', lang) },
     { id: 'turbo', name: 'Turbo' + currentLabel('turbo') + tr(' · 每次都请 Gemini 改写', ' · ask Gemini to rewrite every time', lang) },
-    { id: 'manual', name: tr('仅手动 · 只在我要求时润色', 'Only when asked', lang) + currentLabel('manual') },
+    { id: 'manual', name: tr('仅手动 · 只在我要求时润色', 'Manual · polish only when asked', lang) + manualLabel },
     { id: 'off', name: tr('关闭润色', 'Turn off polishing', lang) + currentLabel('off') }
-  ], lang, input, output, current);
+  ], lang, input, output, current ?? DEFAULT_TRIGGER_MODE);
 }
 
 export async function chooseSetupModel(checks, lang, input = process.stdin, output = process.stdout, openCatalog = openSetupCatalog) {
@@ -1210,7 +1233,7 @@ export async function showSetupGuidance({
     const current = currentSetupMode(checks);
     const selected = await chooseMode(lang, current);
     if (!selected) return true;
-    if (selected !== current) {
+    if (needsSetupModeSave(checks, current, selected)) {
       await applySetupMode(checks, selected, saveRewriteMode, saveTriggerMode);
       checks = check();
     }
@@ -1308,8 +1331,12 @@ async function applySetupMode(checks, selected, saveRewriteMode, saveTriggerMode
 }
 
 function currentSetupMode(checks) {
-  if (checks.mode !== 'auto') return checks.mode;
-  return checks.rewrite_mode_configured ? checks.rewrite_mode : undefined;
+  if (checks.mode === 'auto') return checks.rewrite_mode;
+  return checks.mode === DEFAULT_TRIGGER_MODE && checks.mode_configured === false ? undefined : checks.mode;
+}
+
+function needsSetupModeSave(checks, current, selected) {
+  return selected !== current || (checks.mode === 'auto' && !checks.rewrite_mode_configured);
 }
 
 function showCodexSharingNotice(checks, lang) {
@@ -1405,8 +1432,12 @@ function usage(lang) {
 }
 
 async function runCodexHost(action, { installDependency }, lang) {
+  const store = snapshotStore();
   if (action === 'doctor') {
-    const checks = checkAgyVersion(readChecks());
+    let checks = readChecks();
+    if (!checks.mode_configured && checks.codex_available && hasImplicitAutomaticTrigger(await managedVersion(store)))
+      checks = readChecks('auto');
+    checkAgyVersion(checks);
     console.log(doctor(checks));
     if (checks.mode === 'auto' || (checks.mode === 'manual' && checks.history_turns > 0))
       console.log(await hookGuidance(checks.ui_language, checks.mode));
@@ -1416,16 +1447,20 @@ async function runCodexHost(action, { installDependency }, lang) {
   let savePreferences;
   if (action === 'setup' && interactive) {
     const checks = readChecks();
-    const current = currentSetupMode(checks);
+    const legacyMode = !checks.mode_configured && checks.rewrite_mode_configured && checks.codex_available
+      ? legacyAutomaticMode(await managedVersion(store)) : null;
+    const current = legacyMode ?? currentSetupMode(checks);
     showCodexSharingNotice(checks, lang);
     const mode = await chooseSetupMode(lang, current);
     if (!mode) return null;
-    if (mode !== current) {
+    if (legacyMode && mode === DEFAULT_TRIGGER_MODE) {
+      savePreferences = () => saveSetupMode(MODE_FILE, mode);
+    } else if (needsSetupModeSave(checks, current, mode)) {
       savePreferences = () => applySetupMode(readChecks(), mode,
         value => saveSetupMode(REWRITE_MODE_FILE, value), value => saveSetupMode(MODE_FILE, value));
     }
   }
-  const [message, enabled] = await manage(action, ROOT, snapshotStore(), undefined, undefined, savePreferences);
+  const [message, enabled] = await manage(action, ROOT, store, undefined, undefined, savePreferences);
   console.log(message);
   const onboard = action === 'setup' && (enabled || interactive);
   if ((onboard || installDependency) && !(await showSetupGuidance({

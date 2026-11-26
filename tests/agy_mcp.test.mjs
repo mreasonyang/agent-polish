@@ -16,7 +16,7 @@ import { isolatedHosts, reversePlugin, settingsModule, shellQuote, until, withSe
 const material = {
   question: '为什么要保留空行？ 🧪',
   draft: '## 原始答案 café\n\n开头一段。  \n\n```js\nconst 原文 = "🗺️";\n```\n\n- 最后一段。\n',
-  trigger: 'auto'
+  trigger: 'explicit'
 };
 const polished = '## 改写后的答案 🧪\n\n调整后的段落。  \n\n```js\nconst 原文 = "🗺️";\n```\n\n- 最后一段。\n';
 const codexTest = (name, fn) => test(name, { skip: windows && 'requires POSIX fake codex executable' }, fn);
@@ -139,6 +139,8 @@ codexTest('native MCP discovery, handshake and stdio round-trip preserve multili
     assert.equal(tool.inputSchema.properties[field].type, 'string');
   }
   assert.deepEqual([...tool.inputSchema.properties.trigger.enum].sort(), ['auto', 'explicit']);
+  fallback(await mcp.call({ ...material, trigger: 'auto' }));
+  assert.deepEqual(fixture.records(), [], 'a fresh profile must not even start Codex for an ordinary turn');
   const response = await mcp.call(material, 'rewrite/1');
   assert.equal(response.id, 'rewrite/1');
   assert.equal(response.result?.isError ?? false, false);
@@ -149,8 +151,10 @@ codexTest('native MCP discovery, handshake and stdio round-trip preserve multili
   assert.ok(args.includes('-'), 'codex exec reads the rewriting prompt from stdin');
   assert.ok(args.includes('--ephemeral'), 'the child must not save chats in the Codex profile');
   assert.equal(args[args.indexOf('--sandbox') + 1], 'read-only');
+  assert.ok(args.some((arg, index) => arg === '--model' && args[index + 1] === 'gpt-6.2-sol'), JSON.stringify(args));
   assert.ok(!args.includes('--dangerously-bypass-approvals-and-sandbox'));
-  for (const override of ['approval_policy="never"', 'features.hooks=false', 'features.plugins=false']) {
+  for (const override of ['approval_policy="never"', 'features.hooks=false', 'features.plugins=false',
+    'model_reasoning_effort="xhigh"']) {
     assert.ok(args.some((arg, index) => arg === override && args[index - 1] === '-c'), JSON.stringify(args));
   }
   assert.notEqual(cwd, fixture.workspace, 'the child must not work directly in the host project');
@@ -178,11 +182,13 @@ codexTest('MCP rejects fields outside the published tool schema without invoking
   assert.ok(response.error || response.result?.isError, JSON.stringify(response));
 });
 
-test('native Codex lists and edits with the configured provider and isolated login', {
-  skip: !nativeCodex && 'requires the native Codex CLI', timeout: 30_000
+test('native Codex edits with the selected model and effort through the configured provider and isolated login', {
+  skip: !nativeCodex && 'requires the native Codex CLI', timeout: 45_000
 }, async t => {
   const fixture = isolatedHosts(t, { codex: false });
   const model = 'offline-fixture-model';
+  const selectedModel = 'selected-fixture-model';
+  const polishingModel = 'gpt-6.2-sol';
   const route = 'fixture-provider-header-private-value';
   const account = 'fixture-chatgpt-account';
   const jwtPart = value => Buffer.from(JSON.stringify(value)).toString('base64url');
@@ -223,7 +229,7 @@ test('native Codex lists and edits with the configured provider and isolated log
     requests.push({ headers: request.headers, body });
     const message = { id: 'msg_fixture', type: 'message', role: 'assistant', status: 'completed',
       content: [{ type: 'output_text', text: JSON.stringify({ reply: polished, complete: true }), annotations: [] }] };
-    const result = { id: 'resp_fixture', object: 'response', model, status: 'completed', output: [message],
+    const result = { id: 'resp_fixture', object: 'response', model: JSON.parse(body).model, status: 'completed', output: [message],
       usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } };
     response.setHeader('content-type', 'text/event-stream');
     for (const [type, fields] of [
@@ -277,10 +283,12 @@ test('native Codex lists and edits with the configured provider and isolated log
   }
   const runtime = { env: fixture.env, cwd: fixture.workspace, timeout: 22_000 };
   const bundled = await runFile(cli[0], [...cli.slice(1), 'debug', 'models', '--bundled'], { ...runtime, maxBuffer: 8 * 1024 * 1024 });
-  const [template] = JSON.parse(bundled.stdout).models;
+  const bundledModels = JSON.parse(bundled.stdout).models;
+  const template = bundledModels.find(item => item.slug === polishingModel) ?? bundledModels[0];
   const catalog = join(fixture.base, 'models.json');
-  write(catalog, JSON.stringify({ models: [{ ...template, slug: model, display_name: 'Offline fixture', model_messages: null,
-    base_instructions: 'catalog_instructions_canary' }] }));
+  write(catalog, JSON.stringify({ models: [model, selectedModel, polishingModel].map(slug => ({
+    ...template, slug, display_name: slug, model_messages: null, base_instructions: 'catalog_instructions_canary'
+  })) }));
 
   const hook = join(fixture.base, 'hook ran');
   const mcp = join(fixture.base, 'MCP ran');
@@ -342,26 +350,50 @@ args = ${JSON.stringify([markerScript, mcp])}
     `import { listModels } from ${JSON.stringify(settingsModule)}; console.log(JSON.stringify(await listModels()));`], runtime);
   assert.ok(JSON.parse(stdout).some(item => item.id === model), `${stdout}\n${diagnostics()}`);
   assert.equal(requests.length, 0, 'listing models must not ask the provider to edit');
-  setMode(fixture, 'normal');
+  async function assertEdit(client, args, expected) {
+    const count = requests.length;
+    let reply;
+    try {
+      reply = toolText(await client.call(args));
+    } catch (error) {
+      throw new Error(`${expected.scenario}: native Codex edit failed: ${diagnostics()}`, { cause: error });
+    }
+    assert.equal(requests.length, count + 1, `${expected.scenario}: ${diagnostics()}`);
+    assert.equal(reply, expected.reply ?? polished, `${expected.scenario}: ${diagnostics()}`);
+    const { headers, body } = requests[count];
+    assert.equal(headers.authorization, `Bearer ${expected.token ?? token}`);
+    assert.equal(headers['x-fixture-route'], route);
+    const payload = JSON.parse(body);
+    assert.equal(payload.model, expected.model, expected.scenario);
+    assert.equal(payload.reasoning?.effort, expected.effort, expected.scenario);
+    assert.deepEqual(payload.tools ?? [], []);
+    for (const marker of [...inherited, ...(expected.excluded ?? [])]) assert.ok(!body.includes(marker), marker);
+    return payload;
+  }
+
+  const preferences = join(fixture.reverseSettings, 'settings.json');
   const client = await connect(fixture, { requestTimeout: 10_000 });
-  let reply;
   try {
-    reply = toolText(await client.call());
-  } catch (error) {
-    throw new Error(`Native Codex edit failed: ${diagnostics()}`, { cause: error });
+    assert.ok(!fs.existsSync(preferences));
+    fallback(await client.call({ ...material, trigger: 'auto' }));
+    assert.equal(requests.length, 0, 'manual mode must not send the draft to the provider on an ordinary turn');
+    const payload = await assertEdit(client, material, {
+      scenario: 'missing preferences', model: polishingModel, effort: 'xhigh'
+    });
+    assert.ok(payload.input.some(item => item.content?.some(part => part.text?.includes(material.question))));
+
+    write(preferences, JSON.stringify({ mode: 'normal', model: null, effort: null }));
+    await assertEdit(client, { ...material, trigger: 'auto' },
+      { scenario: 'saved normal mode', model: polishingModel, effort: 'xhigh' });
+
+    setMode(fixture, 'normal', selectedModel, 'medium');
+    await assertEdit(client, material, { scenario: 'explicit model and effort', model: selectedModel, effort: 'medium' });
+
+    setMode(fixture, 'normal', selectedModel, null);
+    await assertEdit(client, material, { scenario: 'explicit model with native effort', model: selectedModel, effort: 'low' });
   } finally {
     client.disconnect();
   }
-  assert.equal(requests.length, 1, diagnostics());
-  assert.equal(reply, polished, diagnostics());
-  assert.equal(requests[0].headers.authorization, `Bearer ${token}`);
-  assert.equal(requests[0].headers['x-fixture-route'], route);
-  const payload = JSON.parse(requests[0].body);
-  assert.equal(payload.model, model);
-  assert.equal(payload.reasoning?.effort, 'low');
-  assert.ok(payload.input.some(item => item.content?.some(part => part.text?.includes(material.question))));
-  assert.deepEqual(payload.tools ?? [], []);
-  for (const marker of inherited) assert.ok(!requests[0].body.includes(marker), marker);
   assert.equal(fs.existsSync(hook), false);
   assert.equal(fs.existsSync(mcp), false);
   assert.equal(fs.readFileSync(configPath, 'utf8'), configured);
@@ -377,19 +409,22 @@ args = ${JSON.stringify([markerScript, mcp])}
   const bridgeClient = await connect(fixture, { requestTimeout: 10_000 });
   const prefix = 'outside_selection_before_canary\n\n', suffix = '\n\noutside_selection_after_canary';
   try {
-    const result = await bridgeClient.call({
+    fs.rmSync(preferences);
+    await assertEdit(bridgeClient, material, {
+      scenario: 'missing preferences via ChatGPT bridge', model: polishingModel, effort: 'xhigh', token: accessToken
+    });
+
+    setMode(fixture, 'normal', 'codex-default', 'codex-default');
+    await assertEdit(bridgeClient, {
       question: 'outside_selection_question_canary', draft: prefix + material.draft + suffix,
       selection: material.draft, trigger: 'explicit'
+    }, {
+      scenario: 'follow Codex via ChatGPT bridge', model, effort: 'low', token: accessToken,
+      reply: prefix + polished + suffix, excluded: ['outside_selection_']
     });
-    assert.equal(toolText(result), prefix + polished + suffix, diagnostics());
   } finally {
     bridgeClient.disconnect();
   }
-  assert.equal(requests.length, 2, diagnostics());
-  assert.equal(requests[1].headers.authorization, 'Bearer ' + accessToken);
-  assert.equal(requests[1].headers['x-fixture-route'], route);
-  assert.deepEqual(JSON.parse(requests[1].body).tools ?? [], []);
-  for (const marker of [...inherited, 'outside_selection_']) assert.ok(!requests[1].body.includes(marker), marker);
   assert.equal(fs.readFileSync(configPath, 'utf8'), autoConfig);
   assert.equal(fs.readFileSync(authPath, 'utf8'), autoAuth);
   if (!windows) {
@@ -405,8 +440,8 @@ args = ${JSON.stringify([markerScript, mcp])}
       assert.ok(!nativeStderr.includes(value), 'private provider and draft data must stay out of logs');
     }
     const editorHomes = fs.readFileSync(profiles, 'utf8').trim().split('\n').filter(home => home !== fixture.profile);
-    assert.equal(new Set(editorHomes).size, 2);
-    assert.ok(editorHomes.every(home => !fs.existsSync(home)), 'both private editor homes must be cleaned up');
+    assert.equal(new Set(editorHomes).size, requests.length);
+    assert.ok(editorHomes.every(home => !fs.existsSync(home)), 'private editor homes must be cleaned up');
   }
 });
 
@@ -515,16 +550,15 @@ codexTest('reverse settings gate automatic/manual dispatch, and model and effort
   write(forward, 'off\n');
   setMode(fixture, 'manual', 'fixture-model', 'xhigh');
   const mcp = await connect(fixture);
-  fallback(await mcp.call());
+  fallback(await mcp.call({ ...material, trigger: 'auto' }));
   assert.equal(submissions(fixture), 0);
-  const explicit = { ...material, trigger: 'explicit' };
-  assert.equal(toolText(await mcp.call(explicit)), polished);
+  assert.equal(toolText(await mcp.call(material)), polished);
   const [{ args }] = execs(fixture);
   assert.ok(args.includes('fixture-model') || args.some(arg => /(?:^--model=|^model=).?fixture-model/.test(arg)), JSON.stringify(args));
   assert.ok(args.some(arg => arg.includes('xhigh')), JSON.stringify(args));
   setMode(fixture, 'off');
-  fallback(await mcp.call());
-  fallback(await mcp.call(explicit));
+  fallback(await mcp.call({ ...material, trigger: 'auto' }));
+  fallback(await mcp.call(material));
   assert.equal(submissions(fixture), 1);
   assert.equal(fs.readFileSync(forward, 'utf8'), 'off\n');
 });
@@ -576,8 +610,8 @@ codexTest('an explicit privacy opt-out suppresses Codex even in Turbo mode', asy
   setMode(fixture, 'turbo');
   const mcp = await connect(fixture);
   const question = '请用中文解释。不要把草稿外传。不要调用 Codex。';
+  fallback(await mcp.call({ ...material, question, trigger: 'auto' }));
   fallback(await mcp.call({ ...material, question }));
-  fallback(await mcp.call({ ...material, question, trigger: 'explicit' }));
   assert.equal(submissions(fixture), 0);
 });
 
@@ -594,6 +628,7 @@ codexTest('normal editing can merge two prose paragraphs into one sentence while
   const reply = 'DNS 把域名解析为 IP 地址，帮助客户端找到目标主机。\n\n' + fence;
   const rewriteRequest = '把前两段合并成一句话，保留代码块。';
   const fixture = isolatedHosts(t, { reply });
+  setMode(fixture, 'normal');
   const mcp = await connect(fixture);
   for (const trigger of ['auto', 'explicit']) {
     const response = await mcp.call({ question: rewriteRequest, draft, trigger,

@@ -1,7 +1,7 @@
 {
   "name": "agy-polish",
   "displayName": "AGY Polish · 回复润色",
-  "version": "0.0.4-beta.6",
+  "version": "0.0.4-beta.7",
   "description": "Polish Antigravity replies with your local Codex CLI. 用本机 Codex CLI 润色 Antigravity 的回复。",
   "author": { "name": "mreasonyang" },
   "repository": "https://github.com/mreasonyang/agent-polish",

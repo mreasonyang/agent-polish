@@ -71,7 +71,7 @@ test('the normal editor uses the conversation as context and can keep a clear dr
   const instructions = body.join('\n');
   assertEnglishProse(instructions);
   assert.match(instructions, /quoted conversation/);
-  assert.match(instructions, /`draft` is the reply Codex wrote to that message/);
+  assert.match(instructions, /`draft` is the reply to that message/);
   assert.match(instructions, /`history` contains their earlier exchanges, oldest first/);
   assert.match(instructions, /return it unchanged/);
   assert.match(instructions, /on the first read/);

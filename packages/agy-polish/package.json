@@ -1,6 +1,6 @@
 {
   "name": "@kyun.si/agy-polish",
-  "version": "0.0.4-beta.6",
+  "version": "0.0.4-beta.7",
   "description": "Polish Antigravity replies with Codex · 用 Codex 润色 Antigravity 回复",
   "license": "Apache-2.0",
   "type": "module",
@@ -22,7 +22,7 @@
     "scripts/installer_terminal.mjs"
   ],
   "scripts": {
-    "prepack": "node ../../scripts/pack-workspace.mjs"
+    "prepack": "node ../../scripts/sync-editor-prompts.mjs --check && node ../../scripts/pack-workspace.mjs"
   },
   "repository": {
     "type": "git",

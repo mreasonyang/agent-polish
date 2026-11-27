@@ -1,6 +1,6 @@
 {
   "name": "codex-polish",
-  "version": "0.0.4-beta.4",
+  "version": "0.0.4-beta.5",
   "description": "Rewrites Codex drafts with Gemini for cleaner replies. 用 Gemini 改写 Codex 草稿，让回复更清晰。",
   "repository": "https://github.com/mreasonyang/agent-polish",
   "license": "Apache-2.0",

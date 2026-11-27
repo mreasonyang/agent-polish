@@ -2,6 +2,11 @@
 
 [中文使用说明](docs/README.zh-CN.md) · [English README](README.md)
 
+## Codex Polish 0.0.4-beta.5 / AGY Polish 0.0.4-beta.7
+
+- 两个插件共用 Normal 和 Turbo 的内置润色提示词。开启润色后，点名「说人话」会用 Turbo，要求编辑模型按用户的意思改写。自动 Normal 可以保留已经清楚的原稿。
+- Both plugins use the same built-in Normal and Turbo editing prompts. With polishing enabled, an explicit request such as “say it in plain language” uses Turbo and asks the editor to rewrite the draft as requested. Automatic Normal can keep a clear draft as written.
+
 ## Codex Polish 0.0.4-beta.4 / AGY Polish 0.0.4-beta.6
 
 - 两个插件的默认模式均为仅手动。普通提问直接作答，点名润色时才调用编辑模型。升级时保留已保存的模式。

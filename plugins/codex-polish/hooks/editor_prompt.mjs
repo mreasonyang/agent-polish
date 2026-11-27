@@ -29,16 +29,19 @@ export function readBundledEditorRole() {
   return { header, text };
 }
 
+export function readBundledEditorPrompt(mode) {
+  if (mode === 'normal') return readBundledEditorRole().text;
+  if (mode === 'turbo') return turboPrompt;
+  throw new Error('rewrite_mode_invalid');
+}
+
 export function readEditorPrompt(mode = effectiveRewriteMode(), { selectionOnly = false } = {}) {
   if (selectionOnly) {
     if (mode !== 'turbo') throw new Error('rewrite_mode_invalid');
-    return { source: 'default', text: turboPrompt };
+    return { source: 'default', text: readBundledEditorPrompt(mode) };
   }
   const bytes = readProfileSetting(PROMPT_FILE);
-  if (bytes === null) {
-    if (!mode) throw new Error('rewrite_mode_invalid');
-    return { source: 'default', text: mode === 'turbo' ? turboPrompt : readBundledEditorRole().text };
-  }
+  if (bytes === null) return { source: 'default', text: readBundledEditorPrompt(mode) };
   return { source: 'custom', text: customText(bytes) };
 }
 

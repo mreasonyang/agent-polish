@@ -8,6 +8,7 @@ import { createServer } from 'node:http';
 import { createInterface } from 'node:readline';
 import { text } from 'node:stream/consumers';
 import { promisify } from 'node:util';
+import { fileURLToPath } from 'node:url';
 import { executable } from '../plugins/codex-polish/hooks/platform.mjs';
 import { nativeConfig } from '../scripts/install.mjs';
 import { windows } from './hook_fixture.mjs';
@@ -180,6 +181,38 @@ codexTest('MCP rejects fields outside the published tool schema without invoking
   const response = await mcp.call({ ...material, unexpected_field: true });
   assert.deepEqual(fixture.records(), [], 'invalid arguments must not start Codex');
   assert.ok(response.error || response.result?.isError, JSON.stringify(response));
+});
+
+codexTest('AgY sends the same stock editing instructions as the Codex role for each trigger', async t => {
+  const draft = '系统复用了请求标识。';
+  const reply = '系统会用同一个请求编号。';
+  const fixture = isolatedHosts(t, { reply });
+  const mcp = await connect(fixture);
+  const role = fileURLToPath(new URL('../plugins/codex-polish/skills/codex-polish/scripts/editor_role.mjs', import.meta.url));
+  for (const [mode, trigger, selected] of [
+    ['normal', 'auto'], ['turbo', 'auto'], ['normal', 'explicit'], ['turbo', 'explicit'],
+    ['manual', 'explicit'], ['manual', 'explicit', true]
+  ]) {
+    setMode(fixture, mode);
+    write(join(fixture.profile, 'codex-polish/settings/codex-polish.rewrite-mode'), mode === 'turbo' ? 'turbo' : 'normal');
+    const rendered = fixture.run(process.execPath, [role, '--cwd', fixture.workspace, '--trigger', trigger]);
+    assert.equal(rendered.status, 0, rendered.stderr);
+    const instructions = rendered.stdout.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, '').trim();
+    assert.match(instructions, trigger === 'auto' && mode === 'normal' ? /return it unchanged/ : /Always rewrite `draft`/);
+
+    const args = { question: '为什么不会重复下单？', draft, trigger };
+    if (trigger === 'explicit') args.rewrite_request = '说人话';
+    if (selected) Object.assign(args, { draft: '上文\n' + draft + '\n下文', selection: draft });
+    assert.equal(toolText(await mcp.call(args)), selected ? '上文\n' + reply + '\n下文' : reply);
+    const prompt = execs(fixture).at(-1).prompt;
+    const split = prompt.lastIndexOf('\n\n');
+    assert.equal(prompt.slice(0, split), instructions, `${mode}/${trigger}: instructions sent to Codex differ from the Gemini role`);
+    const payload = JSON.parse(prompt.slice(split + 2));
+    assert.deepEqual(payload, {
+      ...(selected ? {} : { question: args.question }), draft,
+      ...(trigger === 'explicit' && { rewrite_request: '说人话' })
+    });
+  }
 });
 
 test('native Codex edits with the selected model and effort through the configured provider and isolated login', {

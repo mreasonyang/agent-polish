@@ -5,27 +5,28 @@ import { readPreviousReply } from '../../../hooks/history.mjs';
 import { historySource, historyTurns } from '../../../hooks/preferences.mjs';
 import { isMain } from './cli_io.mjs';
 
-export function previousReply(cwd, { noHistory = false, turnsBack = 1, requireGpt = false } = {}, source = historySource(cwd)) {
+export function previousReply(cwd, { noHistory = false, turnsBack = 1, requireGpt = false, showOriginal = false } = {}, source = historySource(cwd)) {
   if (!source) return null;
   return readPreviousReply(source.transcript_path, source.session_id, source.turn_id,
     noHistory ? 0 : historyTurns(), turnsBack, {
-      requireGpt, lookupOrigin: lookupReplyOrigin.bind(null, cwd, source.session_id),
+      requireGpt, showOriginal, lookupOrigin: lookupReplyOrigin.bind(null, cwd, source.session_id),
     });
 }
 
 if (isMain(import.meta.url)) {
   try {
     const { values } = parseArgs({ options: {
-      cwd: { type: 'string' }, 'require-gpt': { type: 'boolean' }, 'turns-back': { type: 'string', default: '1' }, help: { type: 'boolean', short: 'h' },
+      cwd: { type: 'string' }, 'require-gpt': { type: 'boolean' }, 'show-original': { type: 'boolean' }, 'turns-back': { type: 'string', default: '1' }, help: { type: 'boolean', short: 'h' },
     } });
-    if (values.help) console.log('Usage: previous_reply.mjs --cwd PROJECT [--turns-back N] [--require-gpt]');
+    if (values.help) console.log('Usage: previous_reply.mjs --cwd PROJECT [--turns-back N] [--require-gpt | --show-original]');
     else {
-      if (!values.cwd || !isAbsolute(values.cwd) || !/^[1-9]\d*$/.test(values['turns-back']) ||
+      if (!values.cwd || !isAbsolute(values.cwd) || (values['show-original'] && values['require-gpt']) || !/^[1-9]\d*$/.test(values['turns-back']) ||
           !Number.isSafeInteger(Number(values['turns-back']))) throw new Error('invalid_arguments');
-      const target = previousReply(values.cwd, { noHistory: true, turnsBack: Number(values['turns-back']), requireGpt: values['require-gpt'] });
+      const target = previousReply(values.cwd, { noHistory: true, turnsBack: Number(values['turns-back']),
+        requireGpt: values['require-gpt'], showOriginal: values['show-original'] });
       if (!target) throw new Error('previous_reply_unavailable');
-      const { selection, question, draft, source_label, turns_back } = target;
-      console.log(JSON.stringify({ selection, question, draft, source_label, turns_back }));
+      const { original, selection, question, draft, source_label, turns_back } = target;
+      console.log(JSON.stringify({ original, selection, question, draft, source_label, turns_back }));
     }
   } catch (error) {
     console.error(error.message === 'previous_reply_unavailable' ? error.message : 'invalid_arguments');

@@ -11,7 +11,7 @@
 - 用户主动要求润色或改写，用 `--trigger explicit`，固定走 Turbo，跳过 Decisions。“返回结果 polish”“润色一下”“上一条换个说法”都属于主动请求。即使同一轮也有 hook 提醒，仍只处理一次。用户要求接下来几轮都润色时，在其指定范围内沿用。
 - 默认只在用户要求时润色。用户已启用 Normal 或 Turbo 自动润色时，普通提问只有收到本轮受信任的 `UserPromptSubmit` 提醒才用 `--trigger auto`。
 - 用户问“Turbo 怎么用”“‘说人话’为什么没触发”、讨论插件实现或引用别人的指令时，按实际问题回答。要求重写函数或修改文件时，按用户指定的对象完成任务。如果刚问过要翻译成哪种语言，用户回答 “Polish” 指波兰语。只有用户要求更改以后使用的设置时才保存。
-- 如果用户只想看 GPT 原稿，直接展示对话中可核实的原稿，也可在本地运行 `previous_reply.mjs --cwd "<本轮工作目录>" --turns-back N --require-gpt` 查找。没有可核实的原稿就如实说明，这条请求不启动 Gemini。
+- 用户回复“查看原稿”或“查看原文”时，只在本地取回目标改稿的原文。运行 `previous_reply.mjs --cwd "<本轮工作目录>" --turns-back N --show-original` 并原样展示 `original`。没有会话索引时，可从当前聊天里那条改稿自带的对照中读取：终端版开头的 Markdown 引用定义以 JSON 字符串保存原文，其他客户端的折叠区内是原文。若用户特指已核实的 GPT 原稿，沿用 `--require-gpt`。无法核实时如实说明。这些查看请求均不启动 Gemini。
 
 用户本轮只想查看或设置改写模式、模型、思考等级或全局润色提示词时，使用设置技能。用户说“这轮别润色”或禁止外发时直接交付原稿。用户取消就结束。本轮明确要求只给 JSON、命令、补丁或逐字引用时，按指定格式交付。用户要求改写某段代码、JSON 或引文时，以指定的原文为草稿。句数、篇幅和语气属于编辑要求。用户明确只想看正文时，改写成功只交付正文，保留原稿或改写失败也只交付原稿。
 
@@ -39,9 +39,9 @@
 
 ## 在最终消息中交付
 
-独立口令使用常规展示，给排版器传本轮的 `display_language`。上轮的句数要求约束改稿正文，仍可在正文后折叠原稿。收到完整结果后，直接把第 3 步返回的 `text` 作为最终消息，包括其中的原稿折叠区。若单独用 `format_reply.mjs --render` 排版完整改稿，也传本轮的 `--trigger auto` 或 `--trigger explicit`。
+独立口令使用常规展示，给排版器传本轮的 `display_language`。本轮或上轮单纯限定句数、篇幅时，改稿正文满足要求即可，仍使用常规展示。把第 3 步返回的完整 `text` 原样作为最终 Markdown，包括终端使用的引用定义或其他客户端的折叠区。若单独用 `format_reply.mjs --render` 排版完整改稿，也传本轮的 `--trigger auto` 或 `--trigger explicit`。
 
-- Gemini 改动文字时，直接从改稿正文开始。底部的“Gemini 改写 · 查看 GPT 原稿”或“Rewritten by Gemini · View original GPT draft”可展开原稿。选段或可见引文则用“Gemini 改写 · 查看原文”或“Rewritten by Gemini · View original text”。
+- Gemini 改动文字时，Codex 交互终端显示改稿正文和一行查看原稿的提示。支持折叠的客户端可在正文下展开“Gemini 改写 · 查看 GPT 原稿”或“Rewritten by Gemini · View original GPT draft”。选段或可见引文使用“查看原文”或“View original text”。
 - Gemini 原样返回时，自动触发只显示原稿。主动请求则显示一份原稿，并附一句 `Gemini 返回了原稿。` 或 `Gemini returned the original draft.`。选段或引文相应使用 `Gemini 返回了原文。` 或 `Gemini returned the original text.`。这些句子按普通文本显示。
 - Decisions 返回 `already_clear` 时，运行 `node …/scripts/format_reply.mjs --render --kept --cwd "<本轮工作目录>"`，输入 `{draft}`。原样交付 stdout。此命令保留可用的原稿来源记录，只输出原稿。
 - 失败时用 `node …/scripts/format_reply.mjs --render --skipped --cwd "<本轮工作目录>"`，输入 `{draft, reason, display_language}`。按实际进度说明原因。例如，发送前无法确认模型时说“没能确认 Gemini 的模型设置，原稿尚未发送。”已提交但未收到完整结果时说“已提交给 Gemini，但没收到完整改稿。”发送状态不明时说明无法确认是否送达。工具先显示这句话，再显示原稿。若排版工具也不可用，按相同格式交付。

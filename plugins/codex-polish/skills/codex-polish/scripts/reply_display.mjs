@@ -1,8 +1,12 @@
+import { createHash } from 'node:crypto';
+
 const DISPLAY_LABELS = {
   zh: { polished: 'Gemini 润色版', credit: 'Gemini 改写', original: '查看 GPT 原稿', unchanged: 'Gemini 返回了原稿',
-    quoted: '查看原文', unchangedQuote: 'Gemini 返回了原文', period: '。' },
+    quoted: '查看原文', unchangedQuote: 'Gemini 返回了原文', period: '。',
+    draftHint: 'Gemini 改写 · 回复「查看原稿」可对照。', quoteHint: 'Gemini 改写 · 回复「查看原文」可对照。' },
   en: { polished: 'Polished by Gemini', credit: 'Rewritten by Gemini', original: 'View original GPT draft', unchanged: 'Gemini returned the original draft',
-    quoted: 'View original text', unchangedQuote: 'Gemini returned the original text', period: '.' },
+    quoted: 'View original text', unchangedQuote: 'Gemini returned the original text', period: '.',
+    draftHint: 'Rewritten by Gemini. Ask “show the original draft” to compare.', quoteHint: 'Rewritten by Gemini. Ask “show the original text” to compare.' },
 };
 
 // Earlier transcripts included this suffix in the status heading.
@@ -34,7 +38,36 @@ function originalDisclosure(label, draft) {
   return `<details><summary>${label}</summary>\n\n${marker}${encoded}\n\n</details>`;
 }
 
+// The TUI hides an unused Markdown link definition. Put it before the body so
+// even an unclosed code fence in the rewrite cannot expose the source.
+function terminalComparison(visible, draft, hint) {
+  const id = createHash('sha256').update(visible).digest('hex').slice(0, 16);
+  const title = JSON.stringify(draft).replace(/[\u2028\u2029\uE200-\uE202]/g,
+    char => '\\u' + char.charCodeAt(0).toString(16));
+  return `[codex-polish-${id}]: # ${title}\n\n${visible}\n\n${hint}`;
+}
+
+function readTerminalComparison(reply) {
+  const end = reply.indexOf('\n\n');
+  const start = /^\[codex-polish-[a-f0-9]{16}\]: # (?=")/.exec(reply);
+  if (!start || end < 0) return null;
+  let original;
+  try { original = JSON.parse(reply.slice(start[0].length, end)); } catch { return null; }
+  for (const { draftHint, quoteHint } of Object.values(DISPLAY_LABELS)) {
+    for (const hint of [draftHint, quoteHint]) {
+      if (!reply.endsWith('\n\n' + hint)) continue;
+      const visible = reply.slice(end + 2, -(hint.length + 2));
+      if (terminalComparison(visible, original, hint) === reply) return { visible, original };
+    }
+  }
+  return null;
+}
+
 function comparison(reply) {
+  if (reply.startsWith('[codex-polish-')) {
+    const terminal = readTerminalComparison(reply);
+    if (terminal) return terminal;
+  }
   const html = reply.endsWith('\n\n</details>');
   const end = html ? '\n\n</details>' : '\n\n:::';
   if (!reply.endsWith(end)) return null;
@@ -88,7 +121,7 @@ export function originalReplyText(reply) {
   return display ? display.original : reply;
 }
 
-export function formatReply({ draft, candidate: text, display_language, source_label }, { trigger = 'auto' } = {}) {
+export function formatReply({ draft, candidate: text, display_language, source_label }, { trigger = 'auto', terminal = false } = {}) {
   if (!['auto', 'explicit'].includes(trigger)) throw new Error('invalid_trigger');
   if (source_label !== undefined && !['gpt', 'quoted'].includes(source_label)) throw new Error('invalid_source_label');
   if (display_language === undefined) return { text };
@@ -98,7 +131,8 @@ export function formatReply({ draft, candidate: text, display_language, source_l
   let display_text = text;
   if (!same) {
     const label = labels.credit + ' · ' + (quoted ? labels.quoted : labels.original);
-    display_text += '\n\n' + originalDisclosure(label, draft);
+    display_text = terminal ? terminalComparison(text, draft, quoted ? labels.quoteHint : labels.draftHint)
+      : text + '\n\n' + originalDisclosure(label, draft);
   } else if (trigger === 'explicit') {
     display_text = (quoted ? labels.unchangedQuote : labels.unchanged) + labels.period + '\n\n' + text;
   }

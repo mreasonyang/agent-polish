@@ -136,11 +136,11 @@ test('uses private cache only and prunes stale pointers', t => {
   assert.deepEqual(sql('SELECT session FROM history_source'), [{ session: OTHER }]);
 });
 
-function conversation(t) {
+function conversation(t, source) {
   const { project, env, transcript, hook, database, sql, call } = fixture(t);
   const scripts = path.join(plugin, 'skills/codex-polish/scripts');
   const options = { env: { ...env, CODEX_THREAD_ID: SESSION } };
-  fs.writeFileSync(transcript, JSON.stringify({ type: 'session_meta', payload: { id: SESSION } }) + '\n');
+  fs.writeFileSync(transcript, JSON.stringify({ type: 'session_meta', payload: { id: SESSION, source } }) + '\n');
   let turn;
   const append = (type, fields) => fs.appendFileSync(transcript, JSON.stringify({ type: 'event_msg', payload: { type, ...fields } }) + '\n');
   function begin(id, question) {
@@ -172,6 +172,27 @@ function conversation(t) {
   const zeroHistory = () => json(call(['set-history-turns', '0']));
   return { begin, end, display, gemini, previous, database, sql, zeroHistory, options };
 }
+
+test('the TUI retrieves exact originals and sends only the displayed bodies as subsequent history', t => {
+  const { begin, end, display, previous, gemini } = conversation(t, 'cli');
+  const draft = '  Quoted source.\r\n';
+  const first = { question: 'First question?', draft: 'First draft.' };
+  begin('first', first.question);
+  const edited = display({ ...first, candidate: 'First edit.', display_language: 'en' });
+  assert.match(edited, /^\[codex-polish-/);
+  end(edited);
+  begin('selected', 'Rewrite my quoted source.');
+  assert.deepEqual(json(previous(1, '--show-original')), { original: first.draft });
+  assert.deepEqual(json(previous(1, '--require-gpt')), { ...first, source_label: 'gpt', turns_back: 1 });
+  end(display({ draft, candidate: 'Quoted edit.', display_language: 'en' }, '--trigger', 'explicit', '--selection'));
+  begin('retrieve', 'Show the original text.');
+  assert.deepEqual(json(previous(1, '--show-original')), { original: draft });
+  assert.deepEqual(json(previous()), { selection: 'Quoted edit.' });
+  assert.equal(previous(1, '--require-gpt').status, 1);
+  assert.deepEqual(gemini({ question: 'New question.', draft: 'New draft.' }).history, [
+    { user: first.question, assistant: 'First edit.' }, { user: 'Rewrite my quoted source.', assistant: 'Quoted edit.' },
+  ]);
+});
 
 test('successive rewrites of an earlier comparison use its original question, source label and preceding history', t => {
   const { begin, end, display, previous, database, gemini, zeroHistory, options } = conversation(t);

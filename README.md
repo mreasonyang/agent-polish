@@ -29,7 +29,7 @@ For automatic edits, trust `UserPromptSubmit` in Codex **Settings → Hooks** (`
 
 ### Example in Codex
 
-In Codex, you can expand the original underneath the rewrite in clients that support folding. Here’s an example translated from a Chinese test run.
+In the Codex interactive terminal, the rewrite ends with a short hint. Reply **“show the original draft”** to see the source text. In clients that support folding, you can expand the original underneath the rewrite. Here’s an example translated from a Chinese test run.
 
 The export button is fixed and passed local tests. It still needs to be checked in production.
 

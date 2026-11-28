@@ -264,6 +264,7 @@ const REWRITE_SHORTCUTS = new Set([
   'rewrite', 'rewrite it', 'polish', 'polish it', 'speak plainly', 'plain english', 'in plain english',
   'say it in plain english', 'say that in plain english', 'put it in plain english', 'put that in plain english',
 ]);
+const VIEW_ORIGINAL_SHORTCUTS = new Set(['查看原稿', '查看原文', 'show the original draft', 'show the original text']);
 
 export function runHook() {
   if (!supportedNode()) {
@@ -289,7 +290,9 @@ export function runHook() {
   }
   if (mode === 'off') return;
   const command = typeof event.prompt === 'string' && event.prompt.trim().match(/^([^。.!！]+)[。.!！]*$/u);
-  const rewriteLast = command && REWRITE_SHORTCUTS.has(command[1].trimEnd().toLowerCase());
+  const shortcut = command && command[1].trimEnd().toLowerCase();
+  if (VIEW_ORIGINAL_SHORTCUTS.has(shortcut)) return;
+  const rewriteLast = REWRITE_SHORTCUTS.has(shortcut);
   if (mode === 'manual' && !rewriteLast) return;
   const lang = language();
   const workflow = JSON.stringify(path.resolve(import.meta.dirname, '../skills/codex-polish/WORKFLOW.md'));

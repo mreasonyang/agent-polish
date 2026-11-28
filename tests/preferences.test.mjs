@@ -72,6 +72,9 @@ test('standalone rewrite requests explicitly target the previous reply in auto a
       assert.doesNotMatch(additionalContext, /--trigger auto\b/, prompt);
       assert.ok(additionalContext.includes(JSON.stringify(path.join(plugin, 'skills/codex-polish/WORKFLOW.md'))));
     }
+    for (const prompt of ['查看原稿', '查看原文。', 'Show the original draft.', 'show the original text']) {
+      assert.equal(submit(prompt), '', prompt);
+    }
     for (const prompt of otherRequests) {
       const output = submit(prompt);
       if (triggerMode === 'manual') assert.equal(output, '', prompt);

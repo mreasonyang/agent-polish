@@ -254,7 +254,14 @@ export function isCurrentTurn(file, sessionId, turnId) {
   return Boolean(turnId && withTranscript(file, rows => completedExchanges(rows(), sessionId, turnId, 0)));
 }
 
-export function readPreviousReply(file, sessionId, turnId, turns = DEFAULT_HISTORY_TURNS, turnsBack = 1, { lookupOrigin, requireGpt = false } = {}) {
+export function sessionSource(file, sessionId) {
+  return withTranscript(file, rows => {
+    const header = rows().next().value?.payload;
+    return header?.id === sessionId ? header.source : null;
+  });
+}
+
+export function readPreviousReply(file, sessionId, turnId, turns = DEFAULT_HISTORY_TURNS, turnsBack = 1, { lookupOrigin, requireGpt = false, showOriginal = false } = {}) {
   if (!turnId || !sessionId || !Number.isSafeInteger(turnsBack) || turnsBack < 1 ||
       !Number.isInteger(turns) || turns < 0 || turns > MAX_HISTORY_TURNS) return null;
   return withTranscript(file, rows => {
@@ -270,6 +277,7 @@ export function readPreviousReply(file, sessionId, turnId, turns = DEFAULT_HISTO
     const target = scan?.last.at(-1);
     if (!target) return null;
     let bodies = replyBodies(target, lookupOrigin);
+    if (showOriginal) return !bodies.receipt?.literal && typeof bodies.draft === 'string' ? { original: bodies.draft } : null;
     const visibleSelection = requireGpt ? null : { selection: bodies.visible };
     // A body-only selection and a whole answer can be byte-identical. Only a
     // matching delivery record can attach the original question and its history.

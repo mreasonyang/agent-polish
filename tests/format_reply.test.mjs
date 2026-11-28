@@ -2,7 +2,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import { formatReply, originalReplyText } from '../plugins/codex-polish/skills/codex-polish/scripts/format_reply.mjs';
+import { readReplyDisplay } from '../plugins/codex-polish/skills/codex-polish/scripts/reply_display.mjs';
+import { sqliteModule } from '../plugins/codex-polish/hooks/recovery.mjs';
+import { temporary } from './hook_fixture.mjs';
 
 const formatScript = fileURLToPath(new URL('../plugins/codex-polish/skills/codex-polish/scripts/format_reply.mjs', import.meta.url));
 
@@ -58,6 +62,50 @@ test('a draft discussing disclosure syntax stays verbatim inside a single fenced
   assert.equal(result.display_text, candidate
     + '\n\n:::github-details{summary="Rewritten by Gemini · View original GPT draft"}\n\n> `````text\n'
     + '> Original explanation.\n> \n> <details><summary>Example</summary>\r\n>     :::\n> \n> </details>\n> \n> ````html\n> </details>\n> ````\n> `````\n\n:::');
+});
+
+test('terminal Markdown keeps arbitrary source text on one hidden line and recovers the exact original', () => {
+  const draft = ' 前文 "引号" \\n\r\n\r\n~~~html\n<details>示例</details>\n~~~\n\u2028\uE200\uE202\uE201\u2029\t';
+  const candidate = 'A [link](https://example.org).\r\n\r\n~~~js\n  indented code  \n';
+  for (const [display_language, source_label, hint] of [
+    ['zh', 'gpt', '查看原稿'], ['zh', 'quoted', '查看原文'],
+    ['en', 'gpt', 'show the original draft'], ['en', 'quoted', 'show the original text'],
+  ]) {
+    const input = { draft, candidate, display_language, source_label };
+    const { display_text } = formatReply(input, { terminal: true });
+    const [definition, ...rendered] = display_text.split('\n');
+    assert.match(definition, /^\[codex-polish-[0-9a-f]{16}\]: # "/);
+    assert.doesNotMatch(definition, /[\r\u2028\u2029\uE200-\uE202]/);
+    assert.ok(rendered.join('\n').startsWith('\n' + candidate + '\n\n'));
+    assert.ok(rendered.at(-1).includes(hint));
+    assert.ok(!rendered.join('\n').includes('<details>示例</details>'));
+    assert.deepEqual(readReplyDisplay(display_text), { visible: candidate, original: draft });
+    assert.equal(readReplyDisplay(display_text.replace('indented code', 'changed code')), null);
+    assert.equal(originalReplyText(display_text), draft);
+    assert.deepEqual(formatReply({ ...input, display_language: undefined }, { terminal: true }), { text: candidate });
+    assert.deepEqual(formatReply({ ...input, candidate: draft }, { trigger: 'explicit', terminal: true }),
+      formatReply({ ...input, candidate: draft }, { trigger: 'explicit' }));
+  }
+});
+
+test('without hook trust the formatter uses only the current thread’s client, even when its helper has a terminal', t => {
+  const home = temporary(t);
+  const { DatabaseSync } = sqliteModule();
+  const db = new DatabaseSync(join(home, 'state_5.sqlite'));
+  db.exec("CREATE TABLE threads (id TEXT PRIMARY KEY, source TEXT); INSERT INTO threads VALUES ('interactive','cli'), ('desktop','vscode'), ('batch','exec')");
+  db.close();
+  const input = JSON.stringify({ draft: 'Source.', candidate: 'Edit.', display_language: 'en' });
+  function render(id, client = '') {
+    return cli([formatScript, '--cwd', home, '--render'], input, {
+      ...process.env, CODEX_THREAD_ID: id, CODEX_HOME: home, CODEX_SQLITE_HOME: home, CODEX_INTERNAL_ORIGINATOR_OVERRIDE: client,
+      TERM: 'xterm-256color',
+    }).stdout;
+  }
+  assert.match(render('interactive'), /^\[codex-polish-/);
+  assert.match(render('desktop', 'codex-tui'), /^\[codex-polish-/);
+  for (const output of [render('desktop'), render('batch'), render('unknown'), render('interactive', 'T3 Code')]) {
+    assert.match(output, /<details><summary>/);
+  }
 });
 
 test('identical drafts are silent by default and explicit requests acknowledge the correct source once', () => {

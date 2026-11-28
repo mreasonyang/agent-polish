@@ -1,12 +1,37 @@
-import { isAbsolute } from 'node:path';
+import { readdirSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { isAbsolute, join } from 'node:path';
 import { parseArgs } from 'node:util';
-import { isCurrentTurn } from '../../../hooks/history.mjs';
+import { isCurrentTurn, sessionSource } from '../../../hooks/history.mjs';
 import { historySource } from '../../../hooks/preferences.mjs';
+import { sqliteModule } from '../../../hooks/recovery.mjs';
 import { rememberReplyOrigin } from '../../../hooks/reply_origin.mjs';
 import { isMain, readHostLine, readLimited, utf8 } from './cli_io.mjs';
 import { previousReply } from './previous_reply.mjs';
 import { formatReply } from './reply_display.mjs';
 export { formatReply, originalReplyText } from './reply_display.mjs';
+
+// The formatter can itself run in a PTY on any client. Identify the Codex
+// session, not the helper's stdin or TERM. Manual mode also works without hooks.
+function isCodexTui(source) {
+  const { CODEX_INTERNAL_ORIGINATOR_OVERRIDE: client, CODEX_THREAD_ID: id, CODEX_SQLITE_HOME, CODEX_HOME } = process.env;
+  if (client) return client === 'codex-tui';
+  if (!id) return false;
+  const kind = source && sessionSource(source.transcript_path, id);
+  if (kind) return kind === 'cli';
+  try {
+    const dir = CODEX_SQLITE_HOME || CODEX_HOME || join(homedir(), '.codex');
+    if (!isAbsolute(dir)) return false;
+    const files = readdirSync(dir, { withFileTypes: true }).filter(entry => entry.isFile() && /^state_\d+\.sqlite$/.test(entry.name));
+    const latest = files.map(entry => entry.name).sort((a, b) => b.localeCompare(a, 'en', { numeric: true }))[0];
+    if (!latest) return false;
+    const { DatabaseSync } = sqliteModule();
+    const db = new DatabaseSync(join(dir, latest), { readOnly: true });
+    try {
+      return db.prepare('SELECT source FROM threads WHERE id=?').get(id)?.source === 'cli';
+    } finally { db.close(); }
+  } catch { return false; }
+}
 
 function formatSkipped({ draft, reason, display_language }) {
   if (typeof reason !== 'string' || !reason.trim() || /[\r\n\u2028\u2029]/u.test(reason)) throw new Error('invalid reason');
@@ -45,7 +70,9 @@ export function delivery(payload, { cwd, selection, skipped, kept, turnsBack, tr
   let result;
   if (kept) result = { text: draft };
   else if (skipped) result = formatSkipped(payload);
-  else result = formatReply({ ...payload, source_label: label }, { trigger });
+  else result = formatReply({ ...payload, source_label: label }, {
+    trigger, terminal: Boolean(cwd && display_language && draft !== payload.candidate && isCodexTui(source)),
+  });
   if (source) {
     const shown = result.display_text ?? result.text;
     const literal = shown === result.text;
